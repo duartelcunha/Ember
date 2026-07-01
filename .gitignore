@@ -33,3 +33,4 @@ src-tauri/target/
 *.sln
 *.sw?
 .gstack/
+.claude/
