@@ -20,7 +20,7 @@ use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 /// Offset do orb em relacao ao cursor (centro do orb ~ cursor + isto), em px fisicos.
-const ORB_OFFSET: i32 = 26;
+const ORB_OFFSET: i32 = 18;
 
 /// Obtem (ou cria) uma janela declarada com `create:false`. NAO a mostra (o caller decide
 /// posicao/foco antes de `show`, para o orb nao piscar na posicao errada).
@@ -52,6 +52,27 @@ fn monitor_work_area(w: &WebviewWindow) -> (i32, i32, i32, i32) {
     }
 }
 
+/// Geometria do monitor que contem o ponto (px,py), tipicamente o cursor. Ao contrario
+/// de `monitor_work_area`, nao depende de onde a janela esta agora, por isso o orb
+/// consegue atravessar para outro ecra em vez de ficar preso na borda do monitor de
+/// origem quando o cursor muda de ecra a meio do seguimento.
+fn monitor_at_point(w: &WebviewWindow, px: i32, py: i32) -> (i32, i32, i32, i32) {
+    let monitors: Vec<(i32, i32, i32, i32)> = w
+        .available_monitors()
+        .map(|ms| {
+            ms.iter()
+                .map(|m| {
+                    let p = m.position();
+                    let s = m.size();
+                    (p.x, p.y, s.width as i32, s.height as i32)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    ember_core::selection::monitor_containing(px, py, &monitors)
+        .unwrap_or_else(|| monitor_work_area(w))
+}
+
 /// Top-left desejado da janela do orb para o cursor atual: poe o centro do orb
 /// (centro da janela) junto ao cursor + offset, clampado ao monitor.
 fn orb_target(app: &AppHandle, w: &WebviewWindow) -> Option<(i32, i32)> {
@@ -62,7 +83,7 @@ fn orb_target(app: &AppHandle, w: &WebviewWindow) -> Option<(i32, i32)> {
     };
     let tlx = c.x as i32 + ORB_OFFSET - ww / 2;
     let tly = c.y as i32 + ORB_OFFSET - wh / 2;
-    let (ax, ay, aw, ah) = monitor_work_area(w);
+    let (ax, ay, aw, ah) = monitor_at_point(w, c.x as i32, c.y as i32);
     Some(ember_core::selection::clamp_pos(
         tlx, tly, ww, wh, ax, ay, aw, ah,
     ))
