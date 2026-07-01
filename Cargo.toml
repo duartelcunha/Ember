@@ -1,0 +1,22 @@
+# Workspace raiz do Ember. O perfil release vive aqui (cargo exige perfis no root do
+# workspace, nao nos membros). ember-core e a crate pura; src-tauri e o shell com I/O.
+[workspace]
+members = ["src-tauri", "crates/ember-core"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0" # x-release-please-version
+authors = ["deleg8Lab"]
+license = "MIT"
+
+# Otimizacao de build (Tauri size guide): binario menor e mais rapido.
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
+
+[profile.dev]
+incremental = true

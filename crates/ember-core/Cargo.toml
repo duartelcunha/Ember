@@ -1,0 +1,13 @@
+[package]
+name = "ember-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Logica pura e sem I/O do Ember (refinamento, resiliencia, perfil)."
+
+# Sem tauri, sem reqwest, sem tokio. So serde (mapping de wire-format) e thiserror.
+# Tudo aqui testa com `cargo test -p ember-core`, sem rede e sem SO.
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"

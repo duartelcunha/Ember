@@ -1,0 +1,11 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "node",
+  "packages": {
+    ".": {
+      "package-name": "ember",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [{ "type": "generic", "path": "Cargo.toml" }]
+    }
+  }
+}

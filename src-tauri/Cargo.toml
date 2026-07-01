@@ -1,0 +1,48 @@
+[package]
+name = "ember"
+version.workspace = true
+description = "Ember: refinador de prompts no momento, em qualquer app."
+authors.workspace = true
+edition.workspace = true
+
+[lib]
+# O sufixo `_lib` evita conflito entre a lib e o bin no Windows (rust-lang/cargo#8519).
+name = "ember_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-positioner = "2"
+tauri-plugin-process = "2"
+ember-core = { path = "../crates/ember-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Resiliencia / providers
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+tokio = { version = "1", features = ["time"] }
+# Storage seguro das chaves (Windows Credential Manager). `windows-native` e OBRIGATORIO.
+keyring = { version = "3", features = ["windows-native"] }
+
+# Adapters nativos do loop in-place: enigo (simular Ctrl+C/Ctrl+V),
+# arboard (clipboard sincrono, deteta nao-texto).
+enigo = "0.3"
+arboard = "3"
+
+# Deteta a app em foco (terminal -> Ctrl+Shift+C/V). Versao 0.61 ja esta na arvore.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+# Auto-update assinado (so desktop: o updater nao suporta mobile).
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-updater = "2"

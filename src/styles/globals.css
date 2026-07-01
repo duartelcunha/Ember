@@ -1,0 +1,112 @@
+@import "tailwindcss";
+
+/* ----------------------------------------------------------------------------------
+   Design tokens do Ember (dark glassy, ancorado em laranja quente).
+   Os tokens de cor/fonte/radius no @theme geram utilities Tailwind (bg-accent, text-fg,
+   rounded-lg, ...). Os tokens de vidro/glow/motion ficam como CSS vars em :root.
+   As fontes Geist sao importadas em JS nos main.tsx (self-hosted, offline).
+---------------------------------------------------------------------------------- */
+@theme {
+  --font-sans: "Geist Variable", system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, monospace;
+
+  /* Accent (laranja) */
+  --color-accent: #ff7a18;
+  --color-accent-hover: #ff8f3c;
+  --color-accent-active: #e8650a;
+  --color-accent-fg: #1a0e03;
+
+  /* Superficies */
+  --color-bg: #0b0a09;
+  --color-panel: #111014;
+  --color-surface-1: #16151a;
+  --color-surface-2: #1f1d24;
+  --color-surface-3: #26232c;
+
+  /* Texto */
+  --color-fg: #f5f3f0;
+  --color-fg-muted: #aba59e;
+
+  /* Semantico */
+  --color-success: #34d399;
+  --color-warning: #ffcb47;
+  --color-error: #ff5d5d;
+  --color-info: #4da3ff;
+
+  /* Raios */
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
+}
+
+:root {
+  /* Bordas */
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-default: rgba(255, 255, 255, 0.12);
+  --border-strong: rgba(255, 255, 255, 0.18);
+  --border-accent: rgba(255, 138, 60, 0.55);
+
+  /* Vidro */
+  --glass-bg: rgba(20, 18, 24, 0.55);
+  --glass-bg-strong: rgba(14, 13, 17, 0.92);
+  --glass-blur: 20px;
+}
+
+@layer base {
+  html,
+  body {
+    margin: 0;
+    /* Transparente por defeito: a overlay nao tem fundo; settings pinta o seu painel. */
+    background: transparent;
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  #root {
+    height: 100vh;
+  }
+}
+
+/* O orb: bolinha laranja FLAT (2D), sem gradiente 3D nem glow pesado. */
+.ember-orb {
+  width: 26px;
+  height: 26px;
+  border-radius: 9999px;
+  background: var(--color-accent);
+  box-shadow: 0 1px 10px rgba(255, 122, 24, 0.45);
+  will-change: transform;
+}
+
+/* Anel spinner flat a rodar (estado a refinar), por cima do orb. So roda (transform). */
+.ember-ring {
+  position: absolute;
+  inset: -7px;
+  border-radius: 9999px;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    var(--color-accent) 70deg,
+    transparent 200deg
+  );
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2.5px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2.5px));
+  will-change: transform;
+}
+
+/* Bolha de preview (vidro). O backdrop-filter fica ESTATICO; so conteudo/opacidade animam. */
+.ember-bubble {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(140%);
+  backdrop-filter: blur(var(--glass-blur)) saturate(140%);
+  border: 1px solid var(--border-default);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  color: var(--color-fg);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .ember-bubble {
+    background: var(--glass-bg-strong);
+  }
+}
