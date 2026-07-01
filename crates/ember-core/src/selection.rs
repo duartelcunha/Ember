@@ -76,6 +76,20 @@ pub fn clamp_pos(
     (x.clamp(area_x, max_x), y.clamp(area_y, max_y))
 }
 
+/// Encontra o monitor (retangulo x,y,w,h) que contem o ponto (px,py) — tipicamente o
+/// cursor. Usado para clampar o orb ao ecra ONDE O CURSOR ESTA, nao ao ecra da janela
+/// (que fica desatualizado quando o cursor muda de monitor a meio do seguimento).
+pub fn monitor_containing(
+    px: i32,
+    py: i32,
+    monitors: &[(i32, i32, i32, i32)],
+) -> Option<(i32, i32, i32, i32)> {
+    monitors
+        .iter()
+        .copied()
+        .find(|&(x, y, w, h)| px >= x && px < x + w && py >= y && py < y + h)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,5 +177,45 @@ mod tests {
         assert_eq!(clamp_pos(1910, 1070, 260, 100, 0, 0, 1920, 1080), (1660, 980));
         // dentro: inalterado.
         assert_eq!(clamp_pos(100, 100, 260, 100, 0, 0, 1920, 1080), (100, 100));
+    }
+
+    #[test]
+    fn monitor_containing_finds_point_in_first_monitor() {
+        let monitors = [(0, 0, 1920, 1080), (1920, 0, 1920, 1080)];
+        assert_eq!(
+            monitor_containing(100, 100, &monitors),
+            Some((0, 0, 1920, 1080))
+        );
+    }
+
+    #[test]
+    fn monitor_containing_finds_point_in_second_monitor() {
+        let monitors = [(0, 0, 1920, 1080), (1920, 0, 1920, 1080)];
+        assert_eq!(
+            monitor_containing(2500, 500, &monitors),
+            Some((1920, 0, 1920, 1080))
+        );
+    }
+
+    #[test]
+    fn monitor_containing_treats_left_edge_as_inside_and_right_edge_as_outside() {
+        let monitors = [(0, 0, 1920, 1080), (1920, 0, 1920, 1080)];
+        // x=1920 e o primeiro pixel do segundo monitor, nao o ultimo do primeiro.
+        assert_eq!(
+            monitor_containing(1920, 0, &monitors),
+            Some((1920, 0, 1920, 1080))
+        );
+        // x=1919 e o ultimo pixel do primeiro monitor.
+        assert_eq!(
+            monitor_containing(1919, 0, &monitors),
+            Some((0, 0, 1920, 1080))
+        );
+    }
+
+    #[test]
+    fn monitor_containing_returns_none_outside_all_monitors() {
+        let monitors = [(0, 0, 1920, 1080)];
+        assert_eq!(monitor_containing(-10, 500, &monitors), None);
+        assert_eq!(monitor_containing(500, 2000, &monitors), None);
     }
 }
