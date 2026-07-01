@@ -76,7 +76,7 @@ pub fn clamp_pos(
     (x.clamp(area_x, max_x), y.clamp(area_y, max_y))
 }
 
-/// Encontra o monitor (retangulo x,y,w,h) que contem o ponto (px,py) — tipicamente o
+/// Encontra o monitor (retangulo x,y,w,h) que contem o ponto (px,py), tipicamente o
 /// cursor. Usado para clampar o orb ao ecra ONDE O CURSOR ESTA, nao ao ecra da janela
 /// (que fica desatualizado quando o cursor muda de monitor a meio do seguimento).
 pub fn monitor_containing(
