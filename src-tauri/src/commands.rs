@@ -4,7 +4,7 @@ use ember_core::model::{ProfileSource, Provider, RefineMode};
 use ember_core::prompt::build_llm_request;
 use ember_core::retry::RetryConfig;
 use serde::Serialize;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, State, Manager};
 
 use crate::state::AppState;
 use crate::{config, profile, providers, secrets};
@@ -236,6 +236,13 @@ pub fn reset_profile(app: AppHandle) -> Result<SettingsDto, String> {
     cfg.ignore_claude_md = true;
     config::save(&app, &cfg).map_err(|e| e.to_string())?;
     Ok(build_dto(&app, &cfg))
+}
+
+#[tauri::command]
+pub fn close_splash(app: AppHandle) {
+    if let Some(splash) = app.get_webview_window("splash") {
+        let _ = splash.close();
+    }
 }
 
 // ---------------------------------------------------------------------------------------

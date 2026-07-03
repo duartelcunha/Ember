@@ -284,10 +284,18 @@ pub fn run() {
             commands::set_profile,
             commands::reload_profile,
             commands::reset_profile,
+            commands::close_splash,
         ])
         .setup(|app| {
             build_tray(app)?;
             let handle = app.handle().clone();
+            
+            // Lanca a splash screen animation
+            if let Some(splash) = get_or_create_window(&handle, "splash") {
+                let _ = splash.set_ignore_cursor_events(true);
+                let _ = splash.show();
+            }
+            
             // Pre-cria a janela overlay (escondida) para o listener do orb estar pronto
             // antes do primeiro hotkey (senao o evento "refining" perde-se).
             let _ = get_or_create_window(&handle, "overlay");

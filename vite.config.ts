@@ -28,6 +28,7 @@ export default defineConfig({
       input: {
         overlay: r("./overlay.html"),
         settings: r("./settings.html"),
+        splash: r("./splash.html"),
       },
       output: {
         manualChunks: {

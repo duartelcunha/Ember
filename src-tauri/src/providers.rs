@@ -13,7 +13,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 /// Quanto tempo esperar por bytes novos do stream antes de desistir. NAO e um teto na
 /// duracao TOTAL da resposta (que pode legitimamente demorar minutos com thinking pesado:
 /// ver `AppState::new`), so deteta uma ligacao presa a meio, sem trafego.
-const STREAM_STALL_TIMEOUT: Duration = Duration::from_secs(25);
+const STREAM_STALL_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Fonte barata de jitter em [0,1) sem dependencia de `rand`: os nanos do relogio bastam
 /// para desalinhar retries concorrentes (evitar thundering-herd). Nao e criptografico.
