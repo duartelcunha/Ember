@@ -19,7 +19,7 @@ impl Provider {
     }
 }
 
-/// Modo de refinamento. v1 usa `Adaptive`; os outros ficam para depois.
+/// Modo de refinamento, escolhido nas settings. `Adaptive` e o default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum RefineMode {

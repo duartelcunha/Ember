@@ -9,7 +9,8 @@ use tauri::{AppHandle, Manager};
 
 pub const DEFAULT_PROFILE: &str = "\
 Escreve com clareza e precisao. Tom profissional mas direto. Frases curtas. Evita jargao\
- desnecessario e enchimento. Quando faltar contexto, pede o que e essencial em vez de assumir.";
+ desnecessario e enchimento. Quando faltar contexto, mantem o pedido generico ou usa\
+ marcadores, em vez de inventar ou de pedir esclarecimentos ao utilizador.";
 
 pub struct Resolved {
     pub profile: Profile,
@@ -32,8 +33,7 @@ pub fn resolve(app: &AppHandle, override_text: Option<&str>, ignore_claude_md: b
 
     if !ignore_claude_md {
         let home = app.path().home_dir().ok();
-        let cwd = std::env::current_dir().ok();
-        let candidates = profile_candidates(home.as_deref(), cwd.as_deref());
+        let candidates = profile_candidates(home.as_deref());
         let exists = |p: &Path| p.exists();
         if let Some(p) = pick_existing(&candidates, &exists) {
             if let Ok(text) = fs::read_to_string(&p) {

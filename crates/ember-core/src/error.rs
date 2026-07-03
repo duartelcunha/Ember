@@ -11,6 +11,8 @@ use thiserror::Error;
 /// - `Payload`: 400/404/413. Bug nosso -> propaga sem mascarar (nao faz fallback).
 /// - `ContentPolicy`: recusa por politica (Claude stop_reason=refusal; Gemini SAFETY).
 ///   Nao-transitorio: propaga por defeito (config pode tentar a outra familia).
+/// - `Truncated`: resposta cortada por max_tokens. Deterministico no mesmo provider
+///   (retry cego devolve o mesmo corte), mas o outro provider pode ter folga: fallback.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OutcomeClass {
     Success,
@@ -18,6 +20,7 @@ pub enum OutcomeClass {
     Auth,
     Payload,
     ContentPolicy,
+    Truncated,
 }
 
 /// Erros de dominio. Sao o `reason` em `Decision::Fail` e o retorno dos parsers de wire.
@@ -33,6 +36,10 @@ pub enum CoreError {
     Payload,
     #[error("recusado por politica de conteudo")]
     ContentPolicy,
+    #[error("resposta truncada pelo limite de tokens")]
+    Truncated,
+    #[error("falha a ler as chaves do cofre de credenciais")]
+    KeyStore,
     #[error("resposta do provider sem texto utilizavel")]
     EmptyResponse,
     #[error("falha a interpretar a resposta do provider: {0}")]

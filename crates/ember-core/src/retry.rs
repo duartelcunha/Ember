@@ -142,6 +142,17 @@ pub fn plan(state: &LoopState, outcome: &OutcomeClass, cfg: &RetryConfig, rng01:
                 }
             }
         }
+        // Corte por tokens e deterministico no mesmo provider (retry cego devolveria o mesmo
+        // corte), mas o outro provider pode ter mais folga: fallback, sem retry.
+        OutcomeClass::Truncated => {
+            if has_next_provider {
+                fallback()
+            } else {
+                Decision::Fail {
+                    reason: CoreError::Truncated,
+                }
+            }
+        }
         OutcomeClass::Transient { retry_after_ms } => {
             if state.attempt < cfg.max_retries_per_provider {
                 Decision::Retry {
@@ -256,6 +267,41 @@ mod tests {
             plan(&LoopState::start(), &OutcomeClass::Payload, &c, 0.0),
             Decision::Fail { reason: CoreError::Payload }
         );
+    }
+
+    #[test]
+    fn truncated_falls_back_then_fails_without_retry() {
+        let c = cfg();
+        // Nunca faz retry (o corte repetir-se-ia): salta logo para o outro provider.
+        assert!(matches!(
+            plan(&LoopState::start(), &OutcomeClass::Truncated, &c, 0.0),
+            Decision::Fallback { .. }
+        ));
+        let last = LoopState { provider_index: 1, attempt: 0 };
+        assert_eq!(
+            plan(&last, &OutcomeClass::Truncated, &c, 0.0),
+            Decision::Fail { reason: CoreError::Truncated }
+        );
+    }
+
+    #[test]
+    fn single_provider_transient_exhausts_to_fail() {
+        let c = RetryConfig { provider_count: 1, ..RetryConfig::default() };
+        let out = OutcomeClass::Transient { retry_after_ms: None };
+        // Sem provider seguinte: retries esgotam e falha (nao fica preso nem faz fallback).
+        let exhausted = LoopState { provider_index: 0, attempt: c.max_retries_per_provider };
+        assert_eq!(
+            plan(&exhausted, &out, &c, 0.0),
+            Decision::Fail { reason: CoreError::AllProvidersFailed }
+        );
+    }
+
+    #[test]
+    fn backoff_large_attempt_does_not_overflow() {
+        let c = cfg();
+        // attempt alto (o shift em backoff_ms podia estourar): tem de saturar no teto.
+        assert_eq!(backoff_ms(64, &c, 1.0, None), c.max_delay_ms);
+        assert_eq!(backoff_ms(1000, &c, 1.0, None), c.max_delay_ms);
     }
 
     #[test]

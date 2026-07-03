@@ -5,17 +5,15 @@
 
 use std::path::{Path, PathBuf};
 
-/// Constroi a lista ordenada de candidatos a partir dos diretorios base.
-/// Ordem: o CLAUDE.md global (perfil pessoal) primeiro, depois o do projeto/cwd.
-pub fn profile_candidates(home: Option<&Path>, cwd: Option<&Path>) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    if let Some(h) = home {
-        out.push(h.join(".claude").join("CLAUDE.md"));
-    }
-    if let Some(c) = cwd {
-        out.push(c.join("CLAUDE.md"));
-    }
-    out
+/// Constroi a lista de candidatos a partir do diretorio home: so o CLAUDE.md GLOBAL do
+/// utilizador. Ember e uma app de tray/autostart, nao uma CLI de projeto: o cwd do
+/// processo depende de como o SO a lancou (autostart, atalho, Explorer...) e nao
+/// corresponde de forma fiavel a "o projeto em que o utilizador esta a trabalhar", por
+/// isso nao ha um candidato baseado em cwd (havia um antes; removido por ser
+/// imprevisivel, nao por preguica).
+pub fn profile_candidates(home: Option<&Path>) -> Vec<PathBuf> {
+    home.map(|h| vec![h.join(".claude").join("CLAUDE.md")])
+        .unwrap_or_default()
 }
 
 /// Devolve o primeiro candidato que existe, segundo o predicado injetado.
@@ -28,12 +26,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn builds_candidates_in_priority_order() {
+    fn builds_the_global_candidate_from_home() {
         let home = PathBuf::from("/home/u");
-        let cwd = PathBuf::from("/proj");
-        let c = profile_candidates(Some(&home), Some(&cwd));
-        assert_eq!(c[0], PathBuf::from("/home/u/.claude/CLAUDE.md"));
-        assert_eq!(c[1], PathBuf::from("/proj/CLAUDE.md"));
+        let c = profile_candidates(Some(&home));
+        assert_eq!(c, vec![PathBuf::from("/home/u/.claude/CLAUDE.md")]);
+    }
+
+    #[test]
+    fn empty_without_home() {
+        assert_eq!(profile_candidates(None), Vec::<PathBuf>::new());
     }
 
     #[test]
