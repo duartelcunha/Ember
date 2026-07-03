@@ -217,16 +217,9 @@ pub async fn run(app: AppHandle, terminal: bool, timing: CaptureTiming) {
         }
     };
 
-    let app_cb2 = app.clone();
-    let preview_for_delta = preview.clone();
-    let on_delta = move |delta: &str| {
-        let Ok(mut p) = preview_for_delta.lock() else {
-            return;
-        };
-        p.push_str(delta);
-        let shown = ember_core::providers::tail_preview(&p, STREAM_PREVIEW_MAX_CHARS);
-        drop(p);
-        emit(&app_cb2, "refining", Some(shown), None);
+    let on_delta = move |_delta: &str| {
+        // The user requested not to see the streaming text preview
+        // before the "Refined." message appears.
     };
 
     let state = app.state::<AppState>();

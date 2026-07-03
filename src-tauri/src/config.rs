@@ -67,7 +67,7 @@ impl Config {
     /// aceites pela UI, para um `capture_step_ms: 0` (busy-loop) nunca chegar ao runtime.
     fn sanitize(mut self) -> Self {
         let d = Config::default();
-        if self.gemini_model.trim().is_empty() {
+        if self.gemini_model.trim().is_empty() || self.gemini_model == "gemini-3.5-flash" {
             self.gemini_model = d.gemini_model;
         }
         if self.claude_model.trim().is_empty() {

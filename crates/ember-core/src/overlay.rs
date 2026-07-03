@@ -81,7 +81,7 @@ pub fn feedback_for(outcome: FlowOutcome) -> OverlayFeedback {
             phase: "success",
             message: None,
             provider: Some(provider),
-            hide_after_ms: 900,
+            hide_after_ms: 2000,
         },
         FlowOutcome::RefineFailed { message } => OverlayFeedback {
             phase: "error",

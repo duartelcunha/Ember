@@ -25,6 +25,32 @@
         "visible": false
       },
       {
+        "label": "quit_anim",
+        "url": "splash.html?mode=quit",
+        "create": false,
+        "fullscreen": true,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "resizable": false,
+        "visible": false
+      },
+      {
+        "label": "startup_anim",
+        "url": "splash.html?mode=startup",
+        "create": false,
+        "fullscreen": true,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "resizable": false,
+        "visible": false
+      },
+      {
         "label": "overlay",
         "url": "overlay.html",
         "create": false,

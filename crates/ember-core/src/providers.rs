@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 /// Header de versao obrigatorio da API Anthropic.
 pub const ANTHROPIC_VERSION: &str = "2023-06-01";
 /// Modelo Gemini primario por defeito (ultimo Flash, com thinking).
-pub const DEFAULT_GEMINI_MODEL: &str = "gemini-3.5-flash";
+pub const DEFAULT_GEMINI_MODEL: &str = "gemini-2.5-flash";
 /// Modelo Claude de fallback por defeito.
 pub const DEFAULT_CLAUDE_MODEL: &str = "claude-sonnet-4-6";
 
@@ -218,16 +218,28 @@ pub fn claude_stream_event(chunk: &Value) -> ClaudeStreamEvent {
 /// shell acumula chunks de rede num buffer e chama isto a cada chunk recebido; o resto
 /// devolvido fica no buffer para a proxima chamada, para nunca cortar um evento a meio.
 pub fn split_sse_events(buf: &[u8]) -> (Vec<String>, Vec<u8>) {
-    const SEP: &[u8] = b"\n\n";
     let mut events = Vec::new();
     let mut start = 0;
-    while let Some(rel) = buf[start..]
-        .windows(SEP.len())
-        .position(|w| w == SEP)
-    {
+    while start < buf.len() {
+        let pos_crlf = buf[start..].windows(4).position(|w| w == b"\r\n\r\n");
+        let pos_lf = buf[start..].windows(2).position(|w| w == b"\n\n");
+
+        let (rel, sep_len) = match (pos_crlf, pos_lf) {
+            (Some(c), Some(l)) => {
+                if c <= l {
+                    (c, 4)
+                } else {
+                    (l, 2)
+                }
+            }
+            (Some(c), None) => (c, 4),
+            (None, Some(l)) => (l, 2),
+            (None, None) => break,
+        };
+
         let end = start + rel;
         events.push(String::from_utf8_lossy(&buf[start..end]).into_owned());
-        start = end + SEP.len();
+        start = end + sep_len;
     }
     (events, buf[start..].to_vec())
 }

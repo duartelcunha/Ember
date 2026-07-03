@@ -27,7 +27,7 @@ import {
   type ThinkingLevel,
 } from "@/lib/ipc";
 
-const GEMINI_PRESETS = ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"];
+const GEMINI_PRESETS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
 const CLAUDE_PRESETS = ["claude-sonnet-4-6"];
 const CUSTOM = "__custom__";
 

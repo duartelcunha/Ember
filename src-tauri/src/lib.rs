@@ -240,13 +240,22 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
         .tooltip("Ember")
         .menu(&menu)
         .on_menu_event(|app, event| match event.id().as_ref() {
-            "open_settings" => show_settings(app),
+            "open_settings" => {
+                show_settings(app);
+            }
             "quit" => {
-                // Marca a saida deliberada para o handler de ExitRequested deixar sair.
-                app.state::<state::AppState>()
-                    .quitting
-                    .store(true, Ordering::SeqCst);
-                app.exit(0);
+                if let Some(quit_anim) = get_or_create_window(app, "quit_anim") {
+                    let _ = quit_anim.set_ignore_cursor_events(true);
+                    let _ = quit_anim.show();
+                }
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(650)).await;
+                    app.state::<state::AppState>()
+                        .quitting
+                        .store(true, Ordering::SeqCst);
+                    app.exit(0);
+                });
             }
             _ => {}
         })
@@ -290,10 +299,18 @@ pub fn run() {
             build_tray(app)?;
             let handle = app.handle().clone();
             
-            // Lanca a splash screen animation
-            if let Some(splash) = get_or_create_window(&handle, "splash") {
-                let _ = splash.set_ignore_cursor_events(true);
-                let _ = splash.show();
+            let app_dir = handle.path().app_data_dir().unwrap();
+            let marker = app_dir.join(".installed");
+            let is_install = !marker.exists();
+            if is_install {
+                let _ = std::fs::create_dir_all(&app_dir);
+                let _ = std::fs::write(&marker, b"");
+            }
+            
+            let window_name = if is_install { "splash" } else { "startup_anim" };
+            if let Some(anim) = get_or_create_window(&handle, window_name) {
+                let _ = anim.set_ignore_cursor_events(true);
+                let _ = anim.show();
             }
             
             // Pre-cria a janela overlay (escondida) para o listener do orb estar pronto
