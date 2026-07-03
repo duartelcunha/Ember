@@ -73,8 +73,8 @@
 }
 
 .ember-orb {
-  width: 18px;
-  height: 18px;
+  width: 11px;
+  height: 11px;
   border-radius: 9999px;
   background: var(--color-orb-accent);
   box-shadow: 0 1px 8px rgba(217, 119, 87, 0.45);
@@ -84,7 +84,7 @@
 /* Glow pulsante (estado "a pensar"), por baixo do orb. Sem rotacao: so respiracao de luz. */
 .ember-glow {
   position: absolute;
-  inset: -7px;
+  inset: -4px;
   border-radius: 9999px;
   background: radial-gradient(circle, rgba(217, 119, 87, 0.55) 0%, rgba(217, 119, 87, 0) 70%);
   filter: blur(2px);

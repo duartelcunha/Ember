@@ -9,7 +9,7 @@ export function Orb() {
     <m.div
       layoutId="refiner-surface"
       className="relative grid place-items-center"
-      style={{ borderRadius: 9999, width: 28, height: 28 }}
+      style={{ borderRadius: 9999, width: 17, height: 17 }}
       initial={{ opacity: 0, scale: 0.6 }}
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.6 }}
