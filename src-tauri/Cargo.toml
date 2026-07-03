@@ -18,15 +18,17 @@ tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-autostart = "2"
-tauri-plugin-positioner = "2"
 tauri-plugin-process = "2"
 ember-core = { path = "../crates/ember-core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 # Resiliencia / providers
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
-tokio = { version = "1", features = ["time"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+tokio = { version = "1", features = ["time", "sync", "macros"] }
+# Consumir o body de streaming (SSE) como Stream<Item = Bytes>: so o essencial (sem runtime,
+# sem executor), a mesma peca que o proprio reqwest usa internamente para bytes_stream().
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 # Storage seguro das chaves (Windows Credential Manager). `windows-native` e OBRIGATORIO.
 keyring = { version = "3", features = ["windows-native"] }
 
@@ -40,7 +42,10 @@ arboard = "3"
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_System_Threading",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
     "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
 ] }
 
 # Auto-update assinado (so desktop: o updater nao suporta mobile).

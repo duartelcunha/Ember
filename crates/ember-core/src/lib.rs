@@ -8,6 +8,7 @@
 pub mod error;
 pub mod model;
 pub mod modifiers;
+pub mod overlay;
 pub mod profile_path;
 pub mod prompt;
 pub mod providers;

@@ -89,6 +89,12 @@ fn parse_provider(s: &str) -> Result<Provider, String> {
     }
 }
 
+/// Niveis de thinking aceites pela API Gemini 3.x. Validar aqui evita persistir uma string
+/// arbitraria que depois iria no corpo do pedido e seria rejeitada pelo provider.
+fn valid_thinking_level(s: &str) -> bool {
+    matches!(s, "minimal" | "low" | "medium" | "high")
+}
+
 // ---------------------------------------------------------------------------------------
 // Comandos de settings
 // ---------------------------------------------------------------------------------------
@@ -113,9 +119,16 @@ pub fn set_model(app: AppHandle, provider: String, model: String) -> Result<(), 
 #[tauri::command]
 pub fn set_hotkey(app: AppHandle, hotkey: String) -> Result<(), String> {
     let mut cfg = config::load(&app);
-    cfg.hotkey = hotkey.clone();
-    config::save(&app, &cfg).map_err(|e| e.to_string())?;
-    crate::register_hotkey(&app, &hotkey)
+    let previous = cfg.hotkey.clone();
+    // Regista PRIMEIRO, persiste depois. Se o novo atalho for invalido ou estiver ocupado,
+    // restaura o anterior (o register faz unregister_all, logo sem restauro ficava sem
+    // nenhum) e NAO grava o atalho partido em disco (senao persistia partido entre arranques).
+    crate::register_hotkey(&app, &hotkey).map_err(|e| {
+        let _ = crate::register_hotkey(&app, &previous);
+        e
+    })?;
+    cfg.hotkey = hotkey;
+    config::save(&app, &cfg).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -138,6 +151,9 @@ pub fn set_mode(app: AppHandle, mode: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn set_thinking(app: AppHandle, enabled: bool, level: String) -> Result<(), String> {
+    if !valid_thinking_level(&level) {
+        return Err(format!("invalid thinking level: {level}"));
+    }
     let mut cfg = config::load(&app);
     cfg.thinking_enabled = enabled;
     cfg.thinking_level = level;
@@ -157,12 +173,15 @@ pub fn set_capture_timing(
     polls: u32,
     step_ms: u64,
     settle_ms: u64,
-) -> Result<(), String> {
+) -> Result<SettingsDto, String> {
     let mut cfg = config::load(&app);
-    cfg.capture_polls = polls.clamp(5, 200);
-    cfg.capture_step_ms = step_ms.clamp(1, 100);
-    cfg.paste_settle_ms = settle_ms.clamp(0, 1000);
-    config::save(&app, &cfg).map_err(|e| e.to_string())
+    cfg.capture_polls = polls.clamp(config::CAPTURE_POLLS.0, config::CAPTURE_POLLS.1);
+    cfg.capture_step_ms = step_ms.clamp(config::CAPTURE_STEP_MS.0, config::CAPTURE_STEP_MS.1);
+    cfg.paste_settle_ms = settle_ms.clamp(config::PASTE_SETTLE_MS.0, config::PASTE_SETTLE_MS.1);
+    config::save(&app, &cfg).map_err(|e| e.to_string())?;
+    // Devolve o DTO com os valores ja clampados, para a UI refletir o que ficou gravado
+    // em vez de manter os numeros que o utilizador escreveu fora da gama.
+    Ok(build_dto(&app, &cfg))
 }
 
 #[tauri::command]
@@ -178,10 +197,13 @@ pub fn clear_api_key(provider: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn validate_key(state: State<'_, AppState>, provider: String) -> Result<bool, String> {
+pub async fn validate_key(
+    state: State<'_, AppState>,
+    provider: String,
+) -> Result<providers::KeyCheck, String> {
     let p = parse_provider(&provider)?;
     let Some(key) = secrets::get(p) else {
-        return Ok(false);
+        return Ok(providers::KeyCheck::Invalid);
     };
     Ok(providers::validate(&state.http, p, &key).await)
 }
@@ -226,27 +248,42 @@ pub(crate) fn friendly_error(e: &ember_core::CoreError) -> String {
         NoProvidersConfigured => "No API key set. Opening settings…".into(),
         Auth => "Invalid API key. Check settings.".into(),
         ContentPolicy => "Blocked by the provider's content policy.".into(),
+        Truncated => "Selection too long for the model. Nothing changed.".into(),
+        KeyStore => "Couldn't read your saved keys. Reopen and re-save them.".into(),
         AllProvidersFailed => "Providers failed (network or limits). Try again.".into(),
         _ => "Couldn't refine. Try again.".into(),
     }
 }
 
 /// Refina `input` com a chain Gemini->Claude. Devolve (texto, provider) ou CoreError.
+/// `on_attempt` recebe (provider, indice, tentativa) antes de cada chamada; `on_delta`
+/// recebe cada tranche de texto assim que chega do stream. Ambos servem o overlay para
+/// mostrar progresso real em vez de um orb mudo durante retries/fallback/geracao longa.
 pub(crate) async fn refine_text(
     app: &AppHandle,
     state: &AppState,
     input: &str,
+    on_attempt: &(dyn Fn(Provider, usize, u32) + Send + Sync),
+    on_delta: &(dyn Fn(&str) + Send + Sync),
 ) -> Result<(String, String), ember_core::CoreError> {
     let cfg = config::load(app);
     let mut chain: Vec<(Provider, String)> = Vec::new();
-    if let Some(k) = secrets::get(Provider::Gemini) {
-        chain.push((Provider::Gemini, k));
-    }
-    if let Some(k) = secrets::get(Provider::Claude) {
-        chain.push((Provider::Claude, k));
+    let mut key_store_failed = false;
+    for provider in [Provider::Gemini, Provider::Claude] {
+        match secrets::try_get(provider) {
+            Ok(Some(k)) => chain.push((provider, k)),
+            Ok(None) => {}
+            // Falha do cofre: nao retirar o provider em silencio. Se ficarmos sem nenhum,
+            // reportamos KeyStore (honesto) em vez de "sem providers".
+            Err(_) => key_store_failed = true,
+        }
     }
     if chain.is_empty() {
-        return Err(ember_core::CoreError::NoProvidersConfigured);
+        return Err(if key_store_failed {
+            ember_core::CoreError::KeyStore
+        } else {
+            ember_core::CoreError::NoProvidersConfigured
+        });
     }
 
     let resolved = profile::resolve(app, cfg.profile_override.as_deref(), cfg.ignore_claude_md);
@@ -269,7 +306,57 @@ pub(crate) async fn refine_text(
         &req,
         &cfg.gemini_model,
         &cfg.claude_model,
+        on_attempt,
+        on_delta,
     )
     .await?;
     Ok((resp.text, resp.provider.display_name().to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_mode_round_trips_and_rejects_junk() {
+        for m in [RefineMode::Adaptive, RefineMode::Polish, RefineMode::Turbo] {
+            assert_eq!(parse_mode(mode_str(m)).unwrap(), m);
+        }
+        assert!(parse_mode("nope").is_err());
+    }
+
+    #[test]
+    fn parse_provider_accepts_known_rejects_unknown() {
+        assert_eq!(parse_provider("gemini").unwrap(), Provider::Gemini);
+        assert_eq!(parse_provider("claude").unwrap(), Provider::Claude);
+        assert!(parse_provider("openai").is_err());
+    }
+
+    #[test]
+    fn thinking_level_validation() {
+        for lvl in ["minimal", "low", "medium", "high"] {
+            assert!(valid_thinking_level(lvl));
+        }
+        assert!(!valid_thinking_level("extreme"));
+        assert!(!valid_thinking_level(""));
+    }
+
+    #[test]
+    fn friendly_error_is_distinct_and_nonempty() {
+        use ember_core::CoreError::*;
+        let cases = [
+            NoProvidersConfigured,
+            Auth,
+            ContentPolicy,
+            Truncated,
+            KeyStore,
+            AllProvidersFailed,
+        ];
+        for e in &cases {
+            assert!(!friendly_error(e).is_empty());
+        }
+        // Mensagens diferentes por classe (o utilizador tem de perceber o que falhou).
+        assert_ne!(friendly_error(&Auth), friendly_error(&Truncated));
+        assert_ne!(friendly_error(&KeyStore), friendly_error(&NoProvidersConfigured));
+    }
 }

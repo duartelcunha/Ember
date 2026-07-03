@@ -20,7 +20,20 @@ use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 /// Offset do orb em relacao ao cursor (centro do orb ~ cursor + isto), em px fisicos.
-const ORB_OFFSET: i32 = 18;
+/// X positivo = mais a direita, Y positivo = mais para baixo.
+const ORB_OFFSET_X: i32 = 24;
+const ORB_OFFSET_Y: i32 = 4;
+
+/// Tamanho do conteudo visivel do orb (o pontinho + alguma folga), usado para clampar
+/// ao monitor. A janela do overlay e fixa em 300x140 (para caber a pilula de erro), mas
+/// o orb e so um pontinho de 13px centrado la dentro: clampar a janela toda fazia o orb
+/// afastar-se muito do cursor perto das bordas do ecra.
+const ORB_CONTENT_SIZE: (i32, i32) = (20, 20);
+
+/// Tamanho da janela do overlay, espelhando a declaracao em `tauri.conf.json` (label
+/// "overlay"). So usado como fallback se `w.outer_size()` falhar (raro); nomeado para nao
+/// ter o mesmo par de numeros duplicado sem explicacao em dois ficheiros.
+const OVERLAY_FALLBACK_SIZE: (i32, i32) = (300, 140);
 
 /// Obtem (ou cria) uma janela declarada com `create:false`. NAO a mostra (o caller decide
 /// posicao/foco antes de `show`, para o orb nao piscar na posicao errada).
@@ -73,20 +86,49 @@ fn monitor_at_point(w: &WebviewWindow, px: i32, py: i32) -> (i32, i32, i32, i32)
         .unwrap_or_else(|| monitor_work_area(w))
 }
 
-/// Top-left desejado da janela do orb para o cursor atual: poe o centro do orb
-/// (centro da janela) junto ao cursor + offset, clampado ao monitor.
+/// Top-left desejado da janela do overlay para o cursor atual. O conteudo esta alinhado a
+/// esquerda e centrado na vertical (ver Overlay.tsx), com o padding `p-2` (8px logicos) a
+/// separar do canto. Ancoramos o BORDO ESQUERDO do conteudo (nao o centro) junto ao cursor
+/// + offset, para o conteudo crescer para a direita: a pilula e larga e, centrada, cairia
+/// por cima do rato em vez de aparecer ao lado como o orb.
 fn orb_target(app: &AppHandle, w: &WebviewWindow) -> Option<(i32, i32)> {
     let c = app.cursor_position().ok()?;
     let (ww, wh) = match w.outer_size() {
         Ok(s) => (s.width as i32, s.height as i32),
-        Err(_) => (300, 140),
+        Err(_) => OVERLAY_FALLBACK_SIZE,
     };
-    let tlx = c.x as i32 + ORB_OFFSET - ww / 2;
-    let tly = c.y as i32 + ORB_OFFSET - wh / 2;
+    let pad = (8.0 * w.scale_factor().unwrap_or(1.0)).round() as i32;
+    let anchor_x = c.x as i32 + ORB_OFFSET_X;
+    let anchor_y = c.y as i32 + ORB_OFFSET_Y;
+    let win_x = anchor_x - pad;
+    let win_y = anchor_y - wh / 2;
     let (ax, ay, aw, ah) = monitor_at_point(w, c.x as i32, c.y as i32);
-    Some(ember_core::selection::clamp_pos(
-        tlx, tly, ww, wh, ax, ay, aw, ah,
-    ))
+    let is_orb = app
+        .state::<state::AppState>()
+        .orb_visible
+        .load(Ordering::SeqCst);
+    if is_orb {
+        // Orb: minusculo dentro de uma janela grande. Clampa so a caixa visivel ao ecra,
+        // senao perto das bordas a janela era contida e o orb afastava-se do cursor.
+        let (cw, ch) = ORB_CONTENT_SIZE;
+        Some(ember_core::selection::clamp_window_for_content(
+            win_x,
+            win_y,
+            pad,
+            (wh - ch) / 2,
+            cw,
+            ch,
+            ax,
+            ay,
+            aw,
+            ah,
+        ))
+    } else {
+        // Pilula: ocupa a janela quase toda, basta manter a janela dentro do ecra.
+        Some(ember_core::selection::clamp_pos(
+            win_x, win_y, ww, wh, ax, ay, aw, ah,
+        ))
+    }
 }
 
 /// Posiciona o orb junto ao cursor (snap), mostra-o sem foco e arranca o loop de seguimento.
@@ -94,6 +136,12 @@ pub(crate) fn show_orb_at_cursor(app: &AppHandle) {
     let Some(w) = get_or_create_window(app, "overlay") else {
         return;
     };
+    // Cada hotkey novo comeca sempre pelo orb: marca ja aqui (sincrono), antes do loop de
+    // seguimento arrancar, para o primeiro frame nao usar a caixa de conteudo da pilula
+    // que possa ter ficado de um ciclo anterior.
+    app.state::<state::AppState>()
+        .orb_visible
+        .store(true, Ordering::SeqCst);
     let _ = w.set_always_on_top(true);
     // Transparente sobre outras apps: nunca intercetar cliques.
     let _ = w.set_ignore_cursor_events(true);
@@ -101,35 +149,31 @@ pub(crate) fn show_orb_at_cursor(app: &AppHandle) {
         let _ = w.set_position(PhysicalPosition::new(x, y));
     }
     let _ = w.show();
-    // NB: nao chamamos set_focus — o paste tem de aterrar na app em foco, nao na nossa.
+    // NB: nao chamamos set_focus. O paste tem de aterrar na app em foco, nao na nossa.
 
-    // Loop de seguimento: corre enquanto o orb estiver visivel, com suavizacao (lerp).
+    // Loop de seguimento: corre enquanto o orb estiver visivel, colado ao cursor.
     let app2 = app.clone();
     tauri::async_runtime::spawn(async move { orb_follow_loop(app2).await });
 }
 
-/// Segue o cursor suavemente enquanto o orb esta visivel. Termina quando `hide_orb` esconde.
+/// Segue o cursor rigidamente (sem lerp/atraso) enquanto o orb esta visivel. Termina
+/// quando `hide_orb` esconde. Usa um `interval` (nao `sleep`) para manter um passo
+/// estavel a ~60fps: um `sleep` a seguir ao trabalho de cada iteracao acumula deriva
+/// (o tempo do proprio `set_position` soma-se ao intervalo), sentido como engasgos.
 async fn orb_follow_loop(app: AppHandle) {
     let Some(w) = app.get_webview_window("overlay") else {
         return;
     };
-    let mut pos = w
-        .outer_position()
-        .map(|p| (p.x as f64, p.y as f64))
-        .unwrap_or((0.0, 0.0));
+    let mut tick = tokio::time::interval(std::time::Duration::from_secs_f64(1.0 / 60.0));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         if !matches!(w.is_visible(), Ok(true)) {
             break;
         }
         if let Some((tx, ty)) = orb_target(&app, &w) {
-            pos.0 += (tx as f64 - pos.0) * 0.28;
-            pos.1 += (ty as f64 - pos.1) * 0.28;
-            let _ = w.set_position(PhysicalPosition::new(
-                pos.0.round() as i32,
-                pos.1.round() as i32,
-            ));
+            let _ = w.set_position(PhysicalPosition::new(tx, ty));
         }
-        tokio::time::sleep(std::time::Duration::from_millis(16)).await;
+        tick.tick().await;
     }
 }
 
@@ -153,6 +197,16 @@ pub(crate) fn register_hotkey(app: &AppHandle, hotkey: &str) -> Result<(), Strin
     let _ = gs.unregister_all();
     gs.on_shortcut(hotkey, move |app, _shortcut, event| {
         if event.state == ShortcutState::Pressed {
+            // Guarda de reentrancia. Se ja houver um refine a decorrer, esta segunda tecla
+            // CANCELA-o (em vez de arrancar um segundo fluxo, que corromperia o clipboard).
+            let st = app.state::<state::AppState>();
+            if st.busy.swap(true, Ordering::SeqCst) {
+                st.cancel.store(true, Ordering::SeqCst);
+                st.cancel_notify.notify_waiters();
+                return;
+            }
+            // Arranque limpo: sem cancelamento pendente de um ciclo anterior.
+            st.cancel.store(false, Ordering::SeqCst);
             let cfg = config::load(app);
             // Deteta o terminal ANTES de mostrar o orb (a app em foco e ainda o alvo).
             let terminal = cfg.terminal_handling && foreground::is_terminal_foreground();
@@ -163,7 +217,14 @@ pub(crate) fn register_hotkey(app: &AppHandle, hotkey: &str) -> Result<(), Strin
             };
             show_orb_at_cursor(app);
             let app = app.clone();
-            tauri::async_runtime::spawn(async move { flow::run(app, terminal, timing).await });
+            tauri::async_runtime::spawn(async move {
+                flow::run(app.clone(), terminal, timing).await;
+                // Liberta a guarda so no fim do ciclo (o orb ja foi escondido dentro de run):
+                // ate aqui, o hide_after deste ciclo nao pode ser pisado por outra tecla.
+                app.state::<state::AppState>()
+                    .busy
+                    .store(false, Ordering::SeqCst);
+            });
         }
     })
     .map_err(|e| e.to_string())
@@ -207,7 +268,6 @@ pub fn run() {
             MacosLauncher::LaunchAgent,
             None,
         ))
-        .plugin(tauri_plugin_positioner::init())
         .manage(state::AppState::new())
         .invoke_handler(tauri::generate_handler![
             commands::get_settings,
@@ -232,7 +292,11 @@ pub fn run() {
             // antes do primeiro hotkey (senao o evento "refining" perde-se).
             let _ = get_or_create_window(&handle, "overlay");
             let cfg = config::load(&handle);
-            let _ = register_hotkey(&handle, &cfg.hotkey);
+            // Se o atalho guardado nao registar (ocupado por outra app, ou invalido de uma
+            // versao anterior), abre as settings em vez de arrancar sem hotkey em silencio.
+            if register_hotkey(&handle, &cfg.hotkey).is_err() {
+                show_settings(&handle);
+            }
             Ok(())
         })
         .build(tauri::generate_context!())
