@@ -20,6 +20,18 @@ pub fn get(provider: Provider) -> Option<String> {
     entry(provider).ok()?.get_password().ok()
 }
 
+/// Como `get`, mas distingue "chave nao configurada" (`Ok(None)`) de uma falha real do
+/// cofre (`Err`). Sem isto, um Credential Manager bloqueado devolvia `None` e o provider
+/// era silenciosamente retirado da cadeia (degradava em silencio, contra a regra da casa).
+pub fn try_get(provider: Provider) -> Result<Option<String>, ember_core::CoreError> {
+    let entry = entry(provider).map_err(|_| ember_core::CoreError::KeyStore)?;
+    match entry.get_password() {
+        Ok(k) => Ok(Some(k)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(_) => Err(ember_core::CoreError::KeyStore),
+    }
+}
+
 pub fn set(provider: Provider, key: &str) -> keyring::Result<()> {
     entry(provider)?.set_password(key)
 }
