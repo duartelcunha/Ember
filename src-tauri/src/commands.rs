@@ -187,27 +187,58 @@ pub fn set_capture_timing(
 }
 
 #[tauri::command]
-pub fn set_api_key(provider: String, key: String) -> Result<(), String> {
+pub fn set_api_key(state: State<'_, AppState>, provider: String, key: String) -> Result<(), String> {
     let p = parse_provider(&provider)?;
-    secrets::set(p, &key).map_err(|e| e.to_string())
+    secrets::set(p, &key).map_err(|e| e.to_string())?;
+    // A chave mudou: o probe antigo deixa de valer. Tira do cache (fica "por revalidar").
+    if let Ok(mut m) = state.key_checks.lock() {
+        m.remove(&p);
+    }
+    Ok(())
 }
 
 #[tauri::command]
-pub fn clear_api_key(provider: String) -> Result<(), String> {
+pub fn clear_api_key(state: State<'_, AppState>, provider: String) -> Result<(), String> {
     let p = parse_provider(&provider)?;
-    secrets::delete(p).map_err(|e| e.to_string())
+    secrets::delete(p).map_err(|e| e.to_string())?;
+    if let Ok(mut m) = state.key_checks.lock() {
+        m.remove(&p);
+    }
+    Ok(())
 }
 
 #[tauri::command]
 pub async fn validate_key(
     state: State<'_, AppState>,
     provider: String,
-) -> Result<providers::KeyCheck, String> {
+) -> Result<ember_core::health::KeyCheck, String> {
     let p = parse_provider(&provider)?;
     let Some(key) = secrets::get(p) else {
-        return Ok(providers::KeyCheck::Invalid);
+        return Ok(ember_core::health::KeyCheck::Invalid);
     };
-    Ok(providers::validate(&state.http, p, &key).await)
+    let check = providers::validate(&state.http, p, &key).await;
+    // Guarda o resultado no cache de saude, para a pre-validacao/o veredicto refletirem ja.
+    if let Ok(mut m) = state.key_checks.lock() {
+        m.insert(p, (check, crate::now_ms()));
+    }
+    Ok(check)
+}
+
+/// Veredicto de saude dos providers, para as settings mostrarem um aviso honesto quando nao ha
+/// um fallback pre-validado (ex.: so um provider configurado). Le o cache de probes + a presenca
+/// das chaves; a decisao e pura (`ember_core::health::assess_providers`).
+#[tauri::command]
+pub fn get_provider_health(state: State<'_, AppState>) -> ember_core::health::Readiness {
+    let cache = state.key_checks.lock();
+    let entries: Vec<ember_core::health::ProviderStatus> = [Provider::Gemini, Provider::Claude]
+        .iter()
+        .map(|&p| ember_core::health::ProviderStatus {
+            provider: p,
+            configured: secrets::has(p),
+            last_check: cache.as_ref().ok().and_then(|m| m.get(&p).copied()),
+        })
+        .collect();
+    ember_core::health::assess_providers(&entries, crate::now_ms(), ember_core::health::DEFAULT_TTL_MS)
 }
 
 #[tauri::command]

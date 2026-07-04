@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Os providers suportados. Gemini e o primario; Claude o fallback (familia diferente).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Provider {
     Gemini,

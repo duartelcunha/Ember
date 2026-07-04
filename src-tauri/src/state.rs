@@ -1,13 +1,21 @@
 //! Estado partilhado da app (managed state do Tauri).
 
+use ember_core::health::KeyCheck;
+use ember_core::model::Provider;
 use reqwest::Client;
+use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
+use std::sync::Mutex;
 use std::time::Duration;
 use tokio::sync::Notify;
 
 pub struct AppState {
     /// Um unico `reqwest::Client` partilhado (pool de conexoes interno).
     pub http: Client,
+    /// Cache dos probes de validacao de chave (resultado + timestamp ms). Preenchido no
+    /// arranque (pre-validacao dos fallbacks) e quando o utilizador valida/muda uma chave. O
+    /// `ember_core::health::assess_providers` le isto para dizer se ha um fallback provado.
+    pub key_checks: Mutex<HashMap<Provider, (KeyCheck, u64)>>,
     /// `true` quando o utilizador pediu para sair (tray -> Quit). O handler de
     /// `ExitRequested` so impede a saida quando isto e `false` (fechar janelas != sair).
     pub quitting: AtomicBool,
@@ -39,6 +47,7 @@ impl AppState {
             .unwrap_or_default();
         Self {
             http,
+            key_checks: Mutex::new(HashMap::new()),
             quitting: AtomicBool::new(false),
             orb_visible: AtomicBool::new(true),
             busy: AtomicBool::new(false),

@@ -24,6 +24,7 @@ import {
   DEFAULT_SETTINGS,
   ipc,
   type EmberSettings,
+  type ProviderHealth,
   type ProviderKind,
   type RefineMode,
   type ThinkingLevel,
@@ -255,6 +256,33 @@ const MODE_COPY: Record<RefineMode, { title: string; hint: string }> = {
 
 const THINKING_LEVELS: ThinkingLevel[] = ["minimal", "low", "medium", "high"];
 
+/** Aviso honesto quando nao ha fallback pre-validado (regra de resiliencia). So aparece no caso
+ *  estavel e nao-transitorio: exatamente um provider configurado (sem 2a familia). Dispensavel. */
+function ProviderHealthNotice() {
+  const [health, setHealth] = useState<ProviderHealth | null>(null);
+  const [dismissed, setDismissed] = useState(false);
+
+  useEffect(() => {
+    ipc.getProviderHealth().then(setHealth).catch(() => {});
+  }, []);
+
+  if (dismissed || !health || health.configuredCount !== 1) return null;
+  return (
+    <div className="flex items-start justify-between gap-3 rounded-lg border border-[color:var(--border-accent)] bg-surface-1 p-4 text-xs text-fg">
+      <span>
+        Only one provider is configured, so there's no fallback if it has an outage or hits a
+        limit. Add a second key (a different family) for resilience.
+      </span>
+      <button
+        className="shrink-0 text-fg-muted hover:text-fg"
+        onClick={() => setDismissed(true)}
+      >
+        Dismiss
+      </button>
+    </div>
+  );
+}
+
 /** Diagnostico e modo debug: toggle, leitor de logs recentes, abrir a pasta, copiar report. */
 function DiagnosticsSection({ debugMode }: { debugMode: boolean }) {
   const [on, setOn] = useState(debugMode);
@@ -467,6 +495,7 @@ export function Settings() {
   
             <TabsContent value="providers">
               <div className="flex flex-col gap-4">
+                <ProviderHealthNotice />
                 <p className="text-xs text-fg-muted">
                   BYOK: bring your own keys. Gemini is primary; Claude is the fallback (different
                   families fail for different reasons). Keys live in the Windows Credential Manager,

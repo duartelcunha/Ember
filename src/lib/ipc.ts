@@ -7,6 +7,16 @@ export type ThinkingLevel = "minimal" | "low" | "medium" | "high";
 /** Resultado do probe de chave: distingue "chave recusada" de "sem rede agora". */
 export type KeyCheck = "valid" | "invalid" | "network_error";
 
+/** Veredicto de saude dos providers (fallback pre-validado?). Espelha ember_core::health. */
+export type SystemHealth = "healthy" | "degraded" | "down";
+export interface ProviderHealth {
+  health: SystemHealth;
+  configuredCount: number;
+  prevalidatedCount: number;
+  hasPrevalidatedFallback: boolean;
+  needsRevalidation: ProviderKind[];
+}
+
 /** Estado das definicoes exposto pelo nucleo Rust (sem chaves em claro). */
 export interface EmberSettings {
   geminiModel: string;
@@ -55,6 +65,7 @@ export const ipc = {
     invoke<void>("set_api_key", { provider, key }),
   clearApiKey: (provider: ProviderKind) => invoke<void>("clear_api_key", { provider }),
   validateKey: (provider: ProviderKind) => invoke<KeyCheck>("validate_key", { provider }),
+  getProviderHealth: () => invoke<ProviderHealth>("get_provider_health"),
   setModel: (provider: ProviderKind, model: string) =>
     invoke<void>("set_model", { provider, model }),
   setHotkey: (hotkey: string) => invoke<void>("set_hotkey", { hotkey }),

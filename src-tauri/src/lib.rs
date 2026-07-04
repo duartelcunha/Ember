@@ -218,6 +218,32 @@ pub(crate) fn show_settings(app: &AppHandle) {
     }
 }
 
+/// Timestamp atual em ms (epoch), para o cache de probes de saude dos providers.
+pub(crate) fn now_ms() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Pre-valida os fallbacks A ENTRADA (em background, nao bloqueia o arranque): prova, antes de
+/// ser preciso, se ha um fallback conhecido-bom, e escreve no cache de saude. Cumpre a regra da
+/// casa: o fallback e validado a entrada, nao no momento da falha.
+async fn prevalidate_providers(app: AppHandle) {
+    use ember_core::model::Provider;
+    let state = app.state::<state::AppState>();
+    for provider in [Provider::Gemini, Provider::Claude] {
+        if let Some(key) = secrets::get(provider) {
+            let check = providers::validate(&state.http, provider, &key).await;
+            if let Ok(mut m) = state.key_checks.lock() {
+                m.insert(provider, (check, now_ms()));
+            }
+            log::info!("prevalidate {provider:?}: {check:?}");
+        }
+    }
+}
+
 /// Marca `quitting` e sai, uma so vez (guarda `swap` para o comando e o fallback de timeout
 /// nao chamarem `exit` duas vezes). Chamado quando a animacao de quit termina, ou pelo fallback.
 pub(crate) fn finalize_quit_now(app: &AppHandle) {
@@ -352,6 +378,7 @@ pub fn run() {
             commands::set_api_key,
             commands::clear_api_key,
             commands::validate_key,
+            commands::get_provider_health,
             commands::set_profile,
             commands::reload_profile,
             commands::reset_profile,
@@ -395,6 +422,8 @@ pub fn run() {
             // Pre-cria a janela overlay (escondida) para o listener do orb estar pronto
             // antes do primeiro hotkey (senao o evento "refining" perde-se).
             let _ = get_or_create_window(&handle, "overlay");
+            // Pre-valida os fallbacks em background (nao bloqueia o arranque).
+            tauri::async_runtime::spawn(prevalidate_providers(handle.clone()));
             let cfg = config::load(&handle);
             log::info!(
                 "Ember {} started (install={is_install}, debug={}, hotkey={})",

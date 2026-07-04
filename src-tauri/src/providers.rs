@@ -2,6 +2,7 @@
 //! A ramificacao (classify/plan) vive em `ember_core`; aqui so ha I/O.
 
 use ember_core::error::{CoreError, OutcomeClass};
+use ember_core::health::KeyCheck;
 use ember_core::model::{LlmRequest, LlmResponse, Provider};
 use ember_core::providers::{self as wire, ClaudeStreamEvent};
 use ember_core::retry::{classify, plan, Decision, LoopState, RetryConfig};
@@ -233,18 +234,7 @@ pub async fn refine(
     }
 }
 
-/// Resultado do probe de validacao de chave. Distinto de um simples `bool`: uma falha de
-/// rede (sem ligacao no momento) nao diz NADA sobre se a chave e valida, e colapsar os dois
-/// em `false` fazia uma chave boa parecer invalida so por estar offline.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum KeyCheck {
-    Valid,
-    Invalid,
-    NetworkError,
-}
-
-/// Probe barato de validacao de chave (pre-validacao).
+/// Probe barato de validacao de chave (pre-validacao). `KeyCheck` vive em `ember_core::health`.
 pub async fn validate(client: &Client, provider: Provider, key: &str) -> KeyCheck {
     let result = match provider {
         Provider::Gemini => {
