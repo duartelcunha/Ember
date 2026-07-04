@@ -25,6 +25,7 @@ export interface EmberSettings {
   capturePolls: number;
   captureStepMs: number;
   pasteSettleMs: number;
+  debugMode: boolean;
 }
 
 export const DEFAULT_SETTINGS: EmberSettings = {
@@ -44,6 +45,7 @@ export const DEFAULT_SETTINGS: EmberSettings = {
   capturePolls: 30,
   captureStepMs: 10,
   pasteSettleMs: 90,
+  debugMode: false,
 };
 
 /** Comandos Tauri das settings. Implementados no nucleo Rust. */
@@ -66,4 +68,8 @@ export const ipc = {
   setProfile: (text: string) => invoke<void>("set_profile", { text }),
   reloadProfileFromClaudeMd: () => invoke<EmberSettings>("reload_profile"),
   resetProfileToDefault: () => invoke<EmberSettings>("reset_profile"),
+  setDebugMode: (enabled: boolean) => invoke<void>("set_debug_mode", { enabled }),
+  readRecentLogs: (lines: number) => invoke<string>("read_recent_logs", { lines }),
+  revealLogDir: () => invoke<void>("reveal_log_dir"),
+  getDiagnostics: () => invoke<string>("get_diagnostics"),
 };

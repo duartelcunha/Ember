@@ -32,6 +32,7 @@ pub struct SettingsDto {
     capture_polls: u32,
     capture_step_ms: u64,
     paste_settle_ms: u64,
+    debug_mode: bool,
 }
 
 fn source_str(s: ProfileSource) -> &'static str {
@@ -78,6 +79,7 @@ fn build_dto(app: &AppHandle, cfg: &config::Config) -> SettingsDto {
         capture_polls: cfg.capture_polls,
         capture_step_ms: cfg.capture_step_ms,
         paste_settle_ms: cfg.paste_settle_ms,
+        debug_mode: cfg.debug_mode,
     }
 }
 
@@ -243,6 +245,71 @@ pub fn close_splash(app: AppHandle) {
     if let Some(splash) = app.get_webview_window("splash") {
         let _ = splash.close();
     }
+}
+
+// ---------------------------------------------------------------------------------------
+// Debug / diagnostico
+// ---------------------------------------------------------------------------------------
+
+/// Liga/desliga o modo debug. Persiste e aplica ja: abre ou fecha as devtools da janela de
+/// settings (se estiver aberta), para o efeito ser imediato sem reabrir.
+#[tauri::command]
+pub fn set_debug_mode(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut cfg = config::load(&app);
+    cfg.debug_mode = enabled;
+    config::save(&app, &cfg).map_err(|e| e.to_string())?;
+    crate::apply_devtools(&app, enabled);
+    log::info!("debug_mode set to {enabled}");
+    Ok(())
+}
+
+/// Ultimas `lines` linhas do ficheiro de log, para o painel de diagnostico in-app.
+#[tauri::command]
+pub fn read_recent_logs(app: AppHandle, lines: usize) -> String {
+    crate::logging::read_recent(&app, lines.clamp(1, 5000))
+}
+
+/// Abre a pasta de logs no explorador de ficheiros do SO.
+#[tauri::command]
+pub fn reveal_log_dir(app: AppHandle) -> Result<(), String> {
+    let dir = app
+        .path()
+        .app_log_dir()
+        .map_err(|e| format!("no log dir: {e}"))?;
+    let _ = std::fs::create_dir_all(&dir);
+    #[cfg(target_os = "windows")]
+    let cmd = ("explorer", dir.as_os_str().to_owned());
+    #[cfg(target_os = "macos")]
+    let cmd = ("open", dir.as_os_str().to_owned());
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    let cmd = ("xdg-open", dir.as_os_str().to_owned());
+    std::process::Command::new(cmd.0)
+        .arg(cmd.1)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Bloco de diagnostico copiavel: versao, SO, presenca de chaves, caminho do log, modo debug.
+/// Sem segredos (so presenca das chaves), pronto a colar num report de bug.
+#[tauri::command]
+pub fn get_diagnostics(app: AppHandle) -> String {
+    let cfg = config::load(&app);
+    let version = app.package_info().version.to_string();
+    let log_path = crate::logging::log_file_path(&app)
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "unknown".into());
+    format!(
+        "Ember {version}\nOS: {} ({})\nGemini key: {}\nClaude key: {}\nMode: {}  Thinking: {} ({})  Debug: {}\nLog: {log_path}",
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        if secrets::has(Provider::Gemini) { "set" } else { "missing" },
+        if secrets::has(Provider::Claude) { "set" } else { "missing" },
+        mode_str(cfg.mode),
+        cfg.thinking_enabled,
+        cfg.thinking_level,
+        cfg.debug_mode,
+    )
 }
 
 // ---------------------------------------------------------------------------------------

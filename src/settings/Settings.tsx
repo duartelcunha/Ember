@@ -255,6 +255,78 @@ const MODE_COPY: Record<RefineMode, { title: string; hint: string }> = {
 
 const THINKING_LEVELS: ThinkingLevel[] = ["minimal", "low", "medium", "high"];
 
+/** Diagnostico e modo debug: toggle, leitor de logs recentes, abrir a pasta, copiar report. */
+function DiagnosticsSection({ debugMode }: { debugMode: boolean }) {
+  const [on, setOn] = useState(debugMode);
+  const [logs, setLogs] = useState("");
+  const [loadingLogs, setLoadingLogs] = useState(false);
+
+  // debugMode chega do getSettings assincrono; ressincroniza como os outros toggles.
+  useEffect(() => setOn(debugMode), [debugMode]);
+
+  const toggle = (v: boolean) => {
+    setOn(v);
+    ipc.setDebugMode(v).catch(() => {
+      setOn(!v);
+      toast.error("Couldn't change debug mode.");
+    });
+  };
+
+  const refreshLogs = async () => {
+    setLoadingLogs(true);
+    try {
+      setLogs(await ipc.readRecentLogs(200));
+    } catch {
+      toast.error("Couldn't read the logs.");
+    } finally {
+      setLoadingLogs(false);
+    }
+  };
+
+  const copyDiagnostics = async () => {
+    try {
+      await navigator.clipboard.writeText(await ipc.getDiagnostics());
+      toast.success("Diagnostics copied.");
+    } catch {
+      toast.error("Couldn't copy diagnostics.");
+    }
+  };
+
+  return (
+    <Section
+      title="Diagnostics"
+      hint="Debug mode opens the devtools and captures verbose logs. Logs live in a rotating file on your machine and never leave it."
+    >
+      <div className="flex items-center justify-between">
+        <Label htmlFor="debug-mode">Debug mode</Label>
+        <Switch id="debug-mode" checked={on} onCheckedChange={toggle} />
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button variant="ghost" size="sm" onClick={refreshLogs} disabled={loadingLogs}>
+          {loadingLogs ? "Loading…" : "Load recent logs"}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() =>
+            ipc.revealLogDir().catch(() => toast.error("Couldn't open the log folder."))
+          }
+        >
+          Open log folder
+        </Button>
+        <Button variant="ghost" size="sm" onClick={copyDiagnostics}>
+          Copy diagnostics
+        </Button>
+      </div>
+      {logs && (
+        <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-md border border-[color:var(--border-subtle)] bg-surface-1 p-3 font-mono text-[11px] leading-relaxed text-fg-muted">
+          {logs}
+        </pre>
+      )}
+    </Section>
+  );
+}
+
 export function Settings() {
   const [isVisible, setIsVisible] = useState(true);
   const [s, setS] = useState<EmberSettings>(DEFAULT_SETTINGS);
@@ -673,6 +745,7 @@ export function Settings() {
                 <Section title="Updates" hint="Checks against the latest GitHub release, signed and verified.">
                   <UpdateChecker />
                 </Section>
+                <DiagnosticsSection debugMode={s.debugMode} />
               </div>
             </TabsContent>
           </Tabs>

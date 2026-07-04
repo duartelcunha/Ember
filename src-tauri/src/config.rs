@@ -33,6 +33,9 @@ pub struct Config {
     pub capture_step_ms: u64,
     /// Tempo de espera apos o paste antes de restaurar o clipboard original, em ms.
     pub paste_settle_ms: u64,
+    /// Modo debug: abre as devtools nas settings e mostra o painel de diagnostico. O ficheiro
+    /// de log capta sempre; isto controla a superficie visivel ao utilizador. Default off.
+    pub debug_mode: bool,
 }
 
 /// Limites do timing de captura. Fonte unica: `commands::set_capture_timing` e a
@@ -57,6 +60,7 @@ impl Default for Config {
             capture_polls: 30,
             capture_step_ms: 10,
             paste_settle_ms: 90,
+            debug_mode: false,
         }
     }
 }
@@ -143,11 +147,14 @@ pub fn load(app: &AppHandle) -> Config {
     };
     match serde_json::from_str::<Config>(&s) {
         Ok(cfg) => cfg.sanitize(),
-        Err(_) => {
+        Err(e) => {
             // Ficheiro corrompido: preserva-o (config.json.bak) antes de seguir com defaults,
             // senao o proximo save escrevia por cima e a config do utilizador perdia-se sem
             // deixar rasto para recuperar.
-            let _ = fs::rename(&p, p.with_extension("json.bak"));
+            log::warn!("config: corrupt config.json ({e}); backing up to .bak and using defaults");
+            if let Err(e) = fs::rename(&p, p.with_extension("json.bak")) {
+                log::warn!("config: could not back up corrupt config: {e}");
+            }
             Config::default()
         }
     }

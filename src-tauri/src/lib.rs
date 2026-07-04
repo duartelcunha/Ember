@@ -5,6 +5,7 @@ mod commands;
 mod config;
 mod flow;
 mod foreground;
+mod logging;
 mod profile;
 mod providers;
 mod secrets;
@@ -204,6 +205,22 @@ pub(crate) fn show_settings(app: &AppHandle) {
         let _ = w.show();
         let _ = w.set_focus();
         let _ = w.emit("settings-opened", ());
+        // Se o modo debug estiver ligado, abre ja as devtools ao abrir as settings.
+        if config::load(app).debug_mode {
+            w.open_devtools();
+        }
+    }
+}
+
+/// Abre/fecha as devtools da janela de settings conforme o modo debug (efeito imediato do
+/// toggle). Requer a feature `devtools` do tauri, ativa tambem em release para isto funcionar.
+pub(crate) fn apply_devtools(app: &AppHandle, enabled: bool) {
+    if let Some(w) = app.get_webview_window("settings") {
+        if enabled {
+            w.open_devtools();
+        } else {
+            w.close_devtools();
+        }
     }
 }
 
@@ -250,7 +267,12 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
     let open = MenuItemBuilder::with_id("open_settings", "Settings").build(app)?;
     let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
     let menu = MenuBuilder::new(app).items(&[&open, &quit]).build()?;
-    let icon = app.default_window_icon().cloned().unwrap();
+    let Some(icon) = app.default_window_icon().cloned() else {
+        // Sem icone nao construimos a tray (em vez de rebentar). A app continua viva; o log
+        // deixa rasto. Na pratica o icone vem sempre da config, por isso isto e defensivo.
+        log::error!("tray: no default window icon, skipping tray build");
+        return Ok(());
+    };
     TrayIconBuilder::new()
         .icon(icon)
         .tooltip("Ember")
@@ -281,11 +303,16 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Panic hook antes de tudo: em release a consola esta destacada, por isso sem isto um
+    // panic nao deixava rasto nenhum. Grava panic + backtrace no log.
+    logging::install_panic_hook();
     tauri::Builder::default()
         // single-instance TEM de ser o primeiro plugin.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_settings(app);
         }))
+        // Log logo a seguir, para captar a inicializacao dos plugins seguintes.
+        .plugin(logging::plugin())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -310,18 +337,34 @@ pub fn run() {
             commands::reload_profile,
             commands::reset_profile,
             commands::close_splash,
+            commands::set_debug_mode,
+            commands::read_recent_logs,
+            commands::reveal_log_dir,
+            commands::get_diagnostics,
         ])
         .setup(|app| {
             build_tray(app)?;
             let handle = app.handle().clone();
             
-            let app_dir = handle.path().app_data_dir().unwrap();
-            let marker = app_dir.join(".installed");
-            let is_install = !marker.exists();
-            if is_install {
-                let _ = std::fs::create_dir_all(&app_dir);
-                let _ = std::fs::write(&marker, b"");
-            }
+            let is_install = match handle.path().app_data_dir() {
+                Ok(app_dir) => {
+                    let marker = app_dir.join(".installed");
+                    let first_run = !marker.exists();
+                    if first_run {
+                        if let Err(e) = std::fs::create_dir_all(&app_dir) {
+                            log::warn!("install: create_dir_all failed: {e}");
+                        }
+                        if let Err(e) = std::fs::write(&marker, b"") {
+                            log::warn!("install: writing .installed marker failed: {e}");
+                        }
+                    }
+                    first_run
+                }
+                Err(e) => {
+                    log::warn!("install: app_data_dir unavailable: {e}; treating as non-install");
+                    false
+                }
+            };
             
             let window_name = if is_install { "splash" } else { "startup_anim" };
             if let Some(anim) = get_or_create_window(&handle, window_name) {
@@ -333,9 +376,16 @@ pub fn run() {
             // antes do primeiro hotkey (senao o evento "refining" perde-se).
             let _ = get_or_create_window(&handle, "overlay");
             let cfg = config::load(&handle);
+            log::info!(
+                "Ember {} started (install={is_install}, debug={}, hotkey={})",
+                handle.package_info().version,
+                cfg.debug_mode,
+                cfg.hotkey
+            );
             // Se o atalho guardado nao registar (ocupado por outra app, ou invalido de uma
             // versao anterior), abre as settings em vez de arrancar sem hotkey em silencio.
-            if register_hotkey(&handle, &cfg.hotkey).is_err() {
+            if let Err(e) = register_hotkey(&handle, &cfg.hotkey) {
+                log::warn!("hotkey '{}' failed to register ({e}); opening settings", cfg.hotkey);
                 show_settings(&handle);
             }
             Ok(())
