@@ -1,13 +1,13 @@
 import { m } from "motion/react";
 
 /**
- * O orb (estado "a pensar"): bolinha terracota 2D + glow pulsante por baixo.
- * Partilha `layoutId` com a pilha para o morph. Pulse = scale (compositor).
+ * O orb (estado "a pensar"): bolinha terracota 2D + glow pulsante por baixo. Orb <-> pilula
+ * fazem crossfade (nao morph): a pilula tem backdrop-filter e um morph arrasta-a-blur cada
+ * frame (re-amostra o fundo). O pulse aqui e so scale/opacity (o orb nao tem blur).
  */
 export function Orb() {
   return (
     <m.div
-      layoutId="refiner-surface"
       className="relative grid place-items-center"
       style={{ borderRadius: 9999, width: 17, height: 17 }}
       initial={{ opacity: 0, scale: 0.6 }}

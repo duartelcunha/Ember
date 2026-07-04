@@ -157,37 +157,43 @@ pub(crate) fn show_orb_at_cursor(app: &AppHandle) {
     tauri::async_runtime::spawn(async move { orb_follow_loop(app2).await });
 }
 
-/// Segue o cursor rigidamente (sem lerp/atraso) enquanto o orb esta visivel. Termina
-/// quando `hide_orb` esconde. Usa um `interval` (nao `sleep`) para manter um passo
-/// estavel a ~60fps: um `sleep` a seguir ao trabalho de cada iteracao acumula deriva
-/// (o tempo do proprio `set_position` soma-se ao intervalo), sentido como engasgos.
+/// Segue o cursor com suavizacao exponencial (lerp) enquanto o orb esta visivel, para um
+/// arrasto fluido tipo Apple em vez de saltos. Termina quando `hide_orb` esconde. Usa um
+/// `interval` a 120fps (nao `sleep`, que acumula deriva). A suavizacao usa o dt REAL via
+/// `alpha = 1 - exp(-dt/tau)`: assim mantem a mesma sensacao mesmo que um tick atrase (um
+/// factor fixo por frame mudava de velocidade com o frame-rate, um bug subtil de engasgo).
 async fn orb_follow_loop(app: AppHandle) {
     let Some(w) = app.get_webview_window("overlay") else {
         return;
     };
     let mut tick = tokio::time::interval(std::time::Duration::from_secs_f64(1.0 / 120.0));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    
-    let mut current_x: Option<f64> = None;
-    let mut current_y: Option<f64> = None;
-    
+
+    // Constante de tempo da suavizacao: cobre ~63% da distancia ao alvo a cada SMOOTH_TAU s.
+    // Mais baixo = mais colado ao cursor; mais alto = mais fluido/preguicoso.
+    const SMOOTH_TAU: f64 = 0.05;
+    let mut current: Option<(f64, f64)> = None;
+    let mut last = tokio::time::Instant::now();
+
     loop {
         if !matches!(w.is_visible(), Ok(true)) {
             break;
         }
+        let now = tokio::time::Instant::now();
+        let dt = (now - last).as_secs_f64();
+        last = now;
         if let Some((tx, ty)) = orb_target(&app, &w) {
-            let cx = current_x.unwrap_or(tx as f64);
-            let cy = current_y.unwrap_or(ty as f64);
-            
-            // Exponential smoothing (lerp) for Apple-like fluid drag
-            let factor = 0.15;
-            let nx = cx + (tx as f64 - cx) * factor;
-            let ny = cy + (ty as f64 - cy) * factor;
-            
+            let (tx, ty) = (tx as f64, ty as f64);
+            let (nx, ny) = match current {
+                // Primeiro frame: snap ao alvo (sem arrasto a partir do canto).
+                None => (tx, ty),
+                Some((cx, cy)) => {
+                    let alpha = 1.0 - (-dt / SMOOTH_TAU).exp();
+                    (cx + (tx - cx) * alpha, cy + (ty - cy) * alpha)
+                }
+            };
             let _ = w.set_position(PhysicalPosition::new(nx.round() as i32, ny.round() as i32));
-            
-            current_x = Some(nx);
-            current_y = Some(ny);
+            current = Some((nx, ny));
         }
         tick.tick().await;
     }

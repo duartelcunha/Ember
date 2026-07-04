@@ -573,47 +573,48 @@ export function Settings() {
                   >
                     {showAdvanced ? "Hide" : "Show"} advanced
                   </Button>
-                  <AnimatePresence initial={false}>
-                    {showAdvanced && (
-                      <motion.div
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: "auto" }}
-                        exit={{ opacity: 0, height: 0 }}
-                        transition={{ duration: 0.2, ease: "easeOut" }}
-                        className="overflow-hidden"
-                      >
-                        <div className="grid grid-cols-3 gap-3 pt-1">
-                          <NumberField
-                            id="capture-polls"
-                            label="Capture polls"
-                            value={polls}
-                            onChange={setPolls}
-                            min={5}
-                            max={200}
-                          />
-                          <NumberField
-                            id="capture-step-ms"
-                            label="Poll interval (ms)"
-                            value={stepMs}
-                            onChange={setStepMs}
-                            min={1}
-                            max={100}
-                          />
-                          <NumberField
-                            id="paste-settle-ms"
-                            label="Paste settle (ms)"
-                            value={settleMs}
-                            onChange={setSettleMs}
-                            min={0}
-                            max={1000}
-                          />
-                        </div>
-                        <Button className="mt-3" variant="ghost" size="sm" onClick={saveTiming}>
-                          Save timing
-                        </Button>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
+                  {/* Reveal via grid-template-rows 0fr->1fr (sem reflow de irmaos, mais suave
+                      que animar height:auto pelo JS). O interior faz min-h-0 + overflow-hidden. */}
+                  <div
+                    className="grid transition-[grid-template-rows] duration-200 ease-out"
+                    style={{ gridTemplateRows: showAdvanced ? "1fr" : "0fr" }}
+                  >
+                    <div
+                      className={`min-h-0 overflow-hidden transition-opacity duration-200 ${
+                        showAdvanced ? "opacity-100" : "opacity-0"
+                      }`}
+                    >
+                      <div className="grid grid-cols-3 gap-3 pt-1">
+                        <NumberField
+                          id="capture-polls"
+                          label="Capture polls"
+                          value={polls}
+                          onChange={setPolls}
+                          min={5}
+                          max={200}
+                        />
+                        <NumberField
+                          id="capture-step-ms"
+                          label="Poll interval (ms)"
+                          value={stepMs}
+                          onChange={setStepMs}
+                          min={1}
+                          max={100}
+                        />
+                        <NumberField
+                          id="paste-settle-ms"
+                          label="Paste settle (ms)"
+                          value={settleMs}
+                          onChange={setSettleMs}
+                          min={0}
+                          max={1000}
+                        />
+                      </div>
+                      <Button className="mt-3" variant="ghost" size="sm" onClick={saveTiming}>
+                        Save timing
+                      </Button>
+                    </div>
+                  </div>
                 </Section>
               </div>
             </TabsContent>

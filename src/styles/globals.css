@@ -91,7 +91,9 @@
   will-change: opacity, transform;
 }
 
-/* Bolha de preview (vidro). O backdrop-filter fica ESTATICO; so conteudo/opacidade animam. */
+/* Bolha de preview (vidro). NUNCA animar transform (translate/scale) nesta classe: o
+   backdrop-filter re-amostra o fundo desfocado a cada frame do movimento e engasga. So
+   opacidade anima na bolha; o movimento vive no conteudo interno (sem blur). Ver Pill.tsx. */
 .ember-bubble {
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(140%);
@@ -104,4 +106,29 @@
   .ember-bubble {
     background: var(--glass-bg-strong);
   }
+}
+
+/* Scrollbar fina e escura, a condizer com o tema glassy (a janela de settings e a unica que
+   scrolla). WebView2 e Chromium, por isso os pseudo-elementos ::-webkit-scrollbar aplicam-se;
+   as janelas overlay/splash nao scrollam, logo isto so se ve nas settings. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 9999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.24);
+  background-clip: content-box;
 }

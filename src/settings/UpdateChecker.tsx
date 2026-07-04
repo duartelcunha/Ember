@@ -87,9 +87,10 @@ export function UpdateChecker() {
               className={
                 progress === null
                   ? "h-full w-1/3 animate-pulse rounded-full bg-accent"
-                  : "h-full rounded-full bg-accent transition-[width] duration-200"
+                  : "h-full w-full origin-left rounded-full bg-accent transition-transform duration-200"
               }
-              style={progress === null ? undefined : { width: `${progress}%` }}
+              // Barra determinada: anima scaleX (compositor) em vez de width (layout/paint).
+              style={progress === null ? undefined : { transform: `scaleX(${progress / 100})` }}
             />
           </div>
         </div>

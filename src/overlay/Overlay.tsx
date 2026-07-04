@@ -21,10 +21,12 @@ export function Overlay() {
                 <Orb />
                 {s.message && (
                   <m.span
+                    // .ember-bubble tem backdrop-filter: so opacidade anima (sem translate),
+                    // senao o fundo desfocado re-amostrava a cada frame do movimento.
                     className="ember-bubble max-w-[190px] overflow-hidden text-ellipsis whitespace-nowrap px-2 py-1 text-xs text-fg"
-                    style={{ borderRadius: 10 }}
-                    initial={{ opacity: 0, x: -4 }}
-                    animate={{ opacity: 1, x: 0 }}
+                    style={{ borderRadius: 10, willChange: "opacity" }}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
                   >
                     {s.message}
