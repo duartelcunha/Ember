@@ -247,6 +247,13 @@ pub fn close_splash(app: AppHandle) {
     }
 }
 
+/// Chamado pela janela de animacao de quit quando a animacao termina, para a saida acoplar ao
+/// fim real da animacao em vez de um sleep de duracao fixa (ver `lib.rs`, tray "quit").
+#[tauri::command]
+pub fn finalize_quit(app: AppHandle) {
+    crate::finalize_quit_now(&app);
+}
+
 // ---------------------------------------------------------------------------------------
 // Debug / diagnostico
 // ---------------------------------------------------------------------------------------

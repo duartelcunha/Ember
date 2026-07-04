@@ -218,6 +218,18 @@ pub(crate) fn show_settings(app: &AppHandle) {
     }
 }
 
+/// Marca `quitting` e sai, uma so vez (guarda `swap` para o comando e o fallback de timeout
+/// nao chamarem `exit` duas vezes). Chamado quando a animacao de quit termina, ou pelo fallback.
+pub(crate) fn finalize_quit_now(app: &AppHandle) {
+    if !app
+        .state::<state::AppState>()
+        .quitting
+        .swap(true, Ordering::SeqCst)
+    {
+        app.exit(0);
+    }
+}
+
 /// Abre/fecha as devtools da janela de settings conforme o modo debug (efeito imediato do
 /// toggle). Requer a feature `devtools` do tauri, ativa tambem em release para isto funcionar.
 pub(crate) fn apply_devtools(app: &AppHandle, enabled: bool) {
@@ -292,13 +304,14 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
                     let _ = quit_anim.set_ignore_cursor_events(true);
                     let _ = quit_anim.show();
                 }
+                // A animacao de quit chama `finalize_quit` quando termina: a saida acopla ao
+                // fim REAL da animacao, nao a um numero magico que podia divergir do duration.
+                // Fallback: se a webview nao completar (falhou a carregar), forca a saida ao
+                // fim de um tempo curto, para nunca ficar preso na tray sem sair.
                 let app = app.clone();
                 tauri::async_runtime::spawn(async move {
-                    tokio::time::sleep(std::time::Duration::from_millis(650)).await;
-                    app.state::<state::AppState>()
-                        .quitting
-                        .store(true, Ordering::SeqCst);
-                    app.exit(0);
+                    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+                    finalize_quit_now(&app);
                 });
             }
             _ => {}
@@ -343,6 +356,7 @@ pub fn run() {
             commands::reload_profile,
             commands::reset_profile,
             commands::close_splash,
+            commands::finalize_quit,
             commands::set_debug_mode,
             commands::read_recent_logs,
             commands::reveal_log_dir,

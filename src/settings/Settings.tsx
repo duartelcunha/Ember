@@ -338,15 +338,14 @@ export function Settings() {
   const [settleMs, setSettleMs] = useState(DEFAULT_SETTINGS.pasteSettleMs);
 
   useEffect(() => {
-    // Intercept native close to do a smooth fade-out
-    const unlistenClose = getCurrentWindow().onCloseRequested(async (event) => {
+    // Fecho com fade: previne o fecho nativo e corre a saida. A janela so esconde quando a
+    // animacao ACABA (AnimatePresence onExitComplete, abaixo), sem um setTimeout acoplado a
+    // mao ao duration que corriam em corrida um com o outro.
+    const unlistenClose = getCurrentWindow().onCloseRequested((event) => {
       event.preventDefault();
       setIsVisible(false);
-      setTimeout(() => {
-        getCurrentWindow().hide();
-      }, 250);
     });
-    
+
     // Listen for settings-opened to trigger the fade-in
     const unlistenOpen = listen("settings-opened", () => {
       setIsVisible(true);
@@ -418,14 +417,15 @@ export function Settings() {
 
   return (
     <MotionConfig reducedMotion="user">
-      <AnimatePresence>
+      <AnimatePresence onExitComplete={() => getCurrentWindow().hide().catch(() => {})}>
         {isVisible && (
-          <motion.main 
+          <motion.main
             className="min-h-screen bg-panel text-fg"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.25, ease: "easeOut" }}
+            initial={{ opacity: 0, scale: 0.985 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.985 }}
+            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+            style={{ transformOrigin: "center" }}
           >
         <motion.div
           className="mx-auto max-w-3xl px-8 py-12"

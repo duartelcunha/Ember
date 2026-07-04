@@ -12,10 +12,11 @@ function currentMode(): Mode {
   return "install";
 }
 
-/** Fecha a janela de animacao quando a animacao termina. Silencioso: fora do Tauri (dev) o
- *  invoke falha e nao ha nada a fazer, nem queremos ruido na consola. */
-const finish = () => {
-  invoke("close_splash").catch(() => {});
+/** No fim da animacao: quit sai da app (acopla a saida ao fim real da animacao), instalacao/
+ *  arranque so fecham a janela de splash. Silencioso: fora do Tauri (dev) o invoke falha e
+ *  nao ha nada a fazer, nem queremos ruido na consola. */
+const finish = (mode: Mode) => {
+  invoke(mode === "quit" ? "finalize_quit" : "close_splash").catch(() => {});
 };
 
 // Animacoes SO-compositor: transform (scale/rotate) + opacity. Sem filtros animados
@@ -87,7 +88,7 @@ export default function Splash() {
               initial={icon.initial}
               animate={icon.animate}
               transition={icon.transition}
-              onAnimationComplete={finish}
+              onAnimationComplete={() => finish(mode)}
             />
           </div>
         </div>
