@@ -23,6 +23,9 @@ pub enum FlowOutcome {
     Success { provider: String },
     /// O refinamento falhou; `message` ja vem amigavel (de `friendly_error`).
     RefineFailed { message: String },
+    /// O motor recusou colar (output vazio, ou perdeu/mutou um span de codigo/URL): a
+    /// seleccao do utilizador ficou intacta, em vez de colar por cima algo partido.
+    RefineUnclean,
 }
 
 /// O que mostrar no overlay e por quanto tempo, dado um `FlowOutcome`.
@@ -86,6 +89,12 @@ pub fn feedback_for(outcome: FlowOutcome) -> OverlayFeedback {
         FlowOutcome::RefineFailed { message } => OverlayFeedback {
             phase: "error",
             message: Some(message),
+            provider: None,
+            hide_after_ms: 1600,
+        },
+        FlowOutcome::RefineUnclean => OverlayFeedback {
+            phase: "error",
+            message: Some("Couldn't refine cleanly. Nothing changed.".into()),
             provider: None,
             hide_after_ms: 1600,
         },
@@ -153,5 +162,12 @@ mod tests {
         });
         assert_eq!(fb.phase, "error");
         assert_eq!(fb.message.as_deref(), Some("Invalid API key."));
+    }
+
+    #[test]
+    fn refine_unclean_is_an_error_that_changed_nothing() {
+        let fb = feedback_for(FlowOutcome::RefineUnclean);
+        assert_eq!(fb.phase, "error");
+        assert!(fb.message.unwrap().contains("Nothing changed"));
     }
 }

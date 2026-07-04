@@ -229,26 +229,41 @@ pub async fn run(app: AppHandle, terminal: bool, timing: CaptureTiming) {
     };
 
     match refine_result {
-        Ok((refined, provider)) => {
+        Ok((raw, prepared, provider)) => {
             if cancelled(&app) {
                 abort_cancelled(&app, saved, image, terminal).await;
                 return;
             }
-            let s = saved.clone();
-            let r = refined.clone();
-            let settle_ms = timing.settle_ms;
-            let pasted = tauri::async_runtime::spawn_blocking(move || {
-                blocking_replace(r, s, image, terminal, settle_ms)
-            })
-            .await;
-            match pasted {
-                Ok(Ok(true)) => {
-                    finish(&app, FlowOutcome::Success { provider }).await;
+            // Motor Ember, fase 2: limpa/desmascara/valida o texto CRU do modelo. Um Degrade
+            // (output vazio, ou um span de codigo/URL perdido) cai no ramo de restauro: a
+            // seleccao fica intacta em vez de colarmos algo partido por cima.
+            match ember_core::postprocess(&raw, &prepared) {
+                ember_core::EngineResult::Paste(refined) => {
+                    let s = saved.clone();
+                    let settle_ms = timing.settle_ms;
+                    let pasted = tauri::async_runtime::spawn_blocking(move || {
+                        blocking_replace(refined, s, image, terminal, settle_ms)
+                    })
+                    .await;
+                    match pasted {
+                        Ok(Ok(true)) => {
+                            finish(&app, FlowOutcome::Success { provider }).await;
+                        }
+                        _ => {
+                            // O refinado nao chegou a ser armado no clipboard (ocupado). A
+                            // seleccao ficou intacta: nao reportar "Refined" falso.
+                            finish(&app, FlowOutcome::PasteFailed).await;
+                        }
+                    }
                 }
-                _ => {
-                    // O refinado nao chegou a ser armado no clipboard (ocupado). A seleccao
-                    // ficou intacta, mas nao a substituimos: nao reportar "Refined" falso.
-                    finish(&app, FlowOutcome::PasteFailed).await;
+                ember_core::EngineResult::Degrade(reason) => {
+                    log::warn!("engine degraded ({reason:?}); clipboard restored, nothing pasted");
+                    let s = saved.clone();
+                    let _ = tauri::async_runtime::spawn_blocking(move || {
+                        blocking_restore(s, image, terminal)
+                    })
+                    .await;
+                    finish(&app, FlowOutcome::RefineUnclean).await;
                 }
             }
         }

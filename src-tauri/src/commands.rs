@@ -336,17 +336,17 @@ pub(crate) fn friendly_error(e: &ember_core::CoreError) -> String {
     }
 }
 
-/// Refina `input` com a chain Gemini->Claude. Devolve (texto, provider) ou CoreError.
-/// `on_attempt` recebe (provider, indice, tentativa) antes de cada chamada; `on_delta`
-/// recebe cada tranche de texto assim que chega do stream. Ambos servem o overlay para
-/// mostrar progresso real em vez de um orb mudo durante retries/fallback/geracao longa.
+/// Refina `input` com a chain Gemini->Claude. Devolve (texto CRU do modelo, `Prepared`,
+/// provider) ou CoreError: o pos-processamento do motor corre em `flow.rs`, para um output que
+/// degrada cair no ramo de restauro do clipboard (nao colar por cima da seleccao). `on_attempt`
+/// recebe (provider, indice, tentativa) antes de cada chamada; `on_delta` e no-op (preview off).
 pub(crate) async fn refine_text(
     app: &AppHandle,
     state: &AppState,
     input: &str,
     on_attempt: &(dyn Fn(Provider, usize, u32) + Send + Sync),
     on_delta: &(dyn Fn(&str) + Send + Sync),
-) -> Result<(String, String), ember_core::CoreError> {
+) -> Result<(String, ember_core::Prepared, String), ember_core::CoreError> {
     let cfg = config::load(app);
     let mut chain: Vec<(Provider, String)> = Vec::new();
     let mut key_store_failed = false;
@@ -368,8 +368,11 @@ pub(crate) async fn refine_text(
     }
 
     let resolved = profile::resolve(app, cfg.profile_override.as_deref(), cfg.ignore_claude_md);
+    // Motor Ember, fase 1: normaliza o input, mascara codigo/URLs e escapa marcadores. O modelo
+    // ve o `masked_input`; o `prepared` volta para o `flow.rs` reconstruir o output.
+    let prepared = ember_core::precondition(input, cfg.mode);
     let req = build_llm_request(
-        input,
+        &prepared.masked_input,
         &resolved.profile,
         &cfg.gemini_model,
         cfg.mode,
@@ -391,7 +394,7 @@ pub(crate) async fn refine_text(
         on_delta,
     )
     .await?;
-    Ok((resp.text, resp.provider.display_name().to_string()))
+    Ok((resp.text, prepared, resp.provider.display_name().to_string()))
 }
 
 #[cfg(test)]

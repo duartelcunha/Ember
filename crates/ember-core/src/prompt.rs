@@ -34,6 +34,8 @@ Rules:
  If something is missing, leave it generic or as a placeholder; do not fill it in.
 - Preserve unchanged: code blocks and snippets, commands, URLs, file paths, placeholders\
  (e.g. {name}, <this>, %s), and markdown structure.
+- Some parts may be replaced by opaque placeholders like {{EMBER_SPAN_3}}. Keep every such\
+ placeholder EXACTLY as-is and in place: never modify, translate, remove, reorder, or add them.
 - Return ONLY the refined prompt, without the [EMBER_INPUT] markers: no preamble, no\
  wrapping quotes, no explanations, no surrounding code fence.";
 

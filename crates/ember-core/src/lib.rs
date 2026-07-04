@@ -5,6 +5,7 @@
 //! construcao do prompt, mapping de wire-format) vive aqui e testa-se de forma
 //! deterministica com `cargo test -p ember-core`.
 
+pub mod engine;
 pub mod error;
 pub mod model;
 pub mod modifiers;
@@ -15,6 +16,7 @@ pub mod providers;
 pub mod retry;
 pub mod selection;
 
+pub use engine::{postprocess, precondition, DegradeReason, EngineResult, Prepared};
 pub use error::{CoreError, OutcomeClass};
 pub use model::{LlmRequest, LlmResponse, Profile, ProfileSource, Provider, RefineMode};
 pub use modifiers::{decide_neutralize, Modifier, ModifierState, NeutralizeDecision};
