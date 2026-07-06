@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/duartelcunha/ember/releases/latest"><img src="https://img.shields.io/github/v/release/duartelcunha/ember?style=flat-square&color=orange" alt="Latest Release"></a>
+  <a href="https://github.com/duartelcunha/Ember/releases"><img src="https://img.shields.io/github/v/release/duartelcunha/ember?style=flat-square&color=orange" alt="Latest Release"></a>
   <a href="https://github.com/duartelcunha/ember/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square" alt="License"></a>
   <a href="https://tauri.app/"><img src="https://img.shields.io/badge/Built%20with-Tauri%202-yellow.svg?style=flat-square" alt="Tauri"></a>
 </p>
