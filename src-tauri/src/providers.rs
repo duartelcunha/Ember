@@ -4,12 +4,21 @@
 use ember_core::error::{CoreError, OutcomeClass};
 use ember_core::health::KeyCheck;
 use ember_core::model::{LlmRequest, LlmResponse, Provider};
-use ember_core::providers::{self as wire, ClaudeStreamEvent};
+use ember_core::providers::{self as wire, ClaudeStreamEvent, OpenAiStreamEvent};
 use ember_core::retry::{classify, plan, Decision, LoopState, RetryConfig};
 use futures_util::StreamExt;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+/// Modelos/base URL por provider, passados juntos ao `refine`/`call_once`/`validate` em vez de
+/// uma lista de strings crescente. Interno do shell (a decisao de resiliencia vive no core).
+pub struct ProviderCtx<'a> {
+    pub gemini_model: &'a str,
+    pub claude_model: &'a str,
+    pub openai_model: &'a str,
+    pub openai_base_url: &'a str,
+}
 
 /// Quanto tempo esperar por bytes novos do stream antes de desistir. NAO e um teto na
 /// duracao TOTAL da resposta (que pode legitimamente demorar minutos com thinking pesado:
@@ -44,6 +53,7 @@ async fn call_once(
     provider: Provider,
     key: &str,
     req: &LlmRequest,
+    pctx: &ProviderCtx<'_>,
     on_delta: &(dyn Fn(&str) + Send + Sync),
 ) -> Result<String, OutcomeClass> {
     let builder = match provider {
@@ -56,6 +66,10 @@ async fn call_once(
             .header("x-api-key", key)
             .header("anthropic-version", wire::ANTHROPIC_VERSION)
             .json(&wire::claude_request_body(req, true)),
+        Provider::OpenAi => client
+            .post(wire::openai_chat_url(pctx.openai_base_url))
+            .header("Authorization", format!("Bearer {key}"))
+            .json(&wire::openai_request_body(req, true, pctx.openai_base_url)),
     };
 
     let resp = match builder.send().await {
@@ -170,6 +184,27 @@ async fn consume_stream(
                         }
                         ClaudeStreamEvent::Other => {}
                     },
+                    Provider::OpenAi => match wire::openai_stream_event(&v) {
+                        OpenAiStreamEvent::ContentDelta(delta) => {
+                            on_delta(&delta);
+                            text_acc.push_str(&delta);
+                        }
+                        // Raciocinio (DeepSeek R1 / Qwen3): NUNCA para o text_acc. So cola a
+                        // resposta final por cima da seleccao, igual ao `thought:true` da Gemini.
+                        OpenAiStreamEvent::ReasoningDelta(r) => {
+                            log::debug!("openai reasoning delta: {} chars", r.len());
+                        }
+                        OpenAiStreamEvent::Stopped { finish_reason } => {
+                            let fake = json!({ "choices": [{ "finish_reason": finish_reason }] });
+                            if wire::openai_is_content_policy(&fake) {
+                                return Err(OutcomeClass::ContentPolicy);
+                            }
+                            if wire::openai_is_truncated(&fake) {
+                                return Err(OutcomeClass::Truncated);
+                            }
+                        }
+                        OpenAiStreamEvent::Other => {}
+                    },
                 }
             }
         }
@@ -195,8 +230,7 @@ pub async fn refine(
     cfg: &RetryConfig,
     chain: &[(Provider, String)],
     base_req: &LlmRequest,
-    gemini_model: &str,
-    claude_model: &str,
+    pctx: &ProviderCtx<'_>,
     on_attempt: &(dyn Fn(Provider, usize, u32) + Send + Sync),
     on_delta: &(dyn Fn(&str) + Send + Sync),
 ) -> Result<LlmResponse, CoreError> {
@@ -207,14 +241,15 @@ pub async fn refine(
     loop {
         let (provider, key) = &chain[state.provider_index];
         let model = match provider {
-            Provider::Gemini => gemini_model,
-            Provider::Claude => claude_model,
+            Provider::Gemini => pctx.gemini_model,
+            Provider::Claude => pctx.claude_model,
+            Provider::OpenAi => pctx.openai_model,
         };
         let mut req = base_req.clone();
         req.model = model.to_string();
 
         on_attempt(*provider, state.provider_index, state.attempt);
-        match call_once(client, *provider, key, &req, on_delta).await {
+        match call_once(client, *provider, key, &req, pctx, on_delta).await {
             Ok(text) => {
                 return Ok(LlmResponse {
                     text,
@@ -235,7 +270,14 @@ pub async fn refine(
 }
 
 /// Probe barato de validacao de chave (pre-validacao). `KeyCheck` vive em `ember_core::health`.
-pub async fn validate(client: &Client, provider: Provider, key: &str) -> KeyCheck {
+/// O probe bate num endpoint diferente do `refine` (GET /models vs POST chat) e NUNCA tira o
+/// provider da cadeia, so informa a saude (uma chave pode passar num e falhar no outro).
+pub async fn validate(
+    client: &Client,
+    provider: Provider,
+    key: &str,
+    pctx: &ProviderCtx<'_>,
+) -> KeyCheck {
     let result = match provider {
         Provider::Gemini => {
             client
@@ -249,6 +291,13 @@ pub async fn validate(client: &Client, provider: Provider, key: &str) -> KeyChec
                 .get("https://api.anthropic.com/v1/models")
                 .header("x-api-key", key)
                 .header("anthropic-version", wire::ANTHROPIC_VERSION)
+                .send()
+                .await
+        }
+        Provider::OpenAi => {
+            client
+                .get(wire::openai_models_url(pctx.openai_base_url))
+                .header("Authorization", format!("Bearer {key}"))
                 .send()
                 .await
         }

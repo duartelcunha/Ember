@@ -234,13 +234,26 @@ pub(crate) fn now_ms() -> u64 {
 async fn prevalidate_providers(app: AppHandle) {
     use ember_core::model::Provider;
     let state = app.state::<state::AppState>();
-    for provider in [Provider::Gemini, Provider::Claude] {
-        if let Some(key) = secrets::get(provider) {
-            let check = providers::validate(&state.http, provider, &key).await;
-            if let Ok(mut m) = state.key_checks.lock() {
-                m.insert(provider, (check, now_ms()));
+    let cfg = config::load(&app);
+    let pctx = providers::ProviderCtx {
+        gemini_model: &cfg.gemini_model,
+        claude_model: &cfg.claude_model,
+        openai_model: &cfg.openai_model,
+        openai_base_url: &cfg.openai_base_url,
+    };
+    for provider in [Provider::Gemini, Provider::OpenAi, Provider::Claude] {
+        // Bug A: ler pelo try_get. Um cofre bloqueado (Err) nao rebenta o arranque: loga e salta.
+        // O caminho do refine vai, a seu tempo, reportar KeyStore honestamente quando for preciso.
+        match secrets::try_get(provider) {
+            Ok(Some(key)) => {
+                let check = providers::validate(&state.http, provider, &key, &pctx).await;
+                if let Ok(mut m) = state.key_checks.lock() {
+                    m.insert(provider, (check, now_ms()));
+                }
+                log::info!("prevalidate {provider:?}: {check:?}");
             }
-            log::info!("prevalidate {provider:?}: {check:?}");
+            Ok(None) => {}
+            Err(_) => log::warn!("prevalidate {provider:?}: keyring read failed, skipping"),
         }
     }
 }
@@ -376,6 +389,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_settings,
             commands::set_model,
+            commands::set_openai_base_url,
             commands::set_hotkey,
             commands::set_autostart,
             commands::set_mode,

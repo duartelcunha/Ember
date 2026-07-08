@@ -193,4 +193,48 @@ mod tests {
             vec![Provider::Gemini, Provider::Claude]
         );
     }
+
+    #[test]
+    fn three_configured_two_fresh_valid_is_healthy() {
+        // O default fallback agora e Gemini + OpenAi. Com os dois provados Valid (fresco) e o
+        // Claude opcional configurado mas nao provado, continua Healthy: ha >= 2 pre-validados.
+        let entries = [
+            st(Provider::Gemini, Some((KeyCheck::Valid, 4800))),
+            st(Provider::OpenAi, Some((KeyCheck::Valid, 4900))),
+            st(Provider::Claude, None),
+        ];
+        let r = assess_providers(&entries, 5000, TTL);
+        assert_eq!(r.health, SystemHealth::Healthy);
+        assert!(r.has_prevalidated_fallback);
+        assert_eq!(r.prevalidated_count, 2);
+        assert!(r.needs_revalidation.contains(&Provider::Claude));
+    }
+
+    #[test]
+    fn three_configured_only_one_valid_is_degraded() {
+        let entries = [
+            st(Provider::Gemini, Some((KeyCheck::Valid, 4900))),
+            st(Provider::OpenAi, Some((KeyCheck::Invalid, 4900))),
+            st(Provider::Claude, None),
+        ];
+        let r = assess_providers(&entries, 5000, TTL);
+        assert_eq!(r.configured_count, 3);
+        assert_eq!(r.health, SystemHealth::Degraded);
+        assert!(!r.has_prevalidated_fallback);
+    }
+
+    #[test]
+    fn order_chain_priority_is_gemini_openai_claude() {
+        let priority = [Provider::Gemini, Provider::OpenAi, Provider::Claude];
+        // Todos configurados: respeita a prioridade.
+        assert_eq!(
+            order_chain(&[Provider::Claude, Provider::OpenAi, Provider::Gemini], &priority),
+            vec![Provider::Gemini, Provider::OpenAi, Provider::Claude]
+        );
+        // Sem o do meio: salta para o Claude.
+        assert_eq!(
+            order_chain(&[Provider::Gemini, Provider::Claude], &priority),
+            vec![Provider::Gemini, Provider::Claude]
+        );
+    }
 }

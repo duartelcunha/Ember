@@ -18,10 +18,17 @@ use crate::{config, profile, providers, secrets};
 pub struct SettingsDto {
     gemini_model: String,
     claude_model: String,
+    openai_model: String,
+    openai_base_url: String,
     hotkey: String,
     autostart: bool,
     has_gemini_key: bool,
     has_claude_key: bool,
+    has_openai_key: bool,
+    /// `Some(msg)` quando nao foi possivel ler o cofre de credenciais (bloqueado/partido). A UI
+    /// mostra um banner persistente. Honra a regra de nao degradar em silencio: em vez de mentir
+    /// "sem chave", diz que nao conseguiu verificar.
+    key_store_error: Option<String>,
     profile_text: String,
     profile_source: &'static str,
     profile_path: Option<String>,
@@ -63,13 +70,32 @@ fn parse_mode(s: &str) -> Result<RefineMode, String> {
 
 fn build_dto(app: &AppHandle, cfg: &config::Config) -> SettingsDto {
     let resolved = profile::resolve(app, cfg.profile_override.as_deref(), cfg.ignore_claude_md);
+    // Le as 3 chaves honestamente: uma falha do cofre (Err) nao se colapsa em "sem chave".
+    // Se o cofre estiver bloqueado, todas ficam false e key_store_error informa a UI.
+    let (has_g, has_c, has_o, key_store_error) = match (
+        secrets::try_has(Provider::Gemini),
+        secrets::try_has(Provider::Claude),
+        secrets::try_has(Provider::OpenAi),
+    ) {
+        (Ok(g), Ok(c), Ok(o)) => (g, c, o, None),
+        (e_g, e_c, e_o) => {
+            // Pelo menos um falhou a ler o cofre. Loga para diagnostico; a UI mostra banner.
+            let any_err = e_g.err().or_else(|| e_c.err()).or_else(|| e_o.err());
+            log::warn!("settings: credential vault read failed: {:?}", any_err);
+            (false, false, false, Some("credential vault unreadable".to_string()))
+        }
+    };
     SettingsDto {
         gemini_model: cfg.gemini_model.clone(),
         claude_model: cfg.claude_model.clone(),
+        openai_model: cfg.openai_model.clone(),
+        openai_base_url: cfg.openai_base_url.clone(),
         hotkey: cfg.hotkey.clone(),
         autostart: cfg.autostart,
-        has_gemini_key: secrets::has(Provider::Gemini),
-        has_claude_key: secrets::has(Provider::Claude),
+        has_gemini_key: has_g,
+        has_claude_key: has_c,
+        has_openai_key: has_o,
+        key_store_error,
         profile_text: resolved.profile.text,
         profile_source: source_str(resolved.profile.source),
         profile_path: resolved.path,
@@ -85,10 +111,24 @@ fn build_dto(app: &AppHandle, cfg: &config::Config) -> SettingsDto {
     }
 }
 
+/// Presenca de chave para o diagnostico, honesta: distingue configurada / ausente / cofre
+/// ilegivel. O diagnostico e best-effort (nao devemos rebentar se o cofre estiver bloqueado).
+fn key_state(p: Provider) -> &'static str {
+    match secrets::try_has(p) {
+        Ok(true) => "set",
+        Ok(false) => "missing",
+        Err(_) => {
+            log::warn!("diagnostics: couldn't read {p:?} key from the vault");
+            "unreadable"
+        }
+    }
+}
+
 fn parse_provider(s: &str) -> Result<Provider, String> {
     match s {
         "gemini" => Ok(Provider::Gemini),
         "claude" => Ok(Provider::Claude),
+        "openai" => Ok(Provider::OpenAi),
         _ => Err(format!("invalid provider: {s}")),
     }
 }
@@ -115,8 +155,24 @@ pub fn set_model(app: AppHandle, provider: String, model: String) -> Result<(), 
     match provider.as_str() {
         "gemini" => cfg.gemini_model = model,
         "claude" => cfg.claude_model = model,
+        "openai" => cfg.openai_model = model,
         _ => return Err(format!("invalid provider: {provider}")),
     }
+    config::save(&app, &cfg).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_openai_base_url(app: AppHandle, base_url: String) -> Result<(), String> {
+    let mut cfg = config::load(&app);
+    cfg.openai_base_url = base_url;
+    // Re-sanitiza so este campo (vazio -> default, tira barra final) antes de gravar.
+    let d = config::Config::default();
+    let trimmed = cfg.openai_base_url.trim().trim_end_matches('/');
+    cfg.openai_base_url = if trimmed.is_empty() {
+        d.openai_base_url
+    } else {
+        trimmed.to_string()
+    };
     config::save(&app, &cfg).map_err(|e| e.to_string())
 }
 
@@ -218,14 +274,27 @@ pub fn clear_api_key(state: State<'_, AppState>, provider: String) -> Result<(),
 
 #[tauri::command]
 pub async fn validate_key(
+    app: AppHandle,
     state: State<'_, AppState>,
     provider: String,
 ) -> Result<ember_core::health::KeyCheck, String> {
     let p = parse_provider(&provider)?;
-    let Some(key) = secrets::get(p) else {
+    // Bug A: ler pelo try_get, nao pelo get engolidor. Um cofre bloqueado devolve Err -> a UI
+    // mostra o erro (toast), em vez de tratar silenciosamente como "chave invalida".
+    let key = secrets::try_get(p).map_err(|_| {
+        "Couldn't read the key from the credential vault (it may be locked).".to_string()
+    })?;
+    let Some(key) = key else {
         return Ok(ember_core::health::KeyCheck::Invalid);
     };
-    let check = providers::validate(&state.http, p, &key).await;
+    let cfg = config::load(&app);
+    let pctx = providers::ProviderCtx {
+        gemini_model: &cfg.gemini_model,
+        claude_model: &cfg.claude_model,
+        openai_model: &cfg.openai_model,
+        openai_base_url: &cfg.openai_base_url,
+    };
+    let check = providers::validate(&state.http, p, &key, &pctx).await;
     // Guarda o resultado no cache de saude, para a pre-validacao/o veredicto refletirem ja.
     if let Ok(mut m) = state.key_checks.lock() {
         m.insert(p, (check, crate::now_ms()));
@@ -236,18 +305,28 @@ pub async fn validate_key(
 /// Veredicto de saude dos providers, para as settings mostrarem um aviso honesto quando nao ha
 /// um fallback pre-validado (ex.: so um provider configurado). Le o cache de probes + a presenca
 /// das chaves; a decisao e pura (`ember_core::health::assess_providers`).
+/// Devolve `Err` se o cofre estiver ilegivel (Bug A): a saude e genuinamente desconhecida.
 #[tauri::command]
-pub fn get_provider_health(state: State<'_, AppState>) -> ember_core::health::Readiness {
+pub fn get_provider_health(
+    state: State<'_, AppState>,
+) -> Result<ember_core::health::Readiness, String> {
     let cache = state.key_checks.lock();
-    let entries: Vec<ember_core::health::ProviderStatus> = [Provider::Gemini, Provider::Claude]
-        .iter()
-        .map(|&p| ember_core::health::ProviderStatus {
+    let cache_ref = cache.as_ref().ok();
+    let mut entries = Vec::new();
+    for p in [Provider::Gemini, Provider::OpenAi, Provider::Claude] {
+        let configured = secrets::try_has(p)
+            .map_err(|_| "Couldn't read saved keys (credential vault may be locked).".to_string())?;
+        entries.push(ember_core::health::ProviderStatus {
             provider: p,
-            configured: secrets::has(p),
-            last_check: cache.as_ref().ok().and_then(|m| m.get(&p).copied()),
-        })
-        .collect();
-    ember_core::health::assess_providers(&entries, crate::now_ms(), ember_core::health::DEFAULT_TTL_MS)
+            configured,
+            last_check: cache_ref.and_then(|m| m.get(&p).copied()),
+        });
+    }
+    Ok(ember_core::health::assess_providers(
+        &entries,
+        crate::now_ms(),
+        ember_core::health::DEFAULT_TTL_MS,
+    ))
 }
 
 #[tauri::command]
@@ -347,11 +426,12 @@ pub fn get_diagnostics(app: AppHandle) -> String {
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "unknown".into());
     format!(
-        "Ember {version}\nOS: {} ({})\nGemini key: {}\nClaude key: {}\nMode: {}  Thinking: {} ({})  Debug: {}\nLog: {log_path}",
+        "Ember {version}\nOS: {} ({})\nGemini key: {}\nOpenAI key: {}\nClaude key: {}\nMode: {}  Thinking: {} ({})  Debug: {}\nLog: {log_path}",
         std::env::consts::OS,
         std::env::consts::ARCH,
-        if secrets::has(Provider::Gemini) { "set" } else { "missing" },
-        if secrets::has(Provider::Claude) { "set" } else { "missing" },
+        key_state(Provider::Gemini),
+        key_state(Provider::OpenAi),
+        key_state(Provider::Claude),
         mode_str(cfg.mode),
         cfg.thinking_enabled,
         cfg.thinking_level,
@@ -376,10 +456,11 @@ pub(crate) fn friendly_error(e: &ember_core::CoreError) -> String {
     }
 }
 
-/// Refina `input` com a chain Gemini->Claude. Devolve (texto CRU do modelo, `Prepared`,
-/// provider) ou CoreError: o pos-processamento do motor corre em `flow.rs`, para um output que
-/// degrada cair no ramo de restauro do clipboard (nao colar por cima da seleccao). `on_attempt`
-/// recebe (provider, indice, tentativa) antes de cada chamada; `on_delta` e no-op (preview off).
+/// Refina `input` com a chain Gemini->OpenAi->Claude (filtrada pelos configurados). Devolve
+/// (texto CRU do modelo, `Prepared`, provider) ou CoreError: o pos-processamento do motor corre
+/// em `flow.rs`, para um output que degrada cair no ramo de restauro do clipboard (nao colar por
+/// cima da seleccao). `on_attempt` recebe (provider, indice, tentativa) antes de cada chamada;
+/// `on_delta` e no-op (preview off).
 pub(crate) async fn refine_text(
     app: &AppHandle,
     state: &AppState,
@@ -391,7 +472,9 @@ pub(crate) async fn refine_text(
     let cfg = config::load(app);
     let mut chain: Vec<(Provider, String)> = Vec::new();
     let mut key_store_failed = false;
-    for provider in [Provider::Gemini, Provider::Claude] {
+    // Ordem de prioridade: Gemini primario, OpenAI-compatible (OpenRouter) fallback principal,
+    // Claude terceira familia opcional.
+    for provider in [Provider::Gemini, Provider::OpenAi, Provider::Claude] {
         match secrets::try_get(provider) {
             Ok(Some(k)) => chain.push((provider, k)),
             Ok(None) => {}
@@ -439,17 +522,14 @@ pub(crate) async fn refine_text(
         provider_count: chain.len(),
         ..RetryConfig::default()
     };
-    let resp = providers::refine(
-        &state.http,
-        &rcfg,
-        &chain,
-        &req,
-        &cfg.gemini_model,
-        &cfg.claude_model,
-        on_attempt,
-        on_delta,
-    )
-    .await?;
+    let pctx = providers::ProviderCtx {
+        gemini_model: &cfg.gemini_model,
+        claude_model: &cfg.claude_model,
+        openai_model: &cfg.openai_model,
+        openai_base_url: &cfg.openai_base_url,
+    };
+    let resp = providers::refine(&state.http, &rcfg, &chain, &req, &pctx, on_attempt, on_delta)
+        .await?;
     Ok((resp.text, prepared, resp.provider.display_name().to_string()))
 }
 
@@ -469,7 +549,8 @@ mod tests {
     fn parse_provider_accepts_known_rejects_unknown() {
         assert_eq!(parse_provider("gemini").unwrap(), Provider::Gemini);
         assert_eq!(parse_provider("claude").unwrap(), Provider::Claude);
-        assert!(parse_provider("openai").is_err());
+        assert_eq!(parse_provider("openai").unwrap(), Provider::OpenAi);
+        assert!(parse_provider("mistral").is_err());
     }
 
     #[test]

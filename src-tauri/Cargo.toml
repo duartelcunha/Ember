@@ -36,8 +36,10 @@ tokio = { version = "1", features = ["time", "sync", "macros"] }
 # Consumir o body de streaming (SSE) como Stream<Item = Bytes>: so o essencial (sem runtime,
 # sem executor), a mesma peca que o proprio reqwest usa internamente para bytes_stream().
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
-# Storage seguro das chaves (Windows Credential Manager). `windows-native` e OBRIGATORIO.
-keyring = { version = "3", features = ["windows-native"] }
+# Storage seguro das chaves. O backend nativo e OBRIGATORIO em cada SO: sem ele, o keyring cai
+# num mock store que nao persiste nada. Gates por plataforma: Windows Credential Manager em
+# Windows, Keychain em macOS. (Linux fica sem backend nativo: o projeto e Windows-first.)
+keyring = "3"
 
 # Adapters nativos do loop in-place: enigo (simular Ctrl+C/Ctrl+V),
 # arboard (clipboard sincrono, deteta nao-texto).
@@ -54,6 +56,13 @@ windows = { version = "0.61", features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Input_KeyboardAndMouse",
 ] }
+keyring = { version = "3", features = ["windows-native"] }
+
+# Bug B: sem o backend `apple-native`, o keyring em macOS usa um mock store e as chaves nao
+# persistem na Keychain. (A feature so compila em macOS; em Windows o `windows-native` acima
+# e que ativa.)
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
 
 # Auto-update assinado (so desktop: o updater nao suporta mobile).
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]

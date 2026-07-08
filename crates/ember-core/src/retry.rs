@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
 /// Configuracao da maquina de resiliencia.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RetryConfig {
-    /// Quantos providers existem na cadeia (Gemini primario + Claude fallback = 2).
+    /// Quantos providers existem na cadeia (ate 3: Gemini primario, OpenAI-compatible fallback,
+    /// Claude opcional). No runtime e sempre redefinido para `chain.len()` em `commands::refine_text`.
     pub provider_count: usize,
     /// Retries por provider antes de passar ao seguinte (em erros transitorios).
     pub max_retries_per_provider: u32,
@@ -26,7 +27,7 @@ pub struct RetryConfig {
 impl Default for RetryConfig {
     fn default() -> Self {
         Self {
-            provider_count: 2,
+            provider_count: 3,
             max_retries_per_provider: 2,
             base_delay_ms: 400,
             max_delay_ms: 8_000,
@@ -182,6 +183,15 @@ mod tests {
         RetryConfig::default()
     }
 
+    /// Config de 2 providers (Gemini + 1 fallback), para os testes que verificam o comportamento
+    /// "ultimo provider" sem depender do default atual (agora 3).
+    fn cfg2() -> RetryConfig {
+        RetryConfig {
+            provider_count: 2,
+            ..RetryConfig::default()
+        }
+    }
+
     #[test]
     fn classify_maps_status_codes() {
         let g = Provider::Gemini;
@@ -218,7 +228,7 @@ mod tests {
 
     #[test]
     fn transient_retries_then_falls_back_then_fails() {
-        let c = cfg(); // max_retries_per_provider = 2, provider_count = 2
+        let c = cfg2(); // max_retries_per_provider = 2, provider_count = 2
         let out = OutcomeClass::Transient { retry_after_ms: None };
 
         // attempt 0 e 1 -> retry no mesmo provider.
@@ -248,7 +258,7 @@ mod tests {
 
     #[test]
     fn auth_triggers_fallback_then_fails() {
-        let c = cfg();
+        let c = cfg2();
         assert!(matches!(
             plan(&LoopState::start(), &OutcomeClass::Auth, &c, 0.0),
             Decision::Fallback { .. }
@@ -271,7 +281,7 @@ mod tests {
 
     #[test]
     fn truncated_falls_back_then_fails_without_retry() {
-        let c = cfg();
+        let c = cfg2();
         // Nunca faz retry (o corte repetir-se-ia): salta logo para o outro provider.
         assert!(matches!(
             plan(&LoopState::start(), &OutcomeClass::Truncated, &c, 0.0),
@@ -323,6 +333,55 @@ mod tests {
         assert_eq!(
             plan(&LoopState::start(), &OutcomeClass::Success, &cfg(), 0.0),
             Decision::Succeed
+        );
+    }
+
+    #[test]
+    fn three_provider_chain_walks_middle_then_last_on_auth() {
+        // provider_count default agora = 3 (Gemini -> OpenAi -> Claude). Auth dispara fallback
+        // imediato (sem retry), visitando o do meio e depois o ultimo.
+        let c = cfg();
+        assert_eq!(c.provider_count, 3);
+
+        // Auth no provider 0 -> fallback para o 1 (o do meio, OpenAi).
+        assert!(matches!(
+            plan(&LoopState { provider_index: 0, attempt: 0 }, &OutcomeClass::Auth, &c, 0.0),
+            Decision::Fallback { next } if next.provider_index == 1
+        ));
+        // Auth no provider 1 -> fallback para o 2 (ultimo, Claude).
+        assert!(matches!(
+            plan(&LoopState { provider_index: 1, attempt: 0 }, &OutcomeClass::Auth, &c, 0.0),
+            Decision::Fallback { next } if next.provider_index == 2
+        ));
+        // Auth no ultimo (2) -> Fail (sem mais ninguem).
+        assert_eq!(
+            plan(&LoopState { provider_index: 2, attempt: 0 }, &OutcomeClass::Auth, &c, 0.0),
+            Decision::Fail { reason: CoreError::Auth }
+        );
+    }
+
+    #[test]
+    fn three_provider_chain_exhausts_transient_through_all_three() {
+        let c = cfg(); // max_retries_per_provider = 2, provider_count = 3
+        let out = OutcomeClass::Transient { retry_after_ms: None };
+
+        // Provider 0 esgota retries -> fallback para o 1.
+        let exhausted0 = LoopState { provider_index: 0, attempt: c.max_retries_per_provider };
+        assert!(matches!(
+            plan(&exhausted0, &out, &c, 0.0),
+            Decision::Fallback { next } if next.provider_index == 1
+        ));
+        // Provider 1 esgota -> fallback para o 2.
+        let exhausted1 = LoopState { provider_index: 1, attempt: c.max_retries_per_provider };
+        assert!(matches!(
+            plan(&exhausted1, &out, &c, 0.0),
+            Decision::Fallback { next } if next.provider_index == 2
+        ));
+        // Provider 2 (ultimo) esgota -> Fail AllProvidersFailed.
+        let exhausted2 = LoopState { provider_index: 2, attempt: c.max_retries_per_provider };
+        assert_eq!(
+            plan(&exhausted2, &out, &c, 0.0),
+            Decision::Fail { reason: CoreError::AllProvidersFailed }
         );
     }
 }

@@ -11,6 +11,12 @@ pub const DEFAULT_GEMINI_MODEL: &str = "gemini-2.5-flash";
 /// Modelo Claude de fallback por defeito: o tier barato e rapido (Haiku), comparavel em custo
 /// ao Gemini Flash. NAO o Sonnet (bem mais caro) por defeito; fica como opcao para quem quiser.
 pub const DEFAULT_CLAUDE_MODEL: &str = "claude-haiku-4-5";
+/// Base URL do provider OpenAI-compatible por defeito: OpenRouter. Um so endpoint (com a mesma
+/// forma /chat/completions) da acesso a muitos modelos, incluindo os `:free` com raciocinio.
+pub const DEFAULT_OPENAI_BASE_URL: &str = "https://openrouter.ai/api/v1";
+/// Modelo OpenAI-compatible por defeito: DeepSeek R1 free via OpenRouter (reasoning exposto em
+/// `reasoning_content`). Estes ids `:free` mudam; a UI permite escrever qualquer id (Custom).
+pub const DEFAULT_OPENAI_MODEL: &str = "deepseek/deepseek-r1:free";
 
 // ---------------------------------------------------------------------------------------
 // Gemini
@@ -211,7 +217,123 @@ pub fn claude_stream_event(chunk: &Value) -> ClaudeStreamEvent {
 }
 
 // ---------------------------------------------------------------------------------------
-// Framing SSE (comum aos dois providers: ambos usam `data: <json>\n\n`)
+// OpenAI-compatible (OpenRouter, DeepSeek, Groq, Ollama... todos partilham /chat/completions)
+// ---------------------------------------------------------------------------------------
+
+/// `true` se o base URL aponta para o OpenRouter (unica familia a quem mandamos o campo
+/// `reasoning`: outros endpoints OpenAI-compatible rejeitam/ignoram campos desconhecidos de
+/// forma inconsistente). Host-match tolerante a scheme/porta.
+pub fn openai_is_openrouter(base_url: &str) -> bool {
+    base_url.contains("openrouter.ai")
+}
+
+/// URL do endpoint de chat. Tira uma barra final defensivamente (um base URL escrito a mao com
+/// `/` extra nao devia duplicar a barra no caminho).
+pub fn openai_chat_url(base_url: &str) -> String {
+    format!("{}/chat/completions", base_url.trim_end_matches('/'))
+}
+
+/// URL do endpoint de listagem de modelos, usado so pelo probe de validacao de chave.
+pub fn openai_models_url(base_url: &str) -> String {
+    format!("{}/models", base_url.trim_end_matches('/'))
+}
+
+/// Corpo do pedido no formato chat-completions. So acrescenta `reasoning` quando e OpenRouter
+/// e o thinking esta ligado (o unico caso em que sabemos que o campo e aceite). `max_tokens` e
+/// universalmente aceite pela familia OpenAI-compatible que visamos (nao `max_completion_tokens`,
+/// rename so do OpenAI o-series direto).
+pub fn openai_request_body(req: &LlmRequest, stream: bool, base_url: &str) -> Value {
+    let mut body = json!({
+        "model": req.model,
+        "messages": [
+            { "role": "system", "content": req.system },
+            { "role": "user", "content": req.user }
+        ],
+        "max_tokens": req.max_tokens,
+        "temperature": req.temperature,
+        "stream": stream
+    });
+    if req.thinking && openai_is_openrouter(base_url) {
+        // Spelling atual do OpenRouter: `reasoning: { include: true }`. O legacy
+        // `include_reasoning: true` ainda funciona mas esta descontinuado.
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("reasoning".into(), json!({ "include": true }));
+        }
+    }
+    body
+}
+
+/// Recusa por politica: `finish_reason == "content_filter"`.
+pub fn openai_is_content_policy(chunk: &Value) -> bool {
+    matches!(
+        chunk.pointer("/choices/0/finish_reason").and_then(Value::as_str),
+        Some("content_filter")
+    )
+}
+
+/// Resposta cortada pelo teto de tokens: `finish_reason == "length"`. Texto incompleto, nunca
+/// colar por cima da seleccao.
+pub fn openai_is_truncated(chunk: &Value) -> bool {
+    matches!(
+        chunk.pointer("/choices/0/finish_reason").and_then(Value::as_str),
+        Some("length")
+    )
+}
+
+// NOTA: nao existe `openai_is_invalid_key`. A familia OpenAI-compatible devolve 401 para chaves
+// mas, e o `classify` ja mapeia 401->Auth (dispara fallback). Isto so existia para a Gemini
+// porque ela devolve 400 para chaves mas. Nao adicionar uma versao redundante aqui.
+
+/// Um evento do stream chat-completions, ja classificado. So os casos que importam ao refiner
+/// tem variante propria; o resto (chunk de role, usage, ping...) cai em `Other` e e ignorado.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OpenAiStreamEvent {
+    /// `choices[0].delta.content`: texto novo da resposta final.
+    ContentDelta(String),
+    /// `choices[0].delta.reasoning` (OpenRouter) OU `reasoning_content` (DeepSeek nativo): traco
+    /// de raciocinio. Nunca e colado por cima da seleccao (o shell so loga a debug); existe como
+    /// variante para podermos captura-lo no futuro (painel "thinking") sem tocar no parser.
+    ReasoningDelta(String),
+    /// `choices[0].finish_reason` presente: terminal. O caller classifica com
+    /// `openai_is_truncated`/`openai_is_content_policy` sobre `{ "finish_reason": .. }`.
+    Stopped { finish_reason: String },
+    Other,
+}
+
+/// Classifica um chunk de streaming OpenAI-compatible (SSE `data:` ja parseado como JSON).
+/// Ordem: finish_reason (terminal) primeiro, depois raciocinio, depois conteudo final.
+pub fn openai_stream_event(chunk: &Value) -> OpenAiStreamEvent {
+    // 1. Terminal: finish_reason presente (pode vir num chunk com delta vazio no fim).
+    if let Some(fr) = chunk.pointer("/choices/0/finish_reason").and_then(Value::as_str) {
+        return OpenAiStreamEvent::Stopped {
+            finish_reason: fr.to_string(),
+        };
+    }
+    // 2. Raciocinio: OpenRouter normaliza para `reasoning`; DeepSeek nativo usa `reasoning_content`.
+    if let Some(r) = chunk.pointer("/choices/0/delta/reasoning").and_then(Value::as_str) {
+        if !r.is_empty() {
+            return OpenAiStreamEvent::ReasoningDelta(r.to_string());
+        }
+    }
+    if let Some(r) = chunk
+        .pointer("/choices/0/delta/reasoning_content")
+        .and_then(Value::as_str)
+    {
+        if !r.is_empty() {
+            return OpenAiStreamEvent::ReasoningDelta(r.to_string());
+        }
+    }
+    // 3. Conteudo final. O primeiro chunk so traz `role: "assistant"` (sem content) -> Other.
+    if let Some(c) = chunk.pointer("/choices/0/delta/content").and_then(Value::as_str) {
+        if !c.is_empty() {
+            return OpenAiStreamEvent::ContentDelta(c.to_string());
+        }
+    }
+    OpenAiStreamEvent::Other
+}
+
+// ---------------------------------------------------------------------------------------
+// Framing SSE (comum aos providers: todos usam `data: <json>\n\n`)
 // ---------------------------------------------------------------------------------------
 
 /// Parte um buffer bruto de bytes SSE nos eventos completos (delimitados por linha em
@@ -543,5 +665,120 @@ mod tests {
     fn claude_never_sends_temperature() {
         let b = claude_request_body(&req(), false);
         assert!(b.get("temperature").is_none());
+    }
+
+    // ----- OpenAI-compatible -----
+
+    #[test]
+    fn openai_chat_and_models_urls_trim_trailing_slash() {
+        assert_eq!(
+            openai_chat_url("https://openrouter.ai/api/v1"),
+            "https://openrouter.ai/api/v1/chat/completions"
+        );
+        assert_eq!(
+            openai_chat_url("https://openrouter.ai/api/v1/"),
+            "https://openrouter.ai/api/v1/chat/completions"
+        );
+        assert_eq!(
+            openai_models_url("https://x/"),
+            "https://x/models"
+        );
+    }
+
+    #[test]
+    fn openai_body_shape_system_then_user_and_stream_flag() {
+        let b = openai_request_body(&req(), true, DEFAULT_OPENAI_BASE_URL);
+        assert_eq!(b.pointer("/messages/0/role").unwrap(), "system");
+        assert_eq!(b.pointer("/messages/0/content").unwrap(), "sys");
+        assert_eq!(b.pointer("/messages/1/role").unwrap(), "user");
+        assert_eq!(b.pointer("/messages/1/content").unwrap(), "usr");
+        assert_eq!(b.get("stream").unwrap(), true);
+        assert_eq!(b.get("max_tokens").unwrap(), 512);
+    }
+
+    #[test]
+    fn openai_body_adds_reasoning_only_for_openrouter_when_thinking() {
+        // OpenRouter + thinking on -> reasoning presente.
+        let b = openai_request_body(&req(), true, DEFAULT_OPENAI_BASE_URL);
+        assert_eq!(b.pointer("/reasoning/include").unwrap(), true);
+
+        // Outro base URL (ex: DeepSeek direto) -> sem reasoning, mesmo com thinking on.
+        let b2 = openai_request_body(&req(), true, "https://api.deepseek.com/v1");
+        assert!(b2.get("reasoning").is_none());
+
+        // OpenRouter mas thinking off -> sem reasoning.
+        let mut r = req();
+        r.thinking = false;
+        let b3 = openai_request_body(&r, true, DEFAULT_OPENAI_BASE_URL);
+        assert!(b3.get("reasoning").is_none());
+    }
+
+    #[test]
+    fn openai_stream_event_extracts_content_delta() {
+        let chunk = json!({
+            "choices": [{ "delta": { "content": "Ola" }, "index": 0 }]
+        });
+        assert_eq!(
+            openai_stream_event(&chunk),
+            OpenAiStreamEvent::ContentDelta("Ola".into())
+        );
+    }
+
+    #[test]
+    fn openai_stream_event_extracts_reasoning_via_both_field_names() {
+        let openrouter = json!({
+            "choices": [{ "delta": { "reasoning": "a pensar" } }]
+        });
+        assert_eq!(
+            openai_stream_event(&openrouter),
+            OpenAiStreamEvent::ReasoningDelta("a pensar".into())
+        );
+
+        let deepseek = json!({
+            "choices": [{ "delta": { "reasoning_content": "a pensar" } }]
+        });
+        assert_eq!(
+            openai_stream_event(&deepseek),
+            OpenAiStreamEvent::ReasoningDelta("a pensar".into())
+        );
+    }
+
+    #[test]
+    fn openai_stream_event_finish_reason_is_terminal_and_takes_precedence() {
+        for fr in ["stop", "length", "content_filter"] {
+            let chunk = json!({ "choices": [{ "finish_reason": fr, "delta": {} }] });
+            assert_eq!(
+                openai_stream_event(&chunk),
+                OpenAiStreamEvent::Stopped { finish_reason: fr.into() }
+            );
+        }
+    }
+
+    #[test]
+    fn openai_stream_event_ignores_role_chunk_and_empty_choices() {
+        // Primeiro chunk: so anuncia o role, sem conteudo.
+        let role = json!({ "choices": [{ "delta": { "role": "assistant" } }] });
+        assert_eq!(openai_stream_event(&role), OpenAiStreamEvent::Other);
+
+        // Chunk de usage sem choices (defensivo: nao pedimos usage, mas alguns mandam).
+        let usage = json!({ "usage": { "total_tokens": 42 } });
+        assert_eq!(openai_stream_event(&usage), OpenAiStreamEvent::Other);
+    }
+
+    #[test]
+    fn openai_detects_content_filter_and_length() {
+        assert!(openai_is_content_policy(&json!({
+            "choices": [{ "finish_reason": "content_filter" }]
+        })));
+        assert!(!openai_is_content_policy(&json!({
+            "choices": [{ "finish_reason": "stop" }]
+        })));
+
+        assert!(openai_is_truncated(&json!({
+            "choices": [{ "finish_reason": "length" }]
+        })));
+        assert!(!openai_is_truncated(&json!({
+            "choices": [{ "finish_reason": "stop" }]
+        })));
     }
 }

@@ -32,6 +32,7 @@ import {
 
 const GEMINI_PRESETS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
 const CLAUDE_PRESETS = ["claude-haiku-4-5", "claude-sonnet-4-6"];
+const OPENAI_PRESETS = ["deepseek/deepseek-r1:free", "qwen/qwen3-coder:free"];
 const CUSTOM = "__custom__";
 
 function Section({
@@ -119,6 +120,9 @@ function ProviderConfig({
   hasKey,
   model,
   presets,
+  baseUrl,
+  onCommitBaseUrl,
+  onKeyChanged,
 }: {
   kind: ProviderKind;
   title: string;
@@ -126,10 +130,18 @@ function ProviderConfig({
   hasKey: boolean;
   model: string;
   presets: string[];
+  /** So o provider OpenAI-compatible mostra base URL (OpenRouter/DeepSeek/Groq/Ollama...). */
+  baseUrl?: string;
+  onCommitBaseUrl?: (url: string) => Promise<void>;
+  /** Chamado apos gravar/remover chave, para o parent refazer a saude (Bug C). */
+  onKeyChanged?: () => void;
 }) {
   const [key, setKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(hasKey);
+  const [urlDraft, setUrlDraft] = useState(baseUrl ?? "");
+
+  useEffect(() => setUrlDraft(baseUrl ?? ""), [baseUrl]);
 
   // `hasKey` chega do getSettings assincrono, depois do mount; sem ressincronizar, o
   // indicador de "chave guardada" ficava sempre a false mesmo com uma chave no cofre.
@@ -152,6 +164,7 @@ function ProviderConfig({
       } else {
         toast.error(`${title} key saved. Couldn't verify it right now (no network).`);
       }
+      onKeyChanged?.();
     } catch {
       toast.error("Couldn't save the key (app not running?).");
     } finally {
@@ -166,6 +179,7 @@ function ProviderConfig({
       setSaved(false);
       setKey("");
       toast.success(`${title} key removed.`);
+      onKeyChanged?.();
     } catch {
       toast.error("Couldn't remove the key.");
     } finally {
@@ -204,6 +218,24 @@ function ProviderConfig({
           )}
         </div>
       </div>
+      {baseUrl !== undefined && onCommitBaseUrl && (
+        <div className="flex flex-col gap-2">
+          <Label htmlFor={`${kind}-base-url`}>Base URL</Label>
+          <Input
+            id={`${kind}-base-url`}
+            value={urlDraft}
+            onChange={(e) => setUrlDraft(e.target.value)}
+            onBlur={() =>
+              urlDraft.trim() &&
+              urlDraft.trim() !== baseUrl &&
+              onCommitBaseUrl(urlDraft.trim()).catch(() =>
+                toast.error("Couldn't update the base URL.")
+              )
+            }
+            placeholder="https://openrouter.ai/api/v1"
+          />
+        </div>
+      )}
       <ModelPicker kind={kind} presets={presets} model={model} onCommit={commitModel} />
     </Section>
   );
@@ -257,15 +289,18 @@ const MODE_COPY: Record<RefineMode, { title: string; hint: string }> = {
 const THINKING_LEVELS: ThinkingLevel[] = ["minimal", "low", "medium", "high"];
 
 /** Aviso honesto quando nao ha fallback pre-validado (regra de resiliencia). So aparece no caso
- *  estavel e nao-transitorio: exatamente um provider configurado (sem 2a familia). Dispensavel. */
-function ProviderHealthNotice() {
-  const [health, setHealth] = useState<ProviderHealth | null>(null);
-  const [dismissed, setDismissed] = useState(false);
-
-  useEffect(() => {
-    ipc.getProviderHealth().then(setHealth).catch(() => {});
-  }, []);
-
+ *  estavel e nao-transitorio: exatamente um provider configurado (sem 2a familia). Dispensavel.
+ *  Controlado por props: o parent (Settings) refaz o `health` sempre que uma chave muda, para o
+ *  aviso nao ficar stale (Bug C: antes so buscava no mount). */
+function ProviderHealthNotice({
+  health,
+  dismissed,
+  onDismiss,
+}: {
+  health: ProviderHealth | null;
+  dismissed: boolean;
+  onDismiss: () => void;
+}) {
   if (dismissed || !health || health.configuredCount !== 1) return null;
   return (
     <div className="flex items-start justify-between gap-3 rounded-lg border border-[color:var(--border-accent)] bg-surface-1 p-4 text-xs text-fg">
@@ -273,10 +308,7 @@ function ProviderHealthNotice() {
         Only one provider is configured, so there's no fallback if it has an outage or hits a
         limit. Add a second key (a different family) for resilience.
       </span>
-      <button
-        className="shrink-0 text-fg-muted hover:text-fg"
-        onClick={() => setDismissed(true)}
-      >
+      <button className="shrink-0 text-fg-muted hover:text-fg" onClick={onDismiss}>
         Dismiss
       </button>
     </div>
@@ -364,6 +396,14 @@ export function Settings() {
   const [polls, setPolls] = useState(DEFAULT_SETTINGS.capturePolls);
   const [stepMs, setStepMs] = useState(DEFAULT_SETTINGS.captureStepMs);
   const [settleMs, setSettleMs] = useState(DEFAULT_SETTINGS.pasteSettleMs);
+  // Saude dos providers, ao nivel do Settings, para refazer quando uma chave muda (Bug C) e
+  // passar ja resolvida ao aviso (que deixa de ter useEffect proprio).
+  const [health, setHealth] = useState<ProviderHealth | null>(null);
+  const [healthDismissed, setHealthDismissed] = useState(false);
+  const refreshHealth = () =>
+    ipc.getProviderHealth().then(setHealth).catch(() => {
+      /* cofre ilegivel / fora do Tauri: o banner de key-store trata o caso grave */
+    });
 
   useEffect(() => {
     // Fecho com fade: previne o fecho nativo e corre a saida. A janela so esconde quando a
@@ -399,6 +439,7 @@ export function Settings() {
       .catch(() => {
         /* outside Tauri: use defaults */
       });
+    refreshHealth();
   }, []);
 
   const sourceLabel: Record<EmberSettings["profileSource"], string> = {
@@ -495,11 +536,22 @@ export function Settings() {
   
             <TabsContent value="providers">
               <div className="flex flex-col gap-4">
-                <ProviderHealthNotice />
+                {s.keyStoreError && (
+                  <div className="rounded-lg border border-[color:var(--border-accent)] bg-surface-1 p-4 text-xs text-fg">
+                    Ember couldn't read your saved keys (the credential vault may be locked).
+                    Reopen the app or unlock the vault, then re-enter your keys.
+                  </div>
+                )}
+                <ProviderHealthNotice
+                  health={health}
+                  dismissed={healthDismissed}
+                  onDismiss={() => setHealthDismissed(true)}
+                />
                 <p className="text-xs text-fg-muted">
-                  BYOK: bring your own keys. Gemini is primary; Claude is the fallback (different
-                  families fail for different reasons). Keys live in the Windows Credential Manager,
-                  never in plain text.
+                  BYOK: bring your own keys. Gemini is primary; an OpenAI-compatible provider
+                  (OpenRouter by default, with free reasoning models) is the fallback; Claude is
+                  an optional third family. Different families fail for different reasons. Keys
+                  live in the OS credential vault, never in plain text.
                 </p>
                 <ProviderConfig
                   kind="gemini"
@@ -508,14 +560,34 @@ export function Settings() {
                   hasKey={s.hasGeminiKey}
                   model={s.geminiModel}
                   presets={GEMINI_PRESETS}
+                  onKeyChanged={refreshHealth}
+                />
+                <ProviderConfig
+                  kind="openai"
+                  title="OpenAI-compatible (default fallback)"
+                  subtitle="OpenRouter by default. One key unlocks many models, including free reasoning ones (DeepSeek R1, Qwen3). Point the base URL at DeepSeek, Groq, or local Ollama if you prefer."
+                  hasKey={s.hasOpenAiKey}
+                  model={s.openaiModel}
+                  presets={OPENAI_PRESETS}
+                  baseUrl={s.openaiBaseUrl}
+                  onKeyChanged={refreshHealth}
+                  onCommitBaseUrl={async (url) => {
+                    await ipc.setOpenAiBaseUrl(url);
+                    // O backend sanitiza; rebusca para refletir o que ficou gravado e revalida a saude.
+                    const res = await ipc.getSettings();
+                    setS(res);
+                    refreshHealth();
+                    toast.success("Base URL updated.");
+                  }}
                 />
                 <ProviderConfig
                   kind="claude"
-                  title="Claude (fallback)"
-                  subtitle="Optional. A cheap, fast fallback (Haiku) for when Gemini fails. Pick Sonnet for max quality."
+                  title="Claude (optional third family)"
+                  subtitle="Optional. A cheap, fast extra fallback (Haiku). Pick Sonnet for max quality. Tried only after Gemini and the OpenAI-compatible fallback."
                   hasKey={s.hasClaudeKey}
                   model={s.claudeModel}
                   presets={CLAUDE_PRESETS}
+                  onKeyChanged={refreshHealth}
                 />
               </div>
             </TabsContent>
@@ -787,8 +859,9 @@ export function Settings() {
               <div className="flex flex-col gap-4">
                 <Section title="Ember">
                   <p className="text-sm text-fg-muted">
-                    In-the-moment prompt refiner for any app. Gemini primary + Claude fallback, guided
-                    by your profile. Built with Tauri.
+                    In-the-moment prompt refiner for any app. Gemini primary, with an
+                    OpenAI-compatible fallback (OpenRouter by default) and Claude as an optional
+                    third family, guided by your profile. Built with Tauri.
                   </p>
                 </Section>
                 <Section title="Updates" hint="Checks against the latest GitHub release, signed and verified.">

@@ -2,7 +2,7 @@
 //! As chaves de API NAO vivem aqui: ficam no Windows Credential Manager (ver secrets.rs).
 
 use ember_core::model::RefineMode;
-use ember_core::providers::{DEFAULT_CLAUDE_MODEL, DEFAULT_GEMINI_MODEL};
+use ember_core::providers::{DEFAULT_CLAUDE_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_OPENAI_BASE_URL, DEFAULT_OPENAI_MODEL};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -13,6 +13,10 @@ use tauri::{AppHandle, Manager};
 pub struct Config {
     pub gemini_model: String,
     pub claude_model: String,
+    /// Modelo do provider OpenAI-compatible (default fallback). Id livre; a UI aceita Custom.
+    pub openai_model: String,
+    /// Base URL do provider OpenAI-compatible. Default: OpenRouter. Serve DeepSeek/Groq/Ollama.
+    pub openai_base_url: String,
     pub hotkey: String,
     pub autostart: bool,
     pub mode: RefineMode,
@@ -53,6 +57,8 @@ impl Default for Config {
         Self {
             gemini_model: DEFAULT_GEMINI_MODEL.to_string(),
             claude_model: DEFAULT_CLAUDE_MODEL.to_string(),
+            openai_model: DEFAULT_OPENAI_MODEL.to_string(),
+            openai_base_url: DEFAULT_OPENAI_BASE_URL.to_string(),
             hotkey: "CmdOrCtrl+Shift+Space".to_string(),
             autostart: false,
             mode: RefineMode::Adaptive,
@@ -84,6 +90,16 @@ impl Config {
         if self.claude_model.trim().is_empty() {
             self.claude_model = d.claude_model;
         }
+        if self.openai_model.trim().is_empty() {
+            self.openai_model = d.openai_model;
+        }
+        // Base URL vazia -> default; barra final removida (nao duplicar no caminho do endpoint).
+        let base = self.openai_base_url.trim().trim_end_matches('/');
+        self.openai_base_url = if base.is_empty() {
+            d.openai_base_url
+        } else {
+            base.to_string()
+        };
         if self.hotkey.trim().is_empty() {
             self.hotkey = d.hotkey;
         }
@@ -134,6 +150,22 @@ mod tests {
     fn sanitize_leaves_valid_config_untouched() {
         let c = Config::default();
         assert_eq!(c.clone().sanitize(), c);
+    }
+
+    #[test]
+    fn sanitize_refills_empty_openai_fields_and_trims_base_url_slash() {
+        let mut c = Config::default();
+        c.openai_model = "  ".into();
+        c.openai_base_url = "https://openrouter.ai/api/v1/".into();
+        let d = Config::default();
+        let c = c.sanitize();
+        assert_eq!(c.openai_model, d.openai_model);
+        // barra final removida
+        assert_eq!(c.openai_base_url, "https://openrouter.ai/api/v1");
+        // base URL totalmente vazia -> default
+        let mut c2 = Config::default();
+        c2.openai_base_url = "   ".into();
+        assert_eq!(c2.sanitize().openai_base_url, d.openai_base_url);
     }
 }
 

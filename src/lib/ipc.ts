@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type ProviderKind = "gemini" | "claude";
+export type ProviderKind = "gemini" | "openai" | "claude";
 export type ProfileSource = "claude_md" | "user_edited" | "default";
 export type RefineMode = "adaptive" | "polish" | "turbo";
 export type ThinkingLevel = "minimal" | "low" | "medium" | "high";
@@ -21,10 +21,15 @@ export interface ProviderHealth {
 export interface EmberSettings {
   geminiModel: string;
   claudeModel: string;
+  openaiModel: string;
+  openaiBaseUrl: string;
   hotkey: string;
   autostart: boolean;
   hasGeminiKey: boolean;
   hasClaudeKey: boolean;
+  hasOpenAiKey: boolean;
+  /** `null` em condições normais; mensagem quando o cofre de credenciais está ilegível. */
+  keyStoreError: string | null;
   profileText: string;
   profileSource: ProfileSource;
   profilePath: string | null;
@@ -42,10 +47,14 @@ export interface EmberSettings {
 export const DEFAULT_SETTINGS: EmberSettings = {
   geminiModel: "gemini-2.5-flash",
   claudeModel: "claude-haiku-4-5",
+  openaiModel: "deepseek/deepseek-r1:free",
+  openaiBaseUrl: "https://openrouter.ai/api/v1",
   hotkey: "CmdOrCtrl+Shift+Space",
   autostart: false,
   hasGeminiKey: false,
   hasClaudeKey: false,
+  hasOpenAiKey: false,
+  keyStoreError: null,
   profileText: "",
   profileSource: "default",
   profilePath: null,
@@ -70,6 +79,8 @@ export const ipc = {
   getProviderHealth: () => invoke<ProviderHealth>("get_provider_health"),
   setModel: (provider: ProviderKind, model: string) =>
     invoke<void>("set_model", { provider, model }),
+  setOpenAiBaseUrl: (baseUrl: string) =>
+    invoke<void>("set_openai_base_url", { baseUrl }),
   setHotkey: (hotkey: string) => invoke<void>("set_hotkey", { hotkey }),
   setAutostart: (enabled: boolean) => invoke<void>("set_autostart", { enabled }),
   setMode: (mode: RefineMode) => invoke<void>("set_mode", { mode }),
