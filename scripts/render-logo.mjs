@@ -1,13 +1,30 @@
-// Renderiza o mark "Tile + spark" para PNG 1024 (fonte para `tauri icon`).
-// Flat, uma so cor de marca; o spark e negative space (furo) dentro do tile.
-import { Resvg } from "@resvg/resvg-js";
-import { writeFileSync } from "node:fs";
+// Pipeline de branding do Ember.
+//
+// A marca deixou de ser um SVG plano gerado por codigo: passou a ser uma imagem raster
+// (estrela incandescente com grao->glow, a metafora do refine) desenhada externamente. Este
+// script deixa de gerar o SVG antigo; documenta o fluxo atual para os icones nunca divergirem.
+//
+// Fluxo (a partir de uma imagem-fonte quadrada, idealmente >= 1024px, fundo transparente):
+//
+//   1. Preparar o master 1024 (recorta ao conteudo, quadra com margem, upscale Lanczos se
+//      preciso, unsharp subtil). Feito com PIL:
+//
+//      python -c "from PIL import Image, ImageFilter; \
+//        im=Image.open('fonte.png').convert('RGBA'); im=im.crop(im.getchannel('A').getbbox()); \
+//        w,h=im.size; s=max(w,h); m=int(s*0.06); c=s+2*m; \
+//        sq=Image.new('RGBA',(c,c),(0,0,0,0)); sq.paste(im,((c-w)//2,(c-h)//2),im); \
+//        big=sq.resize((1024,1024),Image.LANCZOS).filter(ImageFilter.UnsharpMask(1.6,60,2)); \
+//        big.save('logo-source-1024.png')"
+//
+//   2. Gerar todos os formatos (png/ico/icns/Square*/iOS/Android):
+//
+//      npx tauri icon logo-source-1024.png
+//
+// O header das Settings (src/components/Logo.tsx), o splash e o favicon do README usam os PNGs
+// gerados em src-tauri/icons, por isso o passo 2 propaga a marca para todo o lado.
 
-const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 64 64">
-  <path fill="#ff7a18" fill-rule="evenodd" d="M20 6 h24 a14 14 0 0 1 14 14 v24 a14 14 0 0 1 -14 14 h-24 a14 14 0 0 1 -14 -14 v-24 a14 14 0 0 1 14 -14 Z
-    M32 17 C 33 28 36 31 47 32 C 36 33 33 36 32 47 C 31 36 28 33 17 32 C 28 31 31 28 32 17 Z"/>
-</svg>`;
-
-const png = new Resvg(svg, { fitTo: { mode: "width", value: 1024 } }).render().asPng();
-writeFileSync("logo-1024.png", png);
-console.log("wrote logo-1024.png");
+console.error(
+  "render-logo.mjs ja nao gera a marca (deixou de ser SVG). Ve o comentario no topo: prepara o\n" +
+    "master com PIL e corre `npx tauri icon logo-source-1024.png`."
+);
+process.exit(1);

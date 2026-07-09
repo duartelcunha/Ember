@@ -18,6 +18,7 @@ src-tauri/target/
 
 # Icon render intermediate (regenerate via scripts/render-logo.mjs)
 /logo-1024.png
+/logo-source-1024.png
 
 # Updater signing key (never commit; password is a GitHub Actions secret)
 *.key
