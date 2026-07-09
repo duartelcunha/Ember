@@ -12,8 +12,8 @@
 <p align="center">
   <a href="https://github.com/duartelcunha/Ember/releases/latest"><img src="https://img.shields.io/github/v/release/duartelcunha/Ember?style=flat-square&color=ff7a18&label=release" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/platform-Windows%20·%20macOS-2e2519?style=flat-square" alt="Platform">
-  <a href="https://tauri.app/"><img src="https://img.shields.io/badge/built%20with-Tauri%202-ffcb47?style=flat-square" alt="Tauri 2">
-  <img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-4da3ff?style=flat-square" alt="License"></a>
+  <a href="https://tauri.app/"><img src="https://img.shields.io/badge/built%20with-Tauri%202-ffcb47?style=flat-square" alt="Tauri 2"></a>
+  <img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-4da3ff?style=flat-square" alt="License">
 </p>
 
 ---
