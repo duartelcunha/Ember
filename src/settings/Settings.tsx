@@ -19,6 +19,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Logo } from "@/components/Logo";
+import { TitleBar } from "@/components/TitleBar";
 import { UpdateChecker } from "./UpdateChecker";
 import {
   DEFAULT_SETTINGS,
@@ -523,8 +524,9 @@ export function Settings() {
             transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
             style={{ transformOrigin: "center" }}
           >
+        <TitleBar />
         <motion.div
-          className="mx-auto max-w-3xl px-8 py-12"
+          className="mx-auto max-w-3xl px-8 pb-12 pt-10"
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.65, ease: [0.22, 1, 0.36, 1], delay: 0.12 }}
