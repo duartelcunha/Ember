@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/duartelcunha/Ember/releases"><img src="https://img.shields.io/badge/release-v0.3.0-ff7a18?style=for-the-badge&labelColor=1a0e03" alt="Release"></a>
+  <a href="https://github.com/duartelcunha/Ember/releases/latest"><img src="https://img.shields.io/github/v/release/duartelcunha/Ember?style=for-the-badge&color=ff7a18&labelColor=1a0e03&label=release" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/Windows-2e2519?style=for-the-badge&logo=windows&logoColor=ffffff" alt="Platform">
   <img src="https://img.shields.io/badge/macOS-in%20progress-2e2519?style=for-the-badge&logo=apple&logoColor=ffffff" alt="macOS in progress">
   <a href="https://tauri.app/"><img src="https://img.shields.io/badge/Tauri%202-24C8DB?style=for-the-badge&logo=tauri&logoColor=ffffff" alt="Tauri 2"></a>
@@ -21,15 +21,18 @@
 
 ---
 
-Ember lives in your system tray and gets out of the way. Highlight text in **any**
-app, hit the global shortcut, and a small orb appears by your cursor while a
-state-of-the-art model rewrites your selection. The refined text drops straight
-back in place. Your clipboard is restored untouched.
+You know that half-written email, that clumsy Slack message, that messy prompt
+you keep rewording? Select it, press one shortcut, and Ember cleans it up right
+where it sits, no chat window, no copy-paste, no losing your place.
 
-Not just for AI prompts: it sharpens **any** text you've selected, an email, a
-Slack message, a commit body, docs, a terminal command, fixing grammar and
-clarity or restructuring it, in whatever language you wrote it. Three modes let
-you dial how far it goes, from a light **Polish** to a full **Turbo** rewrite.
+It lives quietly in your system tray. Highlight text in **any** app, hit the
+global shortcut, and a small orb appears by your cursor while it rewrites your
+selection in place. Your clipboard is put back exactly as it was.
+
+Not just for AI prompts, Ember sharpens **anything** you can select: emails,
+messages, commit bodies, docs, terminal commands, in whatever language you wrote
+it. Fix the grammar and clarity, or restructure the whole thing, three modes let
+you dial how far it goes.
 
 **No window switching. No copy-paste dance. No tab you forgot to close.**
 
@@ -41,7 +44,7 @@ you dial how far it goes, from a light **Polish** to a full **Turbo** rewrite.
 |---|---|
 | ⚡ **Refine any text in place** | A global hotkey captures your selection, sharpens it, and pastes the result over the original, then quietly restores your clipboard. Prompts, emails, messages, commits, docs, terminal commands, anywhere you can select text. |
 | 🧬 **Never mangles your text** | Before the model ever sees it, Ember masks your code, URLs, file paths, and placeholders, then verifies they came back **exactly** intact. If anything is lost or the output looks wrong, it degrades: your original selection stays untouched instead of getting overwritten with something broken. |
-| 🆓 **Free by default** | Runs on Google **Gemini** (generous free tier) as primary, with an **OpenAI-compatible** fallback defaulting to **OpenRouter** and a free reasoning model (DeepSeek R1). Point it at DeepSeek, Groq, or a local Ollama with one field. |
+| 🆓 **Runs on free tiers** | Primary is Google **Gemini**, whose free tier covers everyday personal use. Fallback is any **OpenAI-compatible** endpoint, defaulting to **OpenRouter** with a free reasoning model (DeepSeek R1). Point it at DeepSeek, Groq, or a local Ollama with one field. |
 | 🛡️ **Resilient, not fragile** | A pure retry/fallback state machine handles rate-limits, truncation, content-policy, and outages. Fallbacks are pre-validated at startup, never guessed at the moment of failure. It degrades honestly instead of silently. |
 | 🔒 **BYOK, strictly local** | Your API keys live in the Windows Credential Manager, never in plain text, never anywhere but the provider. |
 | 🎭 **Knows your project** | Optionally merges the `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` of your focused project into the refine, with secret-shaped lines redacted. Off by default. |
@@ -53,9 +56,9 @@ you dial how far it goes, from a light **Polish** to a full **Turbo** rewrite.
 
 1. Grab the latest installer from the [**Releases**](https://github.com/duartelcunha/Ember/releases/latest) page.
 2. Launch Ember. It settles into your system tray.
-3. Open **Settings** from the tray and paste a free [OpenRouter](https://openrouter.ai/keys) or [Gemini](https://aistudio.google.com/apikey) key.
-4. Select text in any app and press `Ctrl+Shift+Space`.
-5. Watch it refine.
+3. Open **Settings** and drop in a free API key, [Gemini](https://aistudio.google.com/apikey) or [OpenRouter](https://openrouter.ai/keys) both have a free tier and take a minute to grab. *(Zero-key setup is on the [roadmap](#roadmap).)*
+4. Select text anywhere and press `Ctrl+Shift+Space` (rebindable to any combo you like).
+5. That's it, the polished version lands right where your text was.
 
 > **Terminals are handled.** In Windows Terminal, PowerShell, and friends, Ember
 > uses `Ctrl+Shift+C/V`, replaces the current input line instead of appending, and
@@ -73,7 +76,7 @@ compositor-only (opacity + transform, no layout thrash), tuned for a smooth
 |---|---|
 | **Install** | The ember mark blooms in with a warm radial glow, the first-run welcome. |
 | **Startup** | A quick, confident pulse of the mark each time Ember wakes. |
-| **Refine** | The mark rides beside your cursor, morphing from a rough blob into a sharp star as it works and leaning into your movement, then hands off to a glass pill with the result. |
+| **Refine** | The ember-star mark rides beside your cursor, a warm light sweeping across it as it works, leaning into your movement, then hands off to a glass pill with the result. |
 | **Settings** | A frameless, seamless window that fades and scales in and hides on an instant, in **Dark** or **Cream**. |
 | **Quit** | The mark dims and tilts away; the app exits exactly when the animation lands. |
 
@@ -159,4 +162,4 @@ Ember works great today on free BYOK keys. Where it's headed:
 [MIT](LICENSE). The Ember name and logo are trademarks.
 
 ---
-<p align="center"><sub>Built for frictionless writing. 🔥</sub></p>
+<p align="center"><sub>Better words, wherever you write them. 🔥</sub></p>
