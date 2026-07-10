@@ -35,3 +35,4 @@ src-tauri/target/
 *.sw?
 .gstack/
 .claude/
+/1.png
