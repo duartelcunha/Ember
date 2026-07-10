@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/duartelcunha/Ember/compare/v0.3.0...v0.4.0) (2026-07-10)
+
+
+### Features
+
+* **settings:** capture shortcut by pressing keys; logo-faithful orb ([92d410d](https://github.com/duartelcunha/Ember/commit/92d410d2f3bae1197b00321da53cdb857dc152f4))
+
 ## [0.3.0](https://github.com/duartelcunha/Ember/compare/v0.2.0...v0.3.0) (2026-07-09)
 
 
