@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/duartelcunha/Ember/compare/v0.5.0...v0.6.0) (2026-07-11)
+
+
+### Features
+
+* reliable terminal capture and cream default theme ([7c1e082](https://github.com/duartelcunha/Ember/commit/7c1e08256104abce190038f1476a615049b69d62))
+
 ## [0.5.0](https://github.com/duartelcunha/Ember/compare/v0.4.0...v0.5.0) (2026-07-11)
 
 
