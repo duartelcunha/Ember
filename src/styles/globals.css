@@ -23,16 +23,19 @@
   --color-ember-glow: #ffd9a8;
   --color-ember-raw: #b4512a;
 
-  /* Superficies */
-  --color-bg: #0b0a09;
-  --color-panel: #111014;
-  --color-surface-1: #16151a;
-  --color-surface-2: #1f1d24;
-  --color-surface-3: #26232c;
+  /* Superficies (dark): carvao QUENTE, nao roxo-acinzentado, para casar com o accent laranja da
+     marca. Mais separacao entre camadas do que antes (bg -> panel -> surfaces sobem em passos
+     visiveis) para dar profundidade em vez de tudo se fundir num tom so. */
+  --color-bg: #0c0a08;
+  --color-panel: #14110e;
+  --color-surface-1: #1b1713;
+  --color-surface-2: #251f19;
+  --color-surface-3: #322a22;
 
-  /* Texto */
-  --color-fg: #f5f3f0;
-  --color-fg-muted: #aba59e;
+  /* Texto: fg quase-branco quente; muted mais claro que antes para melhor legibilidade sobre as
+     superficies escuras (o #aba59e antigo lia-se fraco nos hints). */
+  --color-fg: #f6f2ec;
+  --color-fg-muted: #b8afa3;
 
   /* Semantico */
   --color-success: #34d399;
@@ -49,15 +52,16 @@
 }
 
 :root {
-  /* Bordas */
-  --border-subtle: rgba(255, 255, 255, 0.08);
-  --border-default: rgba(255, 255, 255, 0.12);
-  --border-strong: rgba(255, 255, 255, 0.18);
-  --border-accent: rgba(255, 138, 60, 0.55);
+  /* Bordas (dark): brancas quentes translucidas, ligeiramente mais presentes que antes para as
+     camadas se destacarem sem ficarem duras. */
+  --border-subtle: rgba(255, 246, 235, 0.09);
+  --border-default: rgba(255, 246, 235, 0.14);
+  --border-strong: rgba(255, 246, 235, 0.2);
+  --border-accent: rgba(253, 140, 60, 0.55);
 
-  /* Vidro */
-  --glass-bg: rgba(20, 18, 24, 0.55);
-  --glass-bg-strong: rgba(14, 13, 17, 0.92);
+  /* Vidro (dark): fundo quente, a condizer com as superficies de carvao. */
+  --glass-bg: rgba(26, 21, 17, 0.6);
+  --glass-bg-strong: rgba(18, 15, 12, 0.94);
   --glass-blur: 20px;
 
   /* Sombra de popovers/dropdowns (dark): duas camadas, contacto curto + difusa, suave. */

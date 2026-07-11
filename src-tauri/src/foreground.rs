@@ -42,6 +42,18 @@ pub fn is_terminal_foreground() -> bool {
     false
 }
 
+/// So para diagnostico: o caminho do exe em foco (para o log perceber porque um terminal nao
+/// foi ou foi classificado como tal). Nao usado no fluxo normal.
+#[cfg(windows)]
+pub fn debug_foreground_exe() -> Option<String> {
+    foreground_exe()
+}
+
+#[cfg(not(windows))]
+pub fn debug_foreground_exe() -> Option<String> {
+    None
+}
+
 /// Titulo da janela em foco. Sinal (seguro, sem ler memoria de outro processo) para a deteccao
 /// de contexto de projeto: muitos IDEs/terminais mostram o caminho do projeto no titulo. macOS
 /// virá com o AXTitle (a permissao de Acessibilidade e ja precisa para o paste). Windows aqui.

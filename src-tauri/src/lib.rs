@@ -371,6 +371,12 @@ pub(crate) fn register_hotkey(app: &AppHandle, hotkey: &str) -> Result<(), Strin
             // Deteta o terminal E captura o titulo da janela (para contexto de projeto) ANTES de
             // mostrar o orb: a app em foco ainda e o alvo, o nosso orb nao rouba o foco.
             let terminal = cfg.terminal_handling && foreground::is_terminal_foreground();
+            log::info!(
+                "hotkey: terminal_handling={} exe={:?} -> terminal={}",
+                cfg.terminal_handling,
+                foreground::debug_foreground_exe(),
+                terminal
+            );
             let project_title = if cfg.project_context {
                 foreground::foreground_title()
             } else {

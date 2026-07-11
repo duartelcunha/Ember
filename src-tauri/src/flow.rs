@@ -13,9 +13,12 @@ use ember_core::selection as seq;
 
 const STATE_EVENT: &str = "ember://state";
 
-/// Quanto tempo esperar pela libertacao natural dos modificadores do hotkey antes de forcar
-/// os key-ups (ver `ember_core::selection::capture`).
-const NEUTRALIZE_TIMEOUT_MS: u64 = 200;
+/// Quanto tempo esperar pela libertacao natural dos modificadores antes de forcar os key-ups
+/// (ver `ember_core::selection::capture`). Curto: nao confiamos no `GetAsyncKeyState` como sinal
+/// de libertacao (com o hotkey global registado, ele reporta Ctrl+Shift em baixo durante ~1.5s
+/// mesmo depois de largar, causa raiz confirmada por logs). O `capture` forca sempre os key-ups
+/// + settle logo a seguir, por isso esta espera e so um afago inicial, nao a defesa principal.
+const NEUTRALIZE_TIMEOUT_MS: u64 = 60;
 
 /// Timing de captura/paste, configuravel nas settings (Advanced).
 #[derive(Debug, Clone, Copy)]
@@ -68,6 +71,7 @@ fn blocking_capture(terminal: bool, timing: CaptureTiming) -> Result<CaptureOutp
         timing.polls,
         timing.step_ms,
         NEUTRALIZE_TIMEOUT_MS,
+        terminal,
     );
     Ok(CaptureOutput {
         captured,
@@ -179,6 +183,17 @@ pub async fn run(
     let captured = out.captured;
     let image = out.image;
     let saved = captured.saved.clone();
+
+    // Diagnostico do terminal (so comprimentos, nunca o conteudo, e um segredo do utilizador):
+    // armed? copiou alguma coisa? quantos chars? E o sinal que separa "nao armou / clipboard
+    // ocupado" de "copiou nada" de "copiou tarde".
+    log::info!(
+        "capture: terminal={} armed={} text_len={:?} saved_len={:?}",
+        terminal,
+        captured.armed,
+        captured.text.as_ref().map(|t| t.chars().count()),
+        saved.as_ref().map(|s| s.chars().count()),
+    );
 
     if !captured.armed {
         // Nao foi possivel armar o sentinela: o clipboard estava ocupado por outra app. A

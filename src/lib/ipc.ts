@@ -71,7 +71,7 @@ export const DEFAULT_SETTINGS: EmberSettings = {
   debugMode: false,
   projectContext: false,
   previewBeforePaste: false,
-  theme: "dark",
+  theme: "cream",
 };
 
 /** Comandos Tauri das settings. Implementados no nucleo Rust. */

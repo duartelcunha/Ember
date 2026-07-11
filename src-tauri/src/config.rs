@@ -79,7 +79,7 @@ impl Default for Config {
             debug_mode: false,
             project_context: false,
             preview_before_paste: false,
-            theme: "dark".to_string(),
+            theme: "cream".to_string(),
         }
     }
 }

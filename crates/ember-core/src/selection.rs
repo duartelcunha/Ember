@@ -51,16 +51,30 @@ fn neutralize_modifiers(io: &mut impl SelectionIo, step_ms: u64, timeout_ms: u64
 /// Captura a seleccao sem destruir o clipboard: guarda o original, escreve um
 /// sentinela, simula Ctrl+C e faz poll. Se o clipboard continuar = sentinela,
 /// nada foi selecionado (`text == None`).
+///
+/// `terminal` ativa o fallback de copy-on-select: muitos terminais (ex. Windows Terminal com
+/// "copy on select") poem a seleccao no clipboard AL SELECIONAR, sem precisar de Ctrl+Shift+C.
+/// Nesse caso o copy sintetico nao muda o clipboard (a seleccao ja foi consumida), mas o texto
+/// que estava no clipboard A ENTRADA (`saved`) E a seleccao. So em terminais, para nao arriscar
+/// tratar um clipboard antigo como seleccao fora deles.
 pub fn capture(
     io: &mut impl SelectionIo,
     sentinel: &str,
     polls: u32,
     step_ms: u64,
     neutralize_timeout_ms: u64,
+    terminal: bool,
 ) -> Captured {
     let saved = io.clip_get();
+    // Neutraliza os modificadores do hotkey. O `GetAsyncKeyState` mente com o hotkey global
+    // registado (reporta Ctrl+Shift em baixo mesmo depois de largar), por isso alem da espera
+    // natural curta, FORCAMOS SEMPRE os key-ups e damos um settle generoso: e a unica forma de o
+    // estado do teclado ficar limpo antes de injetar o Ctrl+Shift+C, sem confiar no sinal que
+    // mente. Sem isto, o copy sintetico colide com o Ctrl+Shift ainda "em baixo" e o terminal
+    // nao copia (causa raiz confirmada por logs: clipboard fica no sentinela todos os polls).
     neutralize_modifiers(io, step_ms, neutralize_timeout_ms);
-    io.sleep_ms(step_ms);
+    io.release_modifiers();
+    io.sleep_ms(step_ms.max(1) * 8); // settle generoso para o estado do teclado assentar
     io.clip_set(sentinel);
     // Confirma que o sentinela ficou mesmo no clipboard. Sem esta guarda, se o `clip_set`
     // falhar em silencio (clipboard bloqueado por outra app), o valor ANTIGO do clipboard
@@ -83,6 +97,17 @@ pub fn capture(
                 break;
             }
             _ => {}
+        }
+    }
+    // Fallback copy-on-select (so terminais): o Ctrl+Shift+C nao mudou o clipboard, mas se havia
+    // texto NAO-vazio a entrada, foi a seleccao a ser copiada ao selecionar. Usa-o. O
+    // preview-before-paste (recomendado em terminais) deixa o utilizador confirmar, cobrindo o
+    // raro caso de nao ter selecionado nada e haver clipboard antigo.
+    if text.is_none() && terminal {
+        if let Some(s) = saved.as_deref() {
+            if !s.trim().is_empty() && s != sentinel {
+                text = Some(s.to_string());
+            }
         }
     }
     Captured {
@@ -254,7 +279,7 @@ mod tests {
             selection: Some("hello world".into()),
             ..Default::default()
         };
-        let c = capture(&mut io, SENT, 5, 1, NEUT);
+        let c = capture(&mut io, SENT, 5, 1, NEUT, false);
         assert_eq!(c.text, Some("hello world".into()));
         assert_eq!(c.saved, Some("old".into()));
         assert!(c.armed);
@@ -267,10 +292,37 @@ mod tests {
             selection: None,
             ..Default::default()
         };
-        let c = capture(&mut io, SENT, 5, 1, NEUT);
+        let c = capture(&mut io, SENT, 5, 1, NEUT, false);
         assert_eq!(c.text, None);
         assert_eq!(c.saved, Some("old".into()));
         assert!(c.armed);
+    }
+
+    #[test]
+    fn terminal_fallback_uses_copy_on_select_clipboard_when_synthetic_copy_does_nothing() {
+        // Copy-on-select (ex. Windows Terminal): a seleccao ja esta no clipboard a entrada, e o
+        // Ctrl+Shift+C sintetico nao muda nada (selection=None). Em terminal, usamos o `saved`.
+        let mut io = FakeIo {
+            clipboard: Some("selected via mouse".into()),
+            selection: None, // o copy sintetico nao traz nada
+            ..Default::default()
+        };
+        let c = capture(&mut io, SENT, 5, 1, NEUT, true);
+        assert_eq!(c.text, Some("selected via mouse".into()));
+        assert!(c.armed);
+    }
+
+    #[test]
+    fn non_terminal_does_not_fall_back_to_input_clipboard() {
+        // Fora de terminal, o mesmo cenario NAO usa o clipboard antigo como seleccao (evita
+        // refinar algo que o utilizador nao selecionou).
+        let mut io = FakeIo {
+            clipboard: Some("old clipboard".into()),
+            selection: None,
+            ..Default::default()
+        };
+        let c = capture(&mut io, SENT, 5, 1, NEUT, false);
+        assert_eq!(c.text, None);
     }
 
     #[test]
@@ -283,7 +335,7 @@ mod tests {
             frozen: true,
             ..Default::default()
         };
-        let c = capture(&mut io, SENT, 5, 1, NEUT);
+        let c = capture(&mut io, SENT, 5, 1, NEUT, false);
         assert!(!c.armed);
         assert_eq!(c.text, None);
         assert_eq!(c.saved, Some("old".into()));
@@ -299,20 +351,24 @@ mod tests {
             ..Default::default()
         };
         // step 10, timeout 20 -> WaitMore(0), WaitMore(10), ForceRelease(20).
-        let c = capture(&mut io, SENT, 5, 10, 20);
+        let c = capture(&mut io, SENT, 5, 10, 20, false);
         assert!(io.force_released);
         assert_eq!(c.text, Some("hi".into()));
     }
 
     #[test]
-    fn capture_does_not_force_release_when_nothing_held() {
+    fn capture_always_force_releases_before_copy() {
+        // Nova politica: mesmo com nada premido, forcamos os key-ups antes do copy. O sinal
+        // fisico (GetAsyncKeyState) nao e de confiar com o hotkey global registado, por isso
+        // limpamos sempre o estado do teclado antes de injetar o Ctrl+Shift+C.
         let mut io = FakeIo {
             clipboard: Some("old".into()),
             selection: Some("hi".into()),
-            ..Default::default() // held = default: nada premido -> Ready logo, sem force
+            ..Default::default() // held = default: nada premido
         };
-        let _ = capture(&mut io, SENT, 5, 1, NEUT);
-        assert!(!io.force_released);
+        let c = capture(&mut io, SENT, 5, 1, NEUT, false);
+        assert!(io.force_released);
+        assert_eq!(c.text, Some("hi".into()));
     }
 
     #[test]
@@ -322,7 +378,7 @@ mod tests {
             selection: Some("hi".into()),
             ..Default::default()
         };
-        let c = capture(&mut io, SENT, 5, 1, NEUT);
+        let c = capture(&mut io, SENT, 5, 1, NEUT, false);
         let ok = replace(&mut io, "REFINED", &c.saved, 1);
         assert!(ok);
         assert_eq!(io.pasted, Some("REFINED".into()));

@@ -112,19 +112,33 @@ impl RealIo {
     fn combo(&mut self, key: char) {
         let modifier = clipboard_modifier();
         let k = clip_key(key);
+        // No terminal, settles MAIS LONGOS: uma TUI com mouse-tracking (ex. Claude Code) processa
+        // input de forma assincrona e re-desenha o ecra; um combo demasiado rapido chega antes de
+        // a app registar os modificadores ou perde-se a meio de um redraw. Imita melhor um Ctrl+
+        // Shift+C humano (modificadores premidos ~100ms). Fora do terminal mantem-se rapido.
+        let hold = if self.terminal {
+            std::time::Duration::from_millis(45)
+        } else {
+            std::time::Duration::from_millis(KEY_SETTLE_MS)
+        };
         let _ = self.enigo.key(modifier, Press);
         if self.terminal {
             let _ = self.enigo.key(Key::Shift, Press);
         }
-        self.settle();
+        std::thread::sleep(hold); // modificadores assentam antes da tecla
         let _ = self.enigo.key(k, Press);
-        self.settle();
+        std::thread::sleep(hold); // tecla premida com os modificadores em baixo
         let _ = self.enigo.key(k, Release);
-        self.settle();
+        std::thread::sleep(hold);
         if self.terminal {
             let _ = self.enigo.key(Key::Shift, Release);
         }
         let _ = self.enigo.key(modifier, Release);
+        // Settle APOS soltar tudo: da tempo a app processar o atalho e escrever o clipboard antes
+        // do primeiro poll (antes nao havia pausa aqui, o poll podia ler o clipboard cedo demais).
+        if self.terminal {
+            std::thread::sleep(hold);
+        }
     }
 
     /// Pequena pausa para o input assentar entre eventos de tecla (ver `combo`).
@@ -132,18 +146,30 @@ impl RealIo {
         std::thread::sleep(std::time::Duration::from_millis(KEY_SETTLE_MS));
     }
 
-    /// Seleciona a linha de input atual: End (vai ao fim) e Shift+Home (seleciona ate ao inicio).
-    /// O paste que se segue substitui essa seleccao editavel. So usado no modo terminal.
-    fn select_input_line(&mut self) {
+    /// Limpa a linha de input atual antes de colar o refinado: End (garante o cursor no fim da
+    /// linha logica) e Ctrl+U (o "kill-to-start" do readline: apaga da posicao do cursor ate ao
+    /// inicio da linha), o que remove a linha toda. So usado no modo terminal.
+    ///
+    /// Porque nao Shift+Home + paste (o que se fazia antes): a seleccao feita com o RATO num
+    /// terminal e uma seleccao de nivel-terminal, invisivel ao widget de input da app (ex. Claude
+    /// Code). Um Shift+Home nao e honrado la como seleccao editavel, por isso o paste caia no
+    /// inicio da linha e o texto original ficava (o refinado era so PREPENDido). O Ctrl+U apaga
+    /// fisicamente os caracteres sem depender de a app renderizar/consumir uma seleccao. Isto
+    /// substitui a LINHA INTEIRA: acerta o caso dominante (refinar o prompt todo). Substituir so
+    /// parte de uma seleccao de rato nao e fiavel num terminal (nao sabemos onde no buffer
+    /// editavel esta o trecho), por isso nao se tenta.
+    fn clear_input_line(&mut self) {
         let _ = self.enigo.key(Key::End, Press);
         let _ = self.enigo.key(Key::End, Release);
         self.settle();
-        let _ = self.enigo.key(Key::Shift, Press);
+        let _ = self.enigo.key(Key::Control, Press);
         self.settle();
-        let _ = self.enigo.key(Key::Home, Press);
-        let _ = self.enigo.key(Key::Home, Release);
+        // VK_U fisico (0x55), pelo mesmo motivo que o clip_key usa VK fisicos: um Key::Unicode
+        // cairia num evento KEYEVENTF_UNICODE que o terminal nao liga ao Ctrl.
+        let _ = self.enigo.key(Key::Other(0x55), Press);
+        let _ = self.enigo.key(Key::Other(0x55), Release);
         self.settle();
-        let _ = self.enigo.key(Key::Shift, Release);
+        let _ = self.enigo.key(Key::Control, Release);
         self.settle();
     }
 }
@@ -212,10 +238,10 @@ impl SelectionIo for RealIo {
     fn send_paste(&mut self) {
         // No terminal, a "seleccao" de rato nao e editavel (so serve para copiar): um paste
         // simples inseria o refinado A SEGUIR ao texto original em vez de o substituir. Antes de
-        // colar, selecionamos a LINHA DE INPUT atual (End -> Shift+Home) para o paste a
-        // substituir. Funciona no caso tipico: refinar o que se esta a escrever no prompt.
+        // colar, limpamos a LINHA DE INPUT atual (End -> Ctrl+U) para o paste a substituir.
+        // Funciona no caso tipico: refinar o prompt todo que se esta a escrever.
         if self.terminal {
-            self.select_input_line();
+            self.clear_input_line();
         }
         self.combo('v');
     }
