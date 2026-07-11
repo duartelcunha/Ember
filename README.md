@@ -44,6 +44,7 @@ you dial how far it goes.
 |---|---|
 | ⚡ **Refine any text in place** | A global hotkey captures your selection, sharpens it, and pastes the result over the original, then quietly restores your clipboard. Prompts, emails, messages, commits, docs, terminal commands, anywhere you can select text. |
 | 🧬 **Never mangles your text** | Before the model ever sees it, Ember masks your code, URLs, file paths, and placeholders, then verifies they came back **exactly** intact. If anything is lost or the output looks wrong, it degrades: your original selection stays untouched instead of getting overwritten with something broken. |
+| ✋ **You get the last word** | Turn on **Confirm before pasting** and Ember shows a tiny prompt by your cursor after refining, applying only when you press Enter (Esc keeps your original). It captures the keys without stealing focus, so Enter never leaks into the app you're in. |
 | 🆓 **Runs on free tiers** | Primary is Google **Gemini**, whose free tier covers everyday personal use. Fallback is any **OpenAI-compatible** endpoint, defaulting to **OpenRouter** with a free reasoning model (DeepSeek R1). Point it at DeepSeek, Groq, or a local Ollama with one field. |
 | 🛡️ **Resilient, not fragile** | A pure retry/fallback state machine handles rate-limits, truncation, content-policy, and outages. Fallbacks are pre-validated at startup, never guessed at the moment of failure. It degrades honestly instead of silently. |
 | 🔒 **BYOK, strictly local** | Your API keys live in the Windows Credential Manager, never in plain text, never anywhere but the provider. |
@@ -138,8 +139,6 @@ Ember works great today on free BYOK keys. Where it's headed:
   configure, and BYOK becomes an option for power users, not a prerequisite.
 - **A local, on-device mode.** Refine fully offline with a small local model, for
   when you want zero network and total privacy.
-- **Preview before it pastes.** An optional accept/reject diff for the times you
-  want the last word before the text is replaced.
 - **macOS.** The core is already ported; it needs CI, signing, and real testing.
 - **Per-app tone.** Adapt the refine to where you are, a crisp shell command in a
   terminal, a warm message in a chat app, a formal email in your mail client.
