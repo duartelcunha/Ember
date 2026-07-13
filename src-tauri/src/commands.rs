@@ -424,21 +424,46 @@ pub fn read_recent_logs(app: AppHandle, lines: usize) -> String {
 /// discreto no About e para nao espalhar a string.
 const REPO_URL: &str = "https://github.com/duartelcunha/ember";
 
-/// Abre o repositorio no browser do SO. URL fixo (constante), por isso seguro para o `start`.
-#[tauri::command]
-pub fn open_repo() -> Result<(), String> {
+/// Abre um URL no browser do SO. PRIVADO de proposito: so e chamado com constantes deste
+/// ficheiro, nunca com uma string vinda do frontend. Passar um URL arbitrario do webview para um
+/// `start`/`open` do SO seria uma superficie de ataque (o `start` do Windows aceita caminhos e
+/// protocolos, nao so http).
+fn open_in_browser(url: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let result = std::process::Command::new("cmd")
-        .args(["/C", "start", "", REPO_URL])
+        .args(["/C", "start", "", url])
         .spawn();
     #[cfg(target_os = "macos")]
-    let result = std::process::Command::new("open").arg(REPO_URL).spawn();
+    let result = std::process::Command::new("open").arg(url).spawn();
     #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
-    let result = std::process::Command::new("xdg-open").arg(REPO_URL).spawn();
+    let result = std::process::Command::new("xdg-open").arg(url).spawn();
     result.map(|_| ()).map_err(|e| e.to_string())
 }
 
-/// Abre a pasta de logs no explorador de ficheiros do SO.
+/// Abre o repositorio no browser do SO. URL fixo (constante), por isso seguro para o `start`.
+#[tauri::command]
+pub fn open_repo() -> Result<(), String> {
+    open_in_browser(REPO_URL)
+}
+
+/// Consola onde se cria a chave de cada provider. O frontend so manda o `provider` (um de tres
+/// valores conhecidos); o URL vive aqui, para nunca receber um URL arbitrario do webview.
+/// O provider "openai" e OpenAI-COMPATIBLE e o default e o OpenRouter, por isso e para la que
+/// aponta. Quem trocar a base URL (DeepSeek, Groq, Ollama local) tira a chave no site respetivo.
+#[tauri::command]
+pub fn open_key_console(provider: String) -> Result<(), String> {
+    let url = match provider.as_str() {
+        "gemini" => "https://aistudio.google.com/apikey",
+        "openai" => "https://openrouter.ai/keys",
+        "claude" => "https://console.anthropic.com/settings/keys",
+        _ => return Err(format!("invalid provider: {provider}")),
+    };
+    open_in_browser(url)
+}
+
+/// Abre a pasta de logs no explorador de ficheiros do SO. Nao partilha o `open_in_browser` de
+/// proposito: no Windows, pastas abrem-se com `explorer` direto (um path com `&` ou `^`
+/// sobreviveria mal ao parsing do `cmd /C start`); URLs constantes e que vao pelo `start`.
 #[tauri::command]
 pub fn reveal_log_dir(app: AppHandle) -> Result<(), String> {
     let dir = app

@@ -10,16 +10,20 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/duartelcunha/Ember/releases/latest"><img src="https://img.shields.io/github/v/release/duartelcunha/Ember?style=for-the-badge&color=ff7a18&labelColor=1a0e03&label=release" alt="Latest release"></a>
-  <img src="https://img.shields.io/badge/Windows-2e2519?style=for-the-badge&logo=windows&logoColor=ffffff" alt="Platform">
-  <img src="https://img.shields.io/badge/macOS-in%20progress-2e2519?style=for-the-badge&logo=apple&logoColor=ffffff" alt="macOS in progress">
-  <a href="https://tauri.app/"><img src="https://img.shields.io/badge/Tauri%202-24C8DB?style=for-the-badge&logo=tauri&logoColor=ffffff" alt="Tauri 2"></a>
-  <img src="https://img.shields.io/badge/Rust-CE422B?style=for-the-badge&logo=rust&logoColor=ffffff" alt="Rust">
-  <img src="https://img.shields.io/badge/React%2019-149ECA?style=for-the-badge&logo=react&logoColor=ffffff" alt="React 19">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-4da3ff?style=for-the-badge&labelColor=0d1b2a" alt="License"></a>
+  <a href="https://github.com/duartelcunha/Ember/releases/latest"><img src="https://img.shields.io/github/v/release/duartelcunha/Ember?style=for-the-badge&color=fd8c3c&labelColor=1a0e03&label=release" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/Windows-2e2519?style=for-the-badge&logo=windows&logoColor=ffffff" alt="Windows">
+  <img src="https://img.shields.io/badge/macOS-in%20progress-6f6353?style=for-the-badge&labelColor=2e2519&logo=apple&logoColor=ffffff" alt="macOS in progress">
+  <a href="https://tauri.app/"><img src="https://img.shields.io/badge/Tauri%202-2e2519?style=for-the-badge&logo=tauri&logoColor=24C8DB" alt="Tauri 2"></a>
+  <img src="https://img.shields.io/badge/Rust-2e2519?style=for-the-badge&logo=rust&logoColor=f46623" alt="Rust">
+  <img src="https://img.shields.io/badge/React%2019-2e2519?style=for-the-badge&logo=react&logoColor=61DAFB" alt="React 19">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-fd8c3c?style=for-the-badge&labelColor=1a0e03" alt="License"></a>
 </p>
 
 ---
+
+<p align="center">
+  <img src="docs/media/refine-email.gif" width="600" alt="A clumsy email draft in Gmail is selected, the hotkey is pressed, and Ember rewrites it in place">
+</p>
 
 You know that half-written email, that clumsy Slack message, that messy prompt
 you keep rewording? Select it, press one shortcut, and Ember cleans it up right
@@ -64,6 +68,31 @@ you dial how far it goes.
 > **Terminals are handled.** In Windows Terminal, PowerShell, and friends, Ember
 > uses `Ctrl+Shift+C/V`, replaces the current input line instead of appending, and
 > flattens the result to a single line so a stray newline never submits your command.
+
+<p align="center">
+  <img src="docs/media/refine-terminal.gif" alt="A rough prompt typed into Claude Code's input line is refined in place, staying on a single line">
+  <br>
+  <sub>A rough prompt in Claude Code's input line, refined in place.</sub>
+</p>
+
+<br>
+
+## A closer look
+
+**Confirm before pasting.** After refining, a small pill waits by your cursor:
+Enter applies, Esc keeps your original. Nothing lands without your say-so.
+
+<p align="center">
+  <img src="docs/media/preview-pill.png" alt="A refined Slack update with headings and bullets, held behind an Enter-to-apply / Esc-to-keep-original pill">
+</p>
+
+**Settings, in Cream or Dark.** Every provider card has a button that takes you
+straight to where its key is created.
+
+<p align="center">
+  <img src="docs/media/settings-cream.png" width="49%" alt="Provider settings in the cream theme, with a Get a key button on the Gemini card">
+  <img src="docs/media/settings-dark.png" width="49%" alt="Shortcut settings in the dark theme">
+</p>
 
 <br>
 

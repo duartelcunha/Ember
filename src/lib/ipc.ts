@@ -105,5 +105,8 @@ export const ipc = {
   readRecentLogs: (lines: number) => invoke<string>("read_recent_logs", { lines }),
   revealLogDir: () => invoke<void>("reveal_log_dir"),
   openRepo: () => invoke<void>("open_repo"),
+  /** Abre a consola onde se cria a chave deste provider (AI Studio, OpenRouter, Anthropic).
+   *  O URL vive no Rust: aqui so vai o provider. */
+  openKeyConsole: (provider: ProviderKind) => invoke<void>("open_key_console", { provider }),
   getDiagnostics: () => invoke<string>("get_diagnostics"),
 };

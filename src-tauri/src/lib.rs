@@ -488,6 +488,7 @@ pub fn run() {
             commands::read_recent_logs,
             commands::reveal_log_dir,
             commands::open_repo,
+            commands::open_key_console,
             commands::get_diagnostics,
         ])
         .setup(|app| {

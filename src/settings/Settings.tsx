@@ -3,6 +3,7 @@ import { motion, MotionConfig } from "motion/react";
 import { toast } from "sonner";
 import { listen } from "@tauri-apps/api/event";
 import {
+  ArrowSquareOut,
   GearSix,
   GithubLogo,
   Keyboard,
@@ -18,6 +19,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { BrandIcon, type Brand } from "@/components/BrandIcon";
 import { Logo } from "@/components/Logo";
 import { TitleBar } from "@/components/TitleBar";
 import { HotkeyCapture } from "./HotkeyCapture";
@@ -48,20 +50,70 @@ function Section({
   title,
   titleId,
   hint,
+  action,
   children,
 }: {
   title: string;
   /** Id opcional no titulo, para controlos sem Label proprio se associarem via aria-labelledby. */
   titleId?: string;
   hint?: string;
+  /** Controlo opcional no canto superior direito do card (ex.: "Get a key" nos providers). */
+  action?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <div className="rounded-lg border border-[color:var(--border-subtle)] bg-surface-1 p-5">
-      <h3 id={titleId} className="text-sm font-semibold text-fg">{title}</h3>
-      {hint && <p className="mt-1 text-xs text-fg-muted">{hint}</p>}
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h3 id={titleId} className="text-sm font-semibold text-fg">{title}</h3>
+          {hint && <p className="mt-1 text-xs text-fg-muted">{hint}</p>}
+        </div>
+        {action && <div className="shrink-0">{action}</div>}
+      </div>
       <div className="mt-4 flex flex-col gap-4">{children}</div>
     </div>
+  );
+}
+
+/** Consola de chaves por provider (URL no Rust, `open_key_console`; aqui so brand e nome). */
+const KEY_CONSOLES: Record<ProviderKind, { brand: Brand; label: string }> = {
+  gemini: { brand: "gemini", label: "Google AI Studio" },
+  openai: { brand: "openrouter", label: "OpenRouter" },
+  claude: { brand: "claude", label: "Anthropic Console" },
+};
+
+/** A base URL aponta ao OpenRouter? Decide se o botao "Get a key" do provider OpenAI-compatible
+ *  aparece: com a base URL apontada a DeepSeek/Groq/Ollama, o botao levaria o utilizador a criar
+ *  uma chave do OpenRouter que falharia contra esse endpoint, pior que nao ter botao. */
+function isOpenRouterUrl(u: string | undefined): boolean {
+  if (!u) return false;
+  try {
+    const host = new URL(u).host;
+    return host === "openrouter.ai" || host.endsWith(".openrouter.ai");
+  } catch {
+    return false;
+  }
+}
+
+/** Botao que abre, no browser, a consola onde se cria a chave deste provider. Poupa ao
+ *  utilizador ter de descobrir onde e (a queixa mais comum de qualquer app BYOK). */
+function GetKeyButton({ kind }: { kind: ProviderKind }) {
+  const { brand, label } = KEY_CONSOLES[kind];
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      className="gap-1.5 text-xs"
+      onClick={() =>
+        ipc.openKeyConsole(kind).catch(() => toast.error("Couldn't open your browser."))
+      }
+      title={`Opens ${label} in your browser`}
+      aria-label={`Get an API key on ${label} (opens in your browser)`}
+    >
+      <BrandIcon brand={brand} size={14} />
+      Get a key
+      <ArrowSquareOut size={12} className="text-fg-muted" aria-hidden="true" />
+    </Button>
   );
 }
 
@@ -205,8 +257,16 @@ function ProviderConfig({
     }
   };
 
+  // O botao "Get a key" do provider OpenAI-compatible so aparece com o OpenRouter como base
+  // URL: apontada a outro servico, o botao levaria a criar a chave errada.
+  const showKeyConsole = kind !== "openai" || isOpenRouterUrl(baseUrl);
+
   return (
-    <Section title={title} hint={subtitle}>
+    <Section
+      title={title}
+      hint={subtitle}
+      action={showKeyConsole ? <GetKeyButton kind={kind} /> : undefined}
+    >
       <div className="flex flex-col gap-2">
         <Label htmlFor={`${kind}-key`}>API key</Label>
         <div className="flex gap-2">

@@ -7,10 +7,15 @@ use std::fs;
 use std::path::Path;
 use tauri::{AppHandle, Manager};
 
+// Em ingles: e a lingua da app e dos modelos, e um profile portugues empurrava o output de
+// utilizadores nao-portugueses para a lingua errada. A lingua do OUTPUT continua a ser a do
+// input (regra dura no prompt); o profile so define estilo.
+// Nota: o espaco que une as palavras fica ANTES do `\` (a continuacao do Rust come o
+// whitespace do inicio da linha seguinte; com o espaco depois, as palavras fundem-se).
 pub const DEFAULT_PROFILE: &str = "\
-Escreve com clareza e precisao. Tom profissional mas direto. Frases curtas. Evita jargao\
- desnecessario e enchimento. Quando faltar contexto, mantem o pedido generico ou usa\
- marcadores, em vez de inventar ou de pedir esclarecimentos ao utilizador.";
+Write with clarity and precision. Professional but direct tone. Short sentences. Avoid \
+unnecessary jargon and filler. When context is missing, keep the request generic or use \
+placeholders instead of inventing details or asking the user for clarification.";
 
 pub struct Resolved {
     pub profile: Profile,
