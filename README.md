@@ -10,6 +10,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/duartelcunha/Ember/stargazers"><img src="https://img.shields.io/github/stars/duartelcunha/Ember?style=for-the-badge&color=fd8c3c&labelColor=1a0e03&logo=github&logoColor=ffffff&label=stars" alt="Star Ember on GitHub"></a>
   <a href="https://github.com/duartelcunha/Ember/releases/latest"><img src="https://img.shields.io/github/v/release/duartelcunha/Ember?style=for-the-badge&color=fd8c3c&labelColor=1a0e03&label=release" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/Windows-2e2519?style=for-the-badge&logo=windows&logoColor=ffffff" alt="Windows">
   <img src="https://img.shields.io/badge/macOS-in%20progress-6f6353?style=for-the-badge&labelColor=2e2519&logo=apple&logoColor=ffffff" alt="macOS in progress">
@@ -94,22 +95,6 @@ page where its key is created, so you never have to go hunting for it.
 <p align="center">
   <img src="docs/media/settings-dark.png" width="90%" alt="Shortcut settings in the dark theme, with the global hotkey and start-with-Windows toggle">
 </p>
-
-<br>
-
-## Moments
-
-Ember animates the moments that matter, and only those. Every animation is
-compositor-only (opacity + transform, no layout thrash), tuned for a smooth
-120fps, and honors your OS reduced-motion setting.
-
-| Moment | What you see |
-|---|---|
-| **Install** | The ember mark blooms in with a warm radial glow, the first-run welcome. |
-| **Startup** | A quick, confident pulse of the mark each time Ember wakes. |
-| **Refine** | The ember-star mark rides beside your cursor, a warm light sweeping across it as it works, leaning into your movement, then hands off to a glass pill with the result. |
-| **Settings** | A frameless, seamless window that fades and scales in and hides on an instant, in **Dark** or **Cream**. |
-| **Quit** | The mark dims and tilts away; the app exits exactly when the animation lands. |
 
 <br>
 
@@ -206,5 +191,17 @@ Ember works great today on free BYOK keys. Where it's headed:
 
 [MIT](LICENSE). The Ember name and logo are trademarks.
 
+<br>
+
 ---
+
+<p align="center">
+  <strong>If Ember saved you a copy-paste today, star it.</strong><br>
+  <sub>It costs you a click and it's how other people find it.</sub>
+</p>
+
+<p align="center">
+  <a href="https://github.com/duartelcunha/Ember/stargazers"><img src="https://img.shields.io/github/stars/duartelcunha/Ember?style=for-the-badge&color=fd8c3c&labelColor=1a0e03&logo=github&logoColor=ffffff&label=star%20ember" alt="Star Ember on GitHub"></a>
+</p>
+
 <p align="center"><sub>Better words, wherever you write them. 🔥</sub></p>
