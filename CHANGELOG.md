@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.1](https://github.com/duartelcunha/Ember/compare/v0.6.0...v0.6.1) (2026-07-14)
+
+
+### Bug Fixes
+
+* make the fallback chain actually hold when a provider fails ([f6dd36d](https://github.com/duartelcunha/Ember/commit/f6dd36d6fe248b569802ee7b2ae154b397b75f14))
+* unfused prompt text, provider key consoles, and README demos ([3ce78de](https://github.com/duartelcunha/Ember/commit/3ce78dec36ee2daca7eb29fcaa28019ebb561f2c))
+
 ## [0.6.0](https://github.com/duartelcunha/Ember/compare/v0.5.0...v0.6.0) (2026-07-11)
 
 
