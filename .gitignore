@@ -36,3 +36,6 @@ src-tauri/target/
 .gstack/
 .claude/
 /1.png
+
+# Planos/specs internos de trabalho com agentes: nao pertencem ao repo publico.
+docs/superpowers/
