@@ -111,6 +111,8 @@ export const ipc = {
   readRecentLogs: (lines: number) => invoke<string>("read_recent_logs", { lines }),
   revealLogDir: () => invoke<void>("reveal_log_dir"),
   openRepo: () => invoke<void>("open_repo"),
+  /** Le um ficheiro de perfil escolhido no seletor nativo. Devolve o texto para a textarea. */
+  readProfileFile: (path: string) => invoke<string>("read_profile_file", { path }),
   /** Abre a consola onde se cria a chave. `console` e o NOME de uma consola conhecida, nunca um
    *  URL: os URLs vivem no Rust, para o webview nunca mandar o SO abrir um endereco arbitrario.
    *  O provider de fallback e OpenAI-compatible e serve varios servicos, por isso a consola vem

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { motion, MotionConfig } from "motion/react";
 import { toast } from "sonner";
 import { listen } from "@tauri-apps/api/event";
+import { open } from "@tauri-apps/plugin-dialog";
 import {
   ArrowSquareOut,
   Atom,
@@ -621,9 +622,32 @@ export function Settings() {
   }, []);
 
   const sourceLabel: Record<EmberSettings["profileSource"], string> = {
-    claude_md: "auto-detected from CLAUDE.md",
+    claude_md: "auto-detected from your agent profile",
     user_edited: "edited by you",
     default: "built-in quality profile",
+  };
+
+  /** Escolhe um ficheiro de perfil e traz o texto para a textarea (nao grava sozinho: o
+   *  utilizador revê e carrega em Save, que e o unico sitio onde o perfil muda de verdade). */
+  const loadProfileFromFile = async () => {
+    try {
+      const picked = await open({
+        multiple: false,
+        directory: false,
+        title: "Pick a profile file",
+        filters: [{ name: "Markdown or text", extensions: ["md", "markdown", "txt"] }],
+      });
+      if (typeof picked !== "string") return; // cancelou
+      const text = await ipc.readProfileFile(picked);
+      if (!text.trim()) {
+        toast.error("That file is empty.");
+        return;
+      }
+      setProfileText(text);
+      toast.success("Loaded. Review it, then hit Save.");
+    } catch (e) {
+      toast.error(typeof e === "string" ? e : "Couldn't read that file.");
+    }
   };
 
   const setMode = (mode: RefineMode) => {
@@ -1009,6 +1033,15 @@ export function Settings() {
                 titleId="profile-heading"
                 hint={`Current source: ${sourceLabel[s.profileSource]}.`}
               >
+                <p className="text-xs text-fg-muted">
+                  This is how Ember learns to write like <em>you</em>: your tone, your rules, the
+                  words you never use. It is added to every refine. Ember picks up the global
+                  profile you already keep for your coding agent (
+                  <code className="font-mono">CLAUDE.md</code>,{" "}
+                  <code className="font-mono">AGENTS.md</code>, or{" "}
+                  <code className="font-mono">GEMINI.md</code>), or you can load any markdown file
+                  and edit it here.
+                </p>
                 {s.profilePath && <p className="font-mono text-xs text-fg-muted">{s.profilePath}</p>}
                 <Textarea
                   aria-labelledby="profile-heading"
@@ -1036,6 +1069,9 @@ export function Settings() {
                   >
                     Save
                   </Button>
+                  <Button variant="ghost" onClick={loadProfileFromFile}>
+                    Load from file…
+                  </Button>
                   <Button
                     variant="ghost"
                     onClick={() =>
@@ -1044,12 +1080,12 @@ export function Settings() {
                         .then((res) => {
                           setS(res);
                           setProfileText(res.profileText);
-                          toast.success("Reloaded from CLAUDE.md.");
+                          toast.success("Reloaded the detected profile.");
                         })
                         .catch(() => toast.error("Couldn't reload."))
                     }
                   >
-                    Reload from CLAUDE.md
+                    Re-detect
                   </Button>
                   <Button
                     variant="ghost"

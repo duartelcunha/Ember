@@ -45,6 +45,7 @@ keyring = "3"
 # arboard (clipboard sincrono, deteta nao-texto).
 enigo = "0.3"
 arboard = "3"
+tauri-plugin-dialog = "2.7.1"
 
 # Deteta a app em foco (terminal -> Ctrl+Shift+C/V). Versao 0.61 ja esta na arvore.
 [target.'cfg(windows)'.dependencies]

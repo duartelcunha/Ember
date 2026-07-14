@@ -440,6 +440,31 @@ fn open_in_browser(url: &str) -> Result<(), String> {
     result.map(|_| ()).map_err(|e| e.to_string())
 }
 
+/// Le um ficheiro de perfil escolhido pelo utilizador no seletor de ficheiros e devolve o texto,
+/// para a UI o pôr na textarea (onde ele o pode rever e editar antes de gravar).
+///
+/// Snapshot, nao ligacao viva: o texto passa a ser o override do utilizador. Se o ficheiro mudar
+/// depois, o perfil nao acompanha. E deliberado, porque a textarea continua a ser a verdade
+/// visivel do que vai no prompt: um perfil que mudasse pelas costas do utilizador seria pior.
+///
+/// O caminho vem do seletor NATIVO do SO (o utilizador escolheu-o com o rato), nao de uma string
+/// arbitraria do webview, mas mesmo assim: so texto, com teto de tamanho, e nunca um binario.
+#[tauri::command]
+pub fn read_profile_file(path: String) -> Result<String, String> {
+    const MAX_BYTES: u64 = 512 * 1024;
+    let p = std::path::Path::new(&path);
+    let meta = std::fs::metadata(p).map_err(|e| format!("couldn't read that file: {e}"))?;
+    if !meta.is_file() {
+        return Err("that isn't a file".into());
+    }
+    if meta.len() > MAX_BYTES {
+        return Err("that file is too big (max 512 KB)".into());
+    }
+    // `read_to_string` falha em bytes invalidos, que e o que queremos: um PDF ou um .exe
+    // escolhido por engano da erro em vez de encher o prompt de lixo.
+    std::fs::read_to_string(p).map_err(|_| "that file isn't text (pick a .md or .txt)".to_string())
+}
+
 /// Abre o repositorio no browser do SO. URL fixo (constante), por isso seguro para o `start`.
 #[tauri::command]
 pub fn open_repo() -> Result<(), String> {

@@ -471,6 +471,7 @@ pub fn run() {
         .plugin(logging::plugin())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
@@ -504,6 +505,7 @@ pub fn run() {
             commands::reveal_log_dir,
             commands::open_repo,
             commands::open_key_console,
+            commands::read_profile_file,
             commands::get_diagnostics,
         ])
         .setup(|app| {
