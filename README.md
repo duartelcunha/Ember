@@ -44,8 +44,11 @@ you dial how far it goes.
 |  |  |
 |---|---|
 | ⚡ **Refine any text in place** | A global hotkey captures your selection, sharpens it, and pastes the result over the original, then quietly restores your clipboard. Prompts, emails, messages, commits, docs, terminal commands, anywhere you can select text. |
-| 🧬 **Never mangles your text** | Before the model ever sees it, Ember masks your code, URLs, file paths, and placeholders, then verifies they came back **exactly** intact. If anything is lost or the output looks wrong, it degrades: your original selection stays untouched instead of getting overwritten with something broken. |
+| ✍️ **Nothing selected? Still works** | Type a prompt into a chat composer and fire the hotkey without highlighting a thing. Ember takes the whole field and refines it. If what it grabs looks like a page rather than a field it stops and pastes nothing, and a refine that came in this way always asks you to confirm first, so it can never overwrite something you did not mean to hand it. |
+| 🎚️ **Three modes, one keystroke away** | **Polish** fixes the wording and leaves the shape alone. **Adaptive** scales to the input. **Turbo** rebuilds it into a full prompt with role, context, requirements, and an output format. Bind an optional shortcut to Polish and Turbo and you pick as you press, instead of opening Settings first. |
+| 🧬 **Never mangles your text** | Before the model ever sees it, Ember masks your code, URLs, file paths, and placeholders, then verifies they came back **exactly** intact. If anything is lost, the output looks wrong, or the model quietly translated your text instead of refining it, it degrades: your original selection stays untouched instead of getting overwritten with something broken. |
 | ✋ **You get the last word** | Turn on **Confirm before pasting** and Ember shows a tiny prompt by your cursor after refining, applying only when you press Enter (Esc keeps your original). It captures the keys without stealing focus, so Enter never leaks into the app you're in. |
+| 🔄 **The model list keeps itself current** | Ember reads the models each provider actually serves today, from the same call that validates your key, and keeps Gemini on the free-tier family. A model that gets discontinued disappears from the list on its own, and if it was the one you had selected, Ember moves you to one that still exists. No hardcoded list to go stale. |
 | 🆓 **Runs on free tiers** | Primary is Google **Gemini**, whose free tier covers everyday personal use. The fallback is any **OpenAI-compatible** endpoint, defaulting to **Groq**: free, no credit card, and roughly 14,000 requests a day, so the safety net is actually there when you need it. Switch it to OpenAI or OpenRouter in one click, or point it at DeepSeek or a local Ollama. Free tiers do have daily caps; for heavy use, add a cheap paid key (Claude Haiku) as a third family. |
 | 🛡️ **Resilient, not fragile** | A pure retry/fallback state machine handles rate-limits, truncation, content-policy, and outages. Fallbacks are pre-validated at startup, never guessed at the moment of failure. It degrades honestly instead of silently. |
 | 🔒 **BYOK, strictly local** | Your API keys live in the Windows Credential Manager, never in plain text, never anywhere but the provider. |
@@ -60,8 +63,13 @@ you dial how far it goes.
 1. Grab the latest installer from the [**Releases**](https://github.com/duartelcunha/Ember/releases/latest) page.
 2. Launch Ember. It settles into your system tray.
 3. Open **Settings** and drop in a free API key. [Gemini](https://aistudio.google.com/apikey) and [Groq](https://console.groq.com/keys) are both free, need no credit card, and take a minute to grab. Each provider card has a button that opens the right page for you. *(Zero-key setup is on the [roadmap](#roadmap).)*
-4. Select text anywhere and press `Ctrl+Shift+Space` (rebindable to any combo you like).
+4. Select text anywhere and press `Ctrl+Shift+Space` (rebindable to any combo you like). Or select nothing at all, and Ember refines the whole field you are typing in.
 5. That's it, the polished version lands right where your text was.
+
+Press the shortcut again while the orb is up to cancel that refine. In Settings you
+can also bind two optional extra shortcuts that fire **Polish** and **Turbo**
+directly, so you can choose how far to go without opening Settings first. They are
+off until you set them, so Ember never claims a combo you did not ask for.
 
 > **Terminals are handled.** In Windows Terminal, PowerShell, and friends, Ember
 > uses `Ctrl+Shift+C/V`, replaces the current input line instead of appending, and
@@ -99,7 +107,7 @@ primary       default fallback         optional third family
 ```
 
 The middle slot is any **OpenAI-compatible** endpoint. Pick the service in Settings
-and Ember sets its models for you:
+and Ember loads the models that service serves right now:
 
 | Service | Cost | Why you'd pick it |
 |---|---|---|

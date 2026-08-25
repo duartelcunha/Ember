@@ -12,18 +12,37 @@ pub trait SelectionIo {
     /// Liberta modificadores fisicos do hotkey (Ctrl/Shift/Alt) antes de simular.
     fn release_modifiers(&mut self);
     fn send_copy(&mut self);
+    /// Seleciona tudo no campo em foco (Ctrl+A / Cmd+A). So usado no fallback de captura
+    /// quando nao havia seleccao nenhuma; nunca em terminais.
+    fn send_select_all(&mut self);
     fn send_paste(&mut self);
     fn sleep_ms(&mut self, ms: u64);
 }
 
 /// Resultado da captura: `text` = seleccao (None se nada selecionado);
 /// `saved` = clipboard original a restaurar; `armed` = o sentinela chegou mesmo ao
-/// clipboard (se `false`, o clipboard estava ocupado e nada deve ser colado).
+/// clipboard (se `false`, o clipboard estava ocupado e nada deve ser colado);
+/// `via_select_all` = o texto veio do fallback de select-all (nao havia seleccao do
+/// utilizador), o que obriga o caller a passar pelo gate de preview antes de colar.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Captured {
     pub text: Option<String>,
     pub saved: Option<String>,
     pub armed: bool,
+    pub via_select_all: bool,
+}
+
+/// Um texto capturado por select-all e mesmo plausivelmente o conteudo de um CAMPO, e nao de
+/// uma pagina inteira? Guarda pura contra o caso mau do fallback: se o foco nao estava num
+/// campo editavel, o Ctrl+A seleciona o documento todo e o Ctrl+C traz a pagina inteira. Colar
+/// por cima disso seria destruir o que o utilizador tinha; mais vale abortar.
+///
+/// A heuristica e o TAMANHO, medido em chars (nao bytes: um texto em CJK ou com acentos nao
+/// pode contar a dobrar). Um prompt, um email ou uma mensagem cabem folgadamente no teto; o
+/// dump de texto de uma pagina web nao.
+pub fn plausible_field_capture(text: &str, max_chars: usize) -> bool {
+    let n = text.chars().count();
+    n > 0 && n <= max_chars
 }
 
 /// Neutraliza os modificadores do hotkey (Ctrl/Shift/Alt/Win) ainda premidos antes de
@@ -52,6 +71,12 @@ fn neutralize_modifiers(io: &mut impl SelectionIo, step_ms: u64, timeout_ms: u64
 /// sentinela, simula Ctrl+C e faz poll. Se o clipboard continuar = sentinela,
 /// nada foi selecionado (`text == None`).
 ///
+/// `select_all_fallback` ativa a segunda tentativa quando nada estava selecionado: manda um
+/// Ctrl+A ao campo em foco e copia outra vez. E o caso dominante fora de terminais (escreveste
+/// o prompt na caixa do Codex/ChatGPT e nunca o selecionaste); sem isto, a captura desiste com
+/// "Select text first" mesmo havendo texto a olhar para ti. NUNCA corre em terminais: numa TUI
+/// com readline, Ctrl+A e inicio-de-linha, nao selecionar-tudo.
+///
 /// `terminal` ativa o fallback de copy-on-select: muitos terminais (ex. Windows Terminal com
 /// "copy on select") poem a seleccao no clipboard AL SELECIONAR, sem precisar de Ctrl+Shift+C.
 /// Nesse caso o copy sintetico nao muda o clipboard (a seleccao ja foi consumida), mas o texto
@@ -64,6 +89,7 @@ pub fn capture(
     step_ms: u64,
     neutralize_timeout_ms: u64,
     terminal: bool,
+    select_all_fallback: bool,
 ) -> Captured {
     let saved = io.clip_get();
     // Neutraliza os modificadores do hotkey. O `GetAsyncKeyState` mente com o hotkey global
@@ -85,6 +111,7 @@ pub fn capture(
             text: None,
             saved,
             armed: false,
+            via_select_all: false,
         };
     }
     io.send_copy();
@@ -110,10 +137,31 @@ pub fn capture(
             }
         }
     }
+    // Fallback select-all (nunca em terminal, ver a doc acima): nao havia seleccao, mas pode
+    // muito bem haver texto no campo em foco. Seleciona tudo e copia outra vez. A seleccao fica
+    // VIVA depois disto, por isso o paste a seguir substitui o campo em vez de acrescentar.
+    let mut via_select_all = false;
+    if text.is_none() && !terminal && select_all_fallback {
+        io.send_select_all();
+        io.send_copy();
+        for _ in 0..polls {
+            io.sleep_ms(step_ms);
+            match io.clip_get() {
+                Some(t) if t != sentinel => {
+                    text = Some(t);
+                    via_select_all = true;
+                    break;
+                }
+                _ => {}
+            }
+        }
+    }
+
     Captured {
         text,
         saved,
         armed: true,
+        via_select_all,
     }
 }
 
@@ -234,6 +282,11 @@ mod tests {
         clipboard: Option<String>,
         /// O que o "SO" copiaria com Ctrl+C (None = nada selecionado).
         selection: Option<String>,
+        /// O que um Ctrl+A + Ctrl+C traria: o conteudo do campo (ou da pagina toda, no caso
+        /// mau em que o foco nao estava num campo editavel).
+        field: Option<String>,
+        /// `true` depois de `send_select_all` ser chamado.
+        selected_all: bool,
         pasted: Option<String>,
         /// Clipboard bloqueado por outra app: `clip_set` nao tem efeito.
         frozen: bool,
@@ -263,6 +316,11 @@ mod tests {
                 self.clipboard = Some(sel.clone());
             }
         }
+        fn send_select_all(&mut self) {
+            self.selected_all = true;
+            // Depois de selecionar tudo, o proximo copy traz o campo inteiro.
+            self.selection = self.field.clone();
+        }
         fn send_paste(&mut self) {
             self.pasted = self.clipboard.clone();
         }
@@ -279,7 +337,7 @@ mod tests {
             selection: Some("hello world".into()),
             ..Default::default()
         };
-        let c = capture(&mut io, SENT, 5, 1, NEUT, false);
+        let c = capture(&mut io, SENT, 5, 1, NEUT, false, false);
         assert_eq!(c.text, Some("hello world".into()));
         assert_eq!(c.saved, Some("old".into()));
         assert!(c.armed);
@@ -292,7 +350,7 @@ mod tests {
             selection: None,
             ..Default::default()
         };
-        let c = capture(&mut io, SENT, 5, 1, NEUT, false);
+        let c = capture(&mut io, SENT, 5, 1, NEUT, false, false);
         assert_eq!(c.text, None);
         assert_eq!(c.saved, Some("old".into()));
         assert!(c.armed);
@@ -307,7 +365,7 @@ mod tests {
             selection: None, // o copy sintetico nao traz nada
             ..Default::default()
         };
-        let c = capture(&mut io, SENT, 5, 1, NEUT, true);
+        let c = capture(&mut io, SENT, 5, 1, NEUT, true, false);
         assert_eq!(c.text, Some("selected via mouse".into()));
         assert!(c.armed);
     }
@@ -321,7 +379,7 @@ mod tests {
             selection: None,
             ..Default::default()
         };
-        let c = capture(&mut io, SENT, 5, 1, NEUT, false);
+        let c = capture(&mut io, SENT, 5, 1, NEUT, false, false);
         assert_eq!(c.text, None);
     }
 
@@ -335,7 +393,7 @@ mod tests {
             frozen: true,
             ..Default::default()
         };
-        let c = capture(&mut io, SENT, 5, 1, NEUT, false);
+        let c = capture(&mut io, SENT, 5, 1, NEUT, false, false);
         assert!(!c.armed);
         assert_eq!(c.text, None);
         assert_eq!(c.saved, Some("old".into()));
@@ -351,7 +409,7 @@ mod tests {
             ..Default::default()
         };
         // step 10, timeout 20 -> WaitMore(0), WaitMore(10), ForceRelease(20).
-        let c = capture(&mut io, SENT, 5, 10, 20, false);
+        let c = capture(&mut io, SENT, 5, 10, 20, false, false);
         assert!(io.force_released);
         assert_eq!(c.text, Some("hi".into()));
     }
@@ -366,9 +424,102 @@ mod tests {
             selection: Some("hi".into()),
             ..Default::default() // held = default: nada premido
         };
-        let c = capture(&mut io, SENT, 5, 1, NEUT, false);
+        let c = capture(&mut io, SENT, 5, 1, NEUT, false, false);
         assert!(io.force_released);
         assert_eq!(c.text, Some("hi".into()));
+    }
+
+    #[test]
+    fn select_all_fallback_captures_the_field_when_nothing_was_selected() {
+        // O caso do Codex/ChatGPT: escreveste o prompt na caixa e nunca o selecionaste. O copy
+        // normal nao traz nada; o Ctrl+A + copy traz o campo inteiro.
+        let mut io = FakeIo {
+            clipboard: Some("old".into()),
+            selection: None,
+            field: Some("refina isto por favor".into()),
+            ..Default::default()
+        };
+        let c = capture(&mut io, SENT, 5, 1, NEUT, false, true);
+        assert!(io.selected_all);
+        assert_eq!(c.text, Some("refina isto por favor".into()));
+        assert!(c.via_select_all);
+        assert_eq!(c.saved, Some("old".into()));
+    }
+
+    #[test]
+    fn select_all_fallback_does_not_run_when_there_was_a_selection() {
+        // Havendo seleccao do utilizador, ela ganha sempre: refinar SO o trecho escolhido e o
+        // comportamento pedido, e um Ctrl+A por cima destruia-o.
+        let mut io = FakeIo {
+            clipboard: Some("old".into()),
+            selection: Some("so este pedaco".into()),
+            field: Some("o campo todo, que nao queremos".into()),
+            ..Default::default()
+        };
+        let c = capture(&mut io, SENT, 5, 1, NEUT, false, true);
+        assert!(!io.selected_all);
+        assert_eq!(c.text, Some("so este pedaco".into()));
+        assert!(!c.via_select_all);
+    }
+
+    #[test]
+    fn select_all_fallback_never_runs_in_a_terminal() {
+        // Numa TUI com readline, Ctrl+A e inicio-de-linha. Mandar um select-all ali mexeria no
+        // cursor sem selecionar nada, e o caminho do terminal ja tem o seu copy-on-select.
+        let mut io = FakeIo {
+            clipboard: None,
+            selection: None,
+            field: Some("linha de input".into()),
+            ..Default::default()
+        };
+        let c = capture(&mut io, SENT, 5, 1, NEUT, true, true);
+        assert!(!io.selected_all);
+        assert_eq!(c.text, None);
+        assert!(!c.via_select_all);
+    }
+
+    #[test]
+    fn select_all_fallback_stays_off_when_disabled() {
+        let mut io = FakeIo {
+            clipboard: Some("old".into()),
+            selection: None,
+            field: Some("texto no campo".into()),
+            ..Default::default()
+        };
+        let c = capture(&mut io, SENT, 5, 1, NEUT, false, false);
+        assert!(!io.selected_all);
+        assert_eq!(c.text, None);
+    }
+
+    #[test]
+    fn select_all_fallback_on_an_empty_field_finds_nothing() {
+        // Campo em foco mas vazio: o Ctrl+A nao seleciona nada, o clipboard fica no sentinela.
+        let mut io = FakeIo {
+            clipboard: Some("old".into()),
+            selection: None,
+            field: None,
+            ..Default::default()
+        };
+        let c = capture(&mut io, SENT, 5, 1, NEUT, false, true);
+        assert!(io.selected_all);
+        assert_eq!(c.text, None);
+        assert!(!c.via_select_all);
+        // O clipboard original continua guardado para ser reposto.
+        assert_eq!(c.saved, Some("old".into()));
+    }
+
+    #[test]
+    fn plausible_field_capture_rejects_a_whole_page_and_the_empty_string() {
+        // Um prompt normal passa.
+        assert!(plausible_field_capture("refina este prompt", 8000));
+        // Exatamente no teto ainda passa; um char acima nao.
+        assert!(plausible_field_capture(&"a".repeat(8000), 8000));
+        assert!(!plausible_field_capture(&"a".repeat(8001), 8000));
+        // Vazio nao e captura nenhuma.
+        assert!(!plausible_field_capture("", 8000));
+        // Conta CHARS, nao bytes: 8000 chars CJK (3 bytes cada) continuam a caber. Um teto
+        // medido em bytes cortaria este texto a um terco do que permite ao ASCII.
+        assert!(plausible_field_capture(&"\u{5b57}".repeat(8000), 8000));
     }
 
     #[test]
@@ -378,7 +529,7 @@ mod tests {
             selection: Some("hi".into()),
             ..Default::default()
         };
-        let c = capture(&mut io, SENT, 5, 1, NEUT, false);
+        let c = capture(&mut io, SENT, 5, 1, NEUT, false, false);
         let ok = replace(&mut io, "REFINED", &c.saved, 1);
         assert!(ok);
         assert_eq!(io.pasted, Some("REFINED".into()));

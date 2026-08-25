@@ -35,13 +35,14 @@ fn clipboard_modifier() -> Key {
     Key::Control
 }
 
-/// A tecla C/V de um atalho de clipboard, por plataforma. No Windows usa o VIRTUAL KEY fisico
-/// (`Key::Other(VK)`): VK_C=0x43, VK_V=0x56. Um `Key::Unicode` injetaria um caractere puro que o
+/// A tecla A/C/V de um atalho de clipboard, por plataforma. No Windows usa o VIRTUAL KEY fisico
+/// (`Key::Other(VK)`): VK_A=0x41, VK_C=0x43, VK_V=0x56. Um `Key::Unicode` injetaria um caractere puro que o
 /// Windows Terminal nao liga aos modificadores (o atalho de copia nao dispara). Nas outras
 /// plataformas o Unicode funciona com Cmd/Ctrl.
 #[cfg(windows)]
 fn clip_key(c: char) -> Key {
     match c {
+        'a' | 'A' => Key::Other(0x41),
         'c' | 'C' => Key::Other(0x43),
         'v' | 'V' => Key::Other(0x56),
         other => Key::Unicode(other),
@@ -234,6 +235,23 @@ impl SelectionIo for RealIo {
     }
     fn send_copy(&mut self) {
         self.combo('c');
+    }
+    fn send_select_all(&mut self) {
+        // Ctrl+A (Cmd+A no macOS) SEM Shift, mesmo em terminal. Na pratica isto nunca corre em
+        // terminal (`ember_core::selection::capture` corta o fallback la), mas o `combo` junta
+        // Shift quando `self.terminal`, e um Ctrl+Shift+A nao e select-all em lado nenhum.
+        let modifier = clipboard_modifier();
+        let k = clip_key('a');
+        let hold = std::time::Duration::from_millis(KEY_SETTLE_MS);
+        let _ = self.enigo.key(modifier, Press);
+        std::thread::sleep(hold);
+        let _ = self.enigo.key(k, Press);
+        std::thread::sleep(hold);
+        let _ = self.enigo.key(k, Release);
+        std::thread::sleep(hold);
+        let _ = self.enigo.key(modifier, Release);
+        // Settle antes do copy que vem a seguir: a app precisa de processar a seleccao primeiro.
+        std::thread::sleep(hold);
     }
     fn send_paste(&mut self) {
         // No terminal, a "seleccao" de rato nao e editavel (so serve para copiar): um paste

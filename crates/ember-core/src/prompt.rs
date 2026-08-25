@@ -57,9 +57,20 @@ or steps into one run-on block, break it into short paragraphs or a bulleted lis
 brief headings if there are distinct themes). A single-topic input stays a single, tighter \
 paragraph; do not add bullets or headings it does not need.";
 
+// Os tres modos sao escritos com a MESMA profundidade de proposito. Antes, o Adaptive tinha dois
+// paragrafos e os outros dois tinham uma frase cada: na pratica o Polish e o Turbo herdavam o
+// comportamento por defeito do modelo em vez de o dirigir, e a diferenca entre eles era pequena
+// de mais para justificar tres escolhas. Cada regra diz agora o que fazer e, tao importante, o
+// que NAO fazer, que e o que traca a fronteira entre os modos.
 const POLISH_RULE: &str = "\
-Only polish: fix grammar, accents, and clarity, and improve wording, but keep the original \
-structure, tone, and length. Do not add sections or restructure.";
+Polish only. Fix grammar, spelling, accents, and punctuation, and replace vague or clumsy \
+wording with precise wording. Keep the original structure, tone, register, and length: the \
+result must read as the same person writing the same thing, only cleanly.
+Do NOT add or remove sections, headings, or bullets. Do NOT reorder sentences or paragraphs. \
+Do NOT add context, requirements, or an output format that the input did not state. Do NOT \
+expand a short input into a long one: if the input is one run-on sentence, it stays one \
+sentence. A result noticeably longer than the input means you restructured it, which is the \
+wrong mode for this text.";
 
 /// Preambulo do bloco de perfil. Constante propria (e nao string inline) para o teste do teto
 /// do perfil localizar o bloco injetado sem depender de um pedaco de prosa que muda.
@@ -70,9 +81,16 @@ different language than the input; that is NOT a signal to translate, the output
 the input's language:\n";
 
 const TURBO_RULE: &str = "\
-Rewrite and structure to the maximum: role, context, requirements, and an explicit output \
-format. You may suggest the shape of examples, but never invent concrete data the input \
-did not give (use placeholders). Maximize quality while keeping the intent.";
+Rewrite and structure to the maximum. Produce the prompt a careful engineer would have written \
+for this request: the role or expertise needed, the context that matters, the concrete \
+requirements and constraints, and an explicit description of the output format expected. Use \
+headings or a bulleted list when there is more than one distinct requirement, and put the single \
+most important instruction first.
+Do NOT invent concrete data the input did not give: no names, numbers, dates, file paths, APIs, \
+or example values. Where the prompt needs a detail the input never supplied, leave a visible \
+placeholder such as {dataset} or <target file> instead of guessing, so the gap stays obvious. \
+You may describe the SHAPE of an example without writing its contents. Do NOT widen, narrow, or \
+soften what is being asked: expanding a request is not the same as changing it.";
 
 /// Corta o texto do perfil no teto, num limite de char (e, se possivel, de linha) para nao
 /// partir a meio de uma palavra. Devolve o texto ja aparado.
@@ -247,13 +265,22 @@ mod tests {
         assert!(s.contains("with brief headings"));
         let turbo = build_system_prompt(&empty_profile(), RefineMode::Turbo, None);
         assert!(turbo.contains("the input did not give"));
-        // Guarda generica: nenhuma juncao minuscula+MAIUSCULA colada tipo "inputThe".
-        let suspicious = s
-            .split_whitespace()
-            .any(|w| w.bytes().zip(w.bytes().skip(1)).any(|(a, b)| {
-                a.is_ascii_lowercase() && b.is_ascii_uppercase()
-            }) && !w.contains("EMBER_") && !w.contains('{'));
-        assert!(!suspicious, "palavra com fusao lowercase->UPPERCASE no prompt");
+        assert!(turbo.contains("would have written for this request"));
+        let polish = build_system_prompt(&empty_profile(), RefineMode::Polish, None);
+        assert!(polish.contains("replace vague or clumsy wording"));
+        assert!(polish.contains("expand a short input into a long one"));
+        // Guarda generica: nenhuma juncao minuscula+MAIUSCULA colada tipo "inputThe". Corre
+        // sobre os TRES modos, nao so o Adaptive: as regras do Polish e do Turbo tambem sao
+        // constantes com continuacoes `\`, e a armadilha e exatamente a mesma.
+        for mode in [RefineMode::Adaptive, RefineMode::Polish, RefineMode::Turbo] {
+            let p = build_system_prompt(&empty_profile(), mode, None);
+            let suspicious = p
+                .split_whitespace()
+                .any(|w| w.bytes().zip(w.bytes().skip(1)).any(|(a, b)| {
+                    a.is_ascii_lowercase() && b.is_ascii_uppercase()
+                }) && !w.contains("EMBER_") && !w.contains('{'));
+            assert!(!suspicious, "fusao lowercase->UPPERCASE no prompt do modo {mode:?}");
+        }
     }
 
     #[test]
@@ -290,8 +317,34 @@ mod tests {
     fn mode_changes_the_rule() {
         let polish = build_system_prompt(&empty_profile(), RefineMode::Polish, None);
         let turbo = build_system_prompt(&empty_profile(), RefineMode::Turbo, None);
-        assert!(polish.contains("Only polish"));
+        let adaptive = build_system_prompt(&empty_profile(), RefineMode::Adaptive, None);
+        assert!(polish.contains("Polish only"));
         assert!(turbo.contains("to the maximum"));
+        assert!(adaptive.contains("Scale aggressiveness"));
+        // Cada modo carrega a regra do SEU modo e nenhuma das outras. Sem isto, uma edicao que
+        // colasse as regras todas no mesmo prompt passaria despercebida, e os tres modos
+        // deixariam de ser tres modos.
+        assert!(!polish.contains("to the maximum") && !polish.contains("Scale aggressiveness"));
+        assert!(!turbo.contains("Polish only") && !turbo.contains("Scale aggressiveness"));
+        assert!(!adaptive.contains("Polish only") && !adaptive.contains("to the maximum"));
+    }
+
+    #[test]
+    fn each_mode_states_what_it_must_not_do() {
+        // A fronteira entre os modos vive nas proibicoes, nao nas instrucoes positivas (todas
+        // dizem "melhora o texto"). O Polish nao pode reestruturar; o Turbo nao pode inventar
+        // dados nem mudar o pedido. Se estas frases sairem, os modos voltam a diluir-se um no
+        // outro, que era o estado anterior a esta reescrita.
+        let polish = build_system_prompt(&empty_profile(), RefineMode::Polish, None);
+        assert!(polish.contains("Do NOT add or remove sections"));
+        assert!(polish.contains("Do NOT reorder sentences"));
+        assert!(polish.contains("stays one sentence"));
+
+        let turbo = build_system_prompt(&empty_profile(), RefineMode::Turbo, None);
+        assert!(turbo.contains("Do NOT invent concrete data"));
+        assert!(turbo.contains("the input did not give"));
+        assert!(turbo.contains("placeholder"));
+        assert!(turbo.contains("expanding a request is not the same as changing it"));
     }
 
     #[test]

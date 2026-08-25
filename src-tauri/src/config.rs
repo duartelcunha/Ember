@@ -17,7 +17,18 @@ pub struct Config {
     pub openai_model: String,
     /// Base URL do provider OpenAI-compatible. Default: OpenRouter. Serve DeepSeek/Groq/Ollama.
     pub openai_base_url: String,
+    /// Atalho principal: dispara o refine no `mode` escolhido nas settings.
     pub hotkey: String,
+    /// Atalhos que fixam um modo, para escolher no momento em que se dispara em vez de ter de
+    /// abrir as settings a meio de um pensamento. Vazio = nao registado.
+    ///
+    /// Vazios POR DEFEITO, e isso foi uma decisao tomada com evidencia, nao por cautela: a
+    /// escolha obvia (`CmdOrCtrl+Alt+Space`, o atalho principal mais um Alt) ja estava ocupada
+    /// na primeira maquina onde correu, e o registo e tudo-ou-nada. Um default que colide
+    /// transforma uma instalacao limpa num arranque com aviso, e por um atalho que a pessoa
+    /// nem pediu. Quem os quer poe a combinacao que sabe estar livre, nas settings.
+    pub hotkey_polish: String,
+    pub hotkey_turbo: String,
     pub autostart: bool,
     pub mode: RefineMode,
     /// Raciocinio alargado do Gemini (default on). Mais qualidade, um pouco mais lento.
@@ -50,6 +61,14 @@ pub struct Config {
     /// Tema visual da janela de Settings: "dark" (default) ou "cream". So afeta as Settings; a
     /// overlay/splash mantem a identidade dark de marca.
     pub theme: String,
+    /// Se nao havia nada selecionado, seleciona o campo em foco (Ctrl+A) e refina-o todo.
+    /// Default ON: e o caso dominante fora de terminais (escreveste o prompt na caixa e nunca o
+    /// selecionaste). Uma captura por esta via passa SEMPRE pelo gate de preview, mesmo com o
+    /// preview global desligado, porque o Ctrl+A pode ter apanhado mais do que um campo.
+    pub select_all_fallback: bool,
+    /// Teto de chars de uma captura vinda do select-all. Acima disto assumimos que o foco nao
+    /// estava num campo e que o Ctrl+A agarrou a pagina toda, e abortamos sem colar.
+    pub select_all_max_chars: usize,
 }
 
 /// Limites do timing de captura. Fonte unica: `commands::set_capture_timing` e a
@@ -57,6 +76,9 @@ pub struct Config {
 pub const CAPTURE_POLLS: (u32, u32) = (5, 200);
 pub const CAPTURE_STEP_MS: (u64, u64) = (1, 100);
 pub const PASTE_SETTLE_MS: (u64, u64) = (0, 1000);
+/// Gama do teto do select-all. O minimo e generoso de proposito: um teto pequeno de mais
+/// rejeitaria prompts longos legitimos, que e o caso que este fallback existe para servir.
+pub const SELECT_ALL_MAX_CHARS: (usize, usize) = (500, 100_000);
 
 impl Default for Config {
     fn default() -> Self {
@@ -66,6 +88,8 @@ impl Default for Config {
             openai_model: DEFAULT_OPENAI_MODEL.to_string(),
             openai_base_url: DEFAULT_OPENAI_BASE_URL.to_string(),
             hotkey: "CmdOrCtrl+Shift+Space".to_string(),
+            hotkey_polish: String::new(),
+            hotkey_turbo: String::new(),
             autostart: false,
             mode: RefineMode::Adaptive,
             thinking_enabled: true,
@@ -80,6 +104,8 @@ impl Default for Config {
             project_context: false,
             preview_before_paste: false,
             theme: "cream".to_string(),
+            select_all_fallback: true,
+            select_all_max_chars: 8_000,
         }
     }
 }
@@ -88,10 +114,15 @@ impl Default for Config {
 /// modelo que ficou COLADO AO ENDPOINT ERRADO, que e o que acontece quando o utilizador (ou uma
 /// migracao nossa) troca de servico: um id do OpenRouter mandado ao Groq da 404.
 ///
-/// `DEAD` sao ids que ja nem existem: o `deepseek-r1:free` foi descontinuado pelo OpenRouter (era
-/// o nosso default, portanto todo o utilizador novo apanhava um erro em todos os refines) e o
-/// `qwen3-coder:free` e um modelo de CODIGO, mau para prosa e o mais rate-limited de todos.
-const DEAD_MODELS: [&str; 2] = ["deepseek/deepseek-r1:free", "qwen/qwen3-coder:free"];
+/// Isto e agora so o PALPITE DE ARRANQUE A FRIO, antes de qualquer descoberta. A autoridade
+/// sobre que modelos existem passou para `models_cache`: a listagem que o provider publica, lida
+/// do mesmo `GET /models` que ja validava a chave, e reconciliada em `ember_core::models`. Por
+/// isso a lista de modelos MORTOS que vivia aqui foi apagada: um modelo descontinuado (foi o caso
+/// do `deepseek-r1:free`, que era o nosso default e dava erro em todos os refines de quem
+/// instalava) desaparece sozinho da listagem do provider, sem ninguem o ter de vir apagar do
+/// nosso codigo. As listas por endpoint ficam porque resolvem outro problema, o de um id colado
+/// ao endpoint errado, e o pior que fazem ao envelhecer e nao reconhecer um modelo novo (caso 3
+/// abaixo: nao se toca).
 const OPENROUTER_MODELS: [&str; 3] = [
     "meta-llama/llama-3.3-70b-instruct:free",
     "google/gemma-4-31b-it:free",
@@ -106,7 +137,7 @@ const OPENAI_MODELS: [&str; 3] = ["gpt-4o-mini", "gpt-4.1-mini", "gpt-5-nano"];
 
 /// O modelo a usar, dado o que esta gravado e o endpoint atual.
 ///
-/// Tres casos, e o terceiro e o que nos mordeu: (1) vazio ou morto -> default do endpoint;
+/// Tres casos, e o terceiro e o que nos mordeu: (1) vazio -> default do endpoint;
 /// (2) modelo que sabemos ser de OUTRO endpoint -> default do endpoint atual (senao ficava um id
 /// do OpenRouter apontado ao Groq, que da 404 e aparece como "Custom..." na UI);
 /// (3) qualquer outro -> NAO se toca (e um modelo que o utilizador escreveu a mao, e a escolha
@@ -124,7 +155,7 @@ fn migrate_openai_model(model: &str, base_url: &str, default_model: &str) -> Str
         default_model
     };
 
-    if model.is_empty() || DEAD_MODELS.contains(&model) {
+    if model.is_empty() {
         return endpoint_default.to_string();
     }
 
@@ -166,9 +197,13 @@ impl Config {
             &self.openai_base_url,
             &d.openai_model,
         );
+        // So o atalho PRINCIPAL volta ao default quando vazio: sem ele a app ficava inutil e em
+        // silencio. Os de modo sao opcionais, e vazio ali quer mesmo dizer "nao registes".
         if self.hotkey.trim().is_empty() {
             self.hotkey = d.hotkey;
         }
+        self.hotkey_polish = self.hotkey_polish.trim().to_string();
+        self.hotkey_turbo = self.hotkey_turbo.trim().to_string();
         if self.thinking_level.trim().is_empty() {
             self.thinking_level = d.thinking_level;
         }
@@ -182,6 +217,9 @@ impl Config {
         self.paste_settle_ms = self
             .paste_settle_ms
             .clamp(PASTE_SETTLE_MS.0, PASTE_SETTLE_MS.1);
+        self.select_all_max_chars = self
+            .select_all_max_chars
+            .clamp(SELECT_ALL_MAX_CHARS.0, SELECT_ALL_MAX_CHARS.1);
         self
     }
 }
@@ -244,26 +282,65 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_replaces_dead_models_with_one_that_fits_the_endpoint() {
-        // Regressao real: o `deepseek-r1:free` foi descontinuado pelo OpenRouter e quem o tinha
-        // gravado na config apanhava um erro em TODOS os refines, sem forma de perceber porque.
+    fn per_mode_hotkeys_ship_off_and_only_the_main_one_is_restored_when_blank() {
+        // O default vazio nao e distraccao: `CmdOrCtrl+Alt+Space` (o candidato obvio) ja estava
+        // ocupado na primeira maquina onde isto correu, e o registo dos atalhos e tudo-ou-nada.
+        // Um default que colide da um arranque com aviso numa instalacao limpa, por um atalho
+        // que ninguem pediu. Se alguem os voltar a preencher, este teste explica porque nao.
         let d = Config::default();
-        for dead in ["deepseek/deepseek-r1:free", "qwen/qwen3-coder:free"] {
-            // No endpoint por defeito (Groq): leva o default do Groq.
-            let mut c = Config::default();
-            c.openai_model = dead.into();
-            assert_eq!(c.sanitize().openai_model, d.openai_model);
+        assert!(d.hotkey_polish.is_empty());
+        assert!(d.hotkey_turbo.is_empty());
+        assert!(!d.hotkey.is_empty());
 
-            // Quem ficou no OpenRouter leva um id DO OPENROUTER. Dar-lhe o id do Groq trocava um
-            // modelo morto por um inexistente naquele endpoint: nao corrigia nada.
-            let mut r = Config::default();
-            r.openai_base_url = "https://openrouter.ai/api/v1".into();
-            r.openai_model = dead.into();
-            let r = r.sanitize();
-            assert_eq!(r.openai_model, "meta-llama/llama-3.3-70b-instruct:free");
-            assert_eq!(r.openai_base_url, "https://openrouter.ai/api/v1");
-        }
-        // Um modelo escolhido a mao pelo utilizador NAO e tocado.
+        // Vazio num atalho de modo quer mesmo dizer "nao registes" e sobrevive ao sanitize; o
+        // principal, esse, volta ao default, porque sem ele a app fica inutil e em silencio.
+        let mut c = Config::default();
+        c.hotkey = "  ".into();
+        c.hotkey_polish = "   ".into();
+        c.hotkey_turbo = "CmdOrCtrl+F9".into();
+        let c = c.sanitize();
+        assert_eq!(c.hotkey, d.hotkey);
+        assert!(c.hotkey_polish.is_empty());
+        assert_eq!(c.hotkey_turbo, "CmdOrCtrl+F9");
+    }
+
+    #[test]
+    fn select_all_fallback_is_on_by_default_with_a_sane_ceiling() {
+        let d = Config::default();
+        assert!(d.select_all_fallback);
+        // O teto e clampado como o resto do timing: uma config editada a mao com 0 tornaria a
+        // guarda de plausibilidade impossivel de passar e o fallback deixava de funcionar.
+        let mut c = Config::default();
+        c.select_all_max_chars = 0;
+        assert_eq!(c.sanitize().select_all_max_chars, SELECT_ALL_MAX_CHARS.0);
+        let mut c = Config::default();
+        c.select_all_max_chars = usize::MAX;
+        assert_eq!(c.sanitize().select_all_max_chars, SELECT_ALL_MAX_CHARS.1);
+    }
+
+    #[test]
+    fn sanitize_no_longer_guesses_which_models_are_dead() {
+        // A lista de modelos mortos saiu daqui: quem decide se um modelo ainda existe e o
+        // proprio provider, pela listagem que `models_cache` absorve no probe de arranque
+        // (`ember_core::models::reconcile`, testado la com este mesmo `deepseek-r1:free`).
+        //
+        // Este teste pina a HANDOVER, nao a ausencia de protecao: o sanitize deixa passar um id
+        // que nao reconhece, e e a descoberta que o corrige com um facto em vez de um palpite.
+        // Sem isto, alguem que visse este id a sobreviver ao sanitize podia julgar que a
+        // regressao do `deepseek-r1:free` tinha ficado sem guarda nenhuma.
+        let mut c = Config::default();
+        c.openai_model = "deepseek/deepseek-r1:free".into();
+        assert_eq!(c.sanitize().openai_model, "deepseek/deepseek-r1:free");
+
+        // O que o sanitize AINDA garante e outra coisa: um id colado ao endpoint errado (aqui um
+        // id do OpenRouter com o Groq configurado) leva o default do endpoint atual, porque isso
+        // e um erro de configuracao e nao uma questao de o modelo existir ou nao.
+        let d = Config::default();
+        let mut wrong = Config::default();
+        wrong.openai_model = "meta-llama/llama-3.3-70b-instruct:free".into();
+        assert_eq!(wrong.sanitize().openai_model, d.openai_model);
+
+        // E um modelo escolhido a mao pelo utilizador continua intacto.
         let mut mine = Config::default();
         mine.openai_model = "mistralai/mistral-small:free".into();
         assert_eq!(mine.sanitize().openai_model, "mistralai/mistral-small:free");

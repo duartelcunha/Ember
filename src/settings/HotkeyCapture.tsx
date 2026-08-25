@@ -60,9 +60,14 @@ function toAccelerator(e: KeyboardEvent): string | null {
 export function HotkeyCapture({
   value,
   onCommit,
+  clearable = false,
+  ariaLabel,
 }: {
   value: string;
   onCommit: (accel: string) => Promise<void>;
+  /** Atalhos opcionais (os de modo) podem ficar vazios, e vazio quer dizer "nao registes". */
+  clearable?: boolean;
+  ariaLabel?: string;
 }) {
   const [capturing, setCapturing] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
@@ -101,22 +106,30 @@ export function HotkeyCapture({
     <div className="flex items-center gap-2">
       <div
         ref={boxRef}
+        aria-label={ariaLabel}
         className={`flex h-9 flex-1 items-center rounded-sm border px-3 font-mono text-sm ${
           capturing
             ? "border-[color:var(--border-accent)] bg-surface-1 text-fg-muted"
             : "border-[color:var(--border-subtle)] bg-surface-2 text-fg"
         }`}
       >
-        {capturing ? preview ?? "Press your shortcut…" : value}
+        {capturing ? preview ?? "Press your shortcut…" : value || "Not set"}
       </div>
       {capturing ? (
         <Button variant="ghost" onClick={() => setCapturing(false)}>
           Cancel
         </Button>
       ) : (
-        <Button variant="primary" onClick={() => setCapturing(true)}>
-          Set shortcut
-        </Button>
+        <>
+          <Button variant="primary" onClick={() => setCapturing(true)}>
+            Set shortcut
+          </Button>
+          {clearable && value && (
+            <Button variant="ghost" onClick={() => onCommit("")}>
+              Clear
+            </Button>
+          )}
+        </>
       )}
     </div>
   );

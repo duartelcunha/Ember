@@ -22,6 +22,28 @@ export interface ProviderHealth {
   needsRevalidation: ProviderKind[];
 }
 
+/** Qual dos tres atalhos. O "main" usa o modo escolhido nas settings; os outros fixam o seu. */
+export type HotkeySlot = "main" | "polish" | "turbo";
+
+/** Um modelo que o provider disse servir, ja normalizado pelo Rust (ember_core::models). */
+export interface ModelInfo {
+  id: string;
+  displayName: string;
+  generation: number;
+  freeTier: boolean;
+  preview: boolean;
+}
+
+/** A listagem de modelos de um provider, ja ordenada do melhor default para o pior candidato. */
+export interface ModelCatalog {
+  models: ModelInfo[];
+  /** Epoch ms da descoberta, ou `null` se nunca houve uma com sucesso. */
+  fetchedAtMs: number | null;
+  /** `false` = estamos a servir a lista embutida no binario porque ainda nao houve descoberta
+   *  (sem chave, offline, endpoint sem `/models`). A UI diz isso em vez de fingir frescura. */
+  live: boolean;
+}
+
 /** Estado das definicoes exposto pelo nucleo Rust (sem chaves em claro). */
 export interface EmberSettings {
   geminiModel: string;
@@ -29,6 +51,9 @@ export interface EmberSettings {
   openaiModel: string;
   openaiBaseUrl: string;
   hotkey: string;
+  /** Atalhos que fixam um modo. String vazia = nao registado. */
+  hotkeyPolish: string;
+  hotkeyTurbo: string;
   autostart: boolean;
   hasGeminiKey: boolean;
   hasClaudeKey: boolean;
@@ -49,6 +74,9 @@ export interface EmberSettings {
   projectContext: boolean;
   previewBeforePaste: boolean;
   theme: Theme;
+  /** Sem seleccao, seleciona o campo em foco e refina-o todo. */
+  selectAllFallback: boolean;
+  selectAllMaxChars: number;
 }
 
 export const DEFAULT_SETTINGS: EmberSettings = {
@@ -59,6 +87,8 @@ export const DEFAULT_SETTINGS: EmberSettings = {
   openaiModel: "llama-3.3-70b-versatile",
   openaiBaseUrl: "https://api.groq.com/openai/v1",
   hotkey: "CmdOrCtrl+Shift+Space",
+  hotkeyPolish: "",
+  hotkeyTurbo: "",
   autostart: false,
   hasGeminiKey: false,
   hasClaudeKey: false,
@@ -78,6 +108,8 @@ export const DEFAULT_SETTINGS: EmberSettings = {
   projectContext: false,
   previewBeforePaste: false,
   theme: "cream",
+  selectAllFallback: true,
+  selectAllMaxChars: 8000,
 };
 
 /** Comandos Tauri das settings. Implementados no nucleo Rust. */
@@ -92,7 +124,13 @@ export const ipc = {
     invoke<void>("set_model", { provider, model }),
   setOpenAiBaseUrl: (baseUrl: string) =>
     invoke<void>("set_openai_base_url", { baseUrl }),
-  setHotkey: (hotkey: string) => invoke<void>("set_hotkey", { hotkey }),
+  setHotkey: (which: HotkeySlot, hotkey: string) =>
+    invoke<void>("set_hotkey", { which, hotkey }),
+  setSelectAllFallback: (enabled: boolean) =>
+    invoke<void>("set_select_all_fallback", { enabled }),
+  /** Modelos que o provider diz servir hoje. Ver `ModelCatalog.live` antes de os apresentar
+   *  como frescos: sem descoberta, isto e a lista embutida no binario. */
+  listModels: (provider: ProviderKind) => invoke<ModelCatalog>("list_models", { provider }),
   setAutostart: (enabled: boolean) => invoke<void>("set_autostart", { enabled }),
   setMode: (mode: RefineMode) => invoke<void>("set_mode", { mode }),
   setTheme: (theme: Theme) => invoke<void>("set_theme", { theme }),

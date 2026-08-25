@@ -9,6 +9,7 @@ pub mod engine;
 pub mod error;
 pub mod health;
 pub mod model;
+pub mod models;
 pub mod modifiers;
 pub mod overlay;
 pub mod profile_path;
@@ -22,6 +23,7 @@ pub use engine::{postprocess, precondition, DegradeReason, EngineResult, Prepare
 pub use error::{CoreError, OutcomeClass};
 pub use health::{assess_providers, KeyCheck, ProviderStatus, Readiness, SystemHealth};
 pub use model::{LlmRequest, LlmResponse, Profile, ProfileSource, Provider, RefineMode};
+pub use models::{pick_default, rank, reconcile, ModelInfo};
 pub use modifiers::{decide_neutralize, Modifier, ModifierState, NeutralizeDecision};
 pub use prompt::{build_llm_request, build_system_prompt};
 pub use retry::{backoff_ms, classify, plan, Decision, LoopState, RetryConfig};

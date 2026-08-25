@@ -7,7 +7,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::selection::{ClipImage, RealIo, SENTINEL};
 use crate::state::AppState;
 use crate::{commands, hide_orb, show_settings};
-use ember_core::model::Provider;
+use ember_core::model::{Provider, RefineMode};
 use ember_core::overlay::{feedback_for, FlowOutcome};
 use ember_core::selection as seq;
 
@@ -26,6 +26,27 @@ pub struct CaptureTiming {
     pub polls: u32,
     pub step_ms: u64,
     pub settle_ms: u64,
+}
+
+/// Tudo o que um ciclo precisa de saber, decidido no instante em que a hotkey dispara (a app em
+/// foco ainda e o alvo). Agrupado num struct em vez de argumentos posicionais: sao seis, e uma
+/// troca acidental entre dois `bool` vizinhos nao daria erro de compilacao.
+#[derive(Debug, Clone)]
+pub struct RunOpts {
+    /// A app em foco e um terminal (Ctrl+Shift+C/V, achatar o paste, sem select-all).
+    pub terminal: bool,
+    pub timing: CaptureTiming,
+    /// Titulo da janela em foco, para contexto de projeto. `None` = desligado.
+    pub project_title: Option<String>,
+    /// Gate de aprovacao antes de colar (Enter aplica, Esc mantem).
+    pub preview: bool,
+    /// Sem seleccao, seleciona o campo em foco e refina-o todo.
+    pub select_all_fallback: bool,
+    /// Teto de chars aceite numa captura vinda do select-all.
+    pub select_all_max_chars: usize,
+    /// O modo com que refinar. Vem do atalho que disparou, nao da config: os atalhos de modo
+    /// fixam-no, o principal usa o que esta escolhido nas settings.
+    pub mode: RefineMode,
 }
 
 fn emit(app: &AppHandle, phase: &str, message: Option<String>, provider: Option<String>) {
@@ -49,7 +70,11 @@ struct CaptureOutput {
 }
 
 /// Bloqueante: cria RealIo, captura a seleccao preservando um clipboard de imagem.
-fn blocking_capture(terminal: bool, timing: CaptureTiming) -> Result<CaptureOutput, String> {
+fn blocking_capture(
+    terminal: bool,
+    timing: CaptureTiming,
+    select_all_fallback: bool,
+) -> Result<CaptureOutput, String> {
     let mut io = RealIo::new(terminal)?;
     // Conteudo que nao conseguimos repor (ficheiros do Explorer, etc.): nem toca no clipboard.
     if io.has_unpreservable_content() {
@@ -58,6 +83,7 @@ fn blocking_capture(terminal: bool, timing: CaptureTiming) -> Result<CaptureOutp
                 text: None,
                 saved: None,
                 armed: false,
+                via_select_all: false,
             },
             image: None,
             unpreservable: true,
@@ -72,6 +98,7 @@ fn blocking_capture(terminal: bool, timing: CaptureTiming) -> Result<CaptureOutp
         timing.step_ms,
         NEUTRALIZE_TIMEOUT_MS,
         terminal,
+        select_all_fallback,
     );
     Ok(CaptureOutput {
         captured,
@@ -150,20 +177,21 @@ async fn abort_cancelled(
     finish(app, FlowOutcome::Cancelled).await;
 }
 
-/// Orquestra todo o fluxo. `terminal` = a app em foco e um terminal (Ctrl+Shift+C/V).
-/// `project_title` = titulo da janela em foco (para contexto de projeto), ou `None` se desligado.
-/// `preview` = mostrar um gate de aprovacao (Enter aplica, Esc mantem) antes de colar.
-pub async fn run(
-    app: AppHandle,
-    terminal: bool,
-    timing: CaptureTiming,
-    project_title: Option<String>,
-    preview: bool,
-) {
+/// Orquestra todo o fluxo: hotkey -> orb -> capturar -> refinar -> colar. Ver `RunOpts`.
+pub async fn run(app: AppHandle, opts: RunOpts) {
+    let RunOpts {
+        terminal,
+        timing,
+        project_title,
+        preview,
+        select_all_fallback,
+        select_all_max_chars,
+        mode,
+    } = opts;
     emit(&app, "refining", None, None);
 
     let out = match tauri::async_runtime::spawn_blocking(move || {
-        blocking_capture(terminal, timing)
+        blocking_capture(terminal, timing, select_all_fallback)
     })
     .await
     {
@@ -188,9 +216,10 @@ pub async fn run(
     // armed? copiou alguma coisa? quantos chars? E o sinal que separa "nao armou / clipboard
     // ocupado" de "copiou nada" de "copiou tarde".
     log::info!(
-        "capture: terminal={} armed={} text_len={:?} saved_len={:?}",
+        "capture: terminal={} armed={} via_select_all={} text_len={:?} saved_len={:?}",
         terminal,
         captured.armed,
+        captured.via_select_all,
         captured.text.as_ref().map(|t| t.chars().count()),
         saved.as_ref().map(|s| s.chars().count()),
     );
@@ -202,6 +231,8 @@ pub async fn run(
         return;
     }
 
+    let via_select_all = captured.via_select_all;
+
     let Some(selected) = captured.text else {
         // Nada selecionado: restaura clipboard, hint subtil.
         let s = saved.clone();
@@ -210,6 +241,26 @@ pub async fn run(
         finish(&app, FlowOutcome::NoSelectionFound).await;
         return;
     };
+
+    // Guarda do fallback: o texto veio de um Ctrl+A nosso, nao de uma escolha do utilizador. Se
+    // o foco nao estava num campo editavel, esse Ctrl+A seleciona o DOCUMENTO todo e o que temos
+    // em maos e uma pagina inteira. Colar por cima disso destruia-a; abortamos e dizemos porque.
+    if via_select_all && !seq::plausible_field_capture(&selected, select_all_max_chars) {
+        log::info!(
+            "capture: select-all rejeitado (len={} > teto={})",
+            selected.chars().count(),
+            select_all_max_chars
+        );
+        let s = saved.clone();
+        let _ =
+            tauri::async_runtime::spawn_blocking(move || blocking_restore(s, image, terminal)).await;
+        finish(&app, FlowOutcome::SelectAllTooBig).await;
+        return;
+    }
+
+    // Uma captura por select-all passa SEMPRE pelo gate, mesmo com o preview global desligado: o
+    // utilizador nunca escolheu este texto, por isso tem de o ver antes de ser substituido.
+    let preview = preview || via_select_all;
 
     if cancelled(&app) {
         abort_cancelled(&app, saved, image, terminal).await;
@@ -245,6 +296,7 @@ pub async fn run(
         state.inner(),
         &selected,
         project_title.as_deref(),
+        mode,
         &on_attempt,
         &on_delta,
     );
@@ -336,7 +388,13 @@ pub async fn run(
                         blocking_restore(s, image, terminal)
                     })
                     .await;
-                    finish(&app, FlowOutcome::RefineUnclean).await;
+                    // A traducao tem mensagem propria: a accao util e ir ver o perfil, e nao
+                    // "tenta outra vez", que e o que um erro generico sugere.
+                    let outcome = match reason {
+                        ember_core::DegradeReason::LanguageFlipped => FlowOutcome::RefineTranslated,
+                        _ => FlowOutcome::RefineUnclean,
+                    };
+                    finish(&app, outcome).await;
                 }
             }
         }

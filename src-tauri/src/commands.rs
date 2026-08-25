@@ -21,6 +21,8 @@ pub struct SettingsDto {
     openai_model: String,
     openai_base_url: String,
     hotkey: String,
+    hotkey_polish: String,
+    hotkey_turbo: String,
     autostart: bool,
     has_gemini_key: bool,
     has_claude_key: bool,
@@ -93,6 +95,8 @@ fn build_dto(app: &AppHandle, cfg: &config::Config) -> SettingsDto {
         openai_model: cfg.openai_model.clone(),
         openai_base_url: cfg.openai_base_url.clone(),
         hotkey: cfg.hotkey.clone(),
+        hotkey_polish: cfg.hotkey_polish.clone(),
+        hotkey_turbo: cfg.hotkey_turbo.clone(),
         autostart: cfg.autostart,
         has_gemini_key: has_g,
         has_claude_key: has_c,
@@ -166,7 +170,11 @@ pub fn set_model(app: AppHandle, provider: String, model: String) -> Result<(), 
 }
 
 #[tauri::command]
-pub fn set_openai_base_url(app: AppHandle, base_url: String) -> Result<(), String> {
+pub fn set_openai_base_url(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    base_url: String,
+) -> Result<(), String> {
     let mut cfg = config::load(&app);
     cfg.openai_base_url = base_url;
     // Re-sanitiza so este campo (vazio -> default, tira barra final) antes de gravar.
@@ -177,21 +185,33 @@ pub fn set_openai_base_url(app: AppHandle, base_url: String) -> Result<(), Strin
     } else {
         trimmed.to_string()
     };
+    // Endpoint novo, listagem velha: os modelos do servico anterior nao existem neste. Esquece,
+    // e a UI volta a lista embutida (marcada como nao-viva) ate o proximo probe trazer a certa.
+    crate::models_cache::forget(&state, Provider::OpenAi);
     config::save(&app, &cfg).map_err(|e| e.to_string())
 }
 
+/// Grava os tres atalhos de uma vez. `which` = "main" | "polish" | "turbo".
+///
+/// Regista PRIMEIRO, persiste depois. Se o novo atalho for invalido ou estiver ocupado, restaura
+/// o conjunto anterior (o registo faz `unregister_all`, logo sem restauro a app ficava sem atalho
+/// nenhum) e NAO grava o atalho partido em disco, senao persistia partido entre arranques. O erro
+/// que sobe traz a combinacao e a mensagem do SO, para a UI poder dizer QUAL falhou e porque, em
+/// vez de um "nao deu" generico.
 #[tauri::command]
-pub fn set_hotkey(app: AppHandle, hotkey: String) -> Result<(), String> {
+pub fn set_hotkey(app: AppHandle, which: String, hotkey: String) -> Result<(), String> {
     let mut cfg = config::load(&app);
-    let previous = cfg.hotkey.clone();
-    // Regista PRIMEIRO, persiste depois. Se o novo atalho for invalido ou estiver ocupado,
-    // restaura o anterior (o register faz unregister_all, logo sem restauro ficava sem
-    // nenhum) e NAO grava o atalho partido em disco (senao persistia partido entre arranques).
-    crate::register_hotkey(&app, &hotkey).map_err(|e| {
-        let _ = crate::register_hotkey(&app, &previous);
+    let previous = cfg.clone();
+    match which.as_str() {
+        "main" => cfg.hotkey = hotkey,
+        "polish" => cfg.hotkey_polish = hotkey,
+        "turbo" => cfg.hotkey_turbo = hotkey,
+        _ => return Err(format!("invalid hotkey slot: {which}")),
+    }
+    crate::register_hotkeys(&app, &cfg).map_err(|e| {
+        let _ = crate::register_hotkeys(&app, &previous);
         e
     })?;
-    cfg.hotkey = hotkey;
     config::save(&app, &cfg).map_err(|e| e.to_string())
 }
 
@@ -249,6 +269,14 @@ pub fn set_terminal_handling(app: AppHandle, enabled: bool) -> Result<(), String
 pub fn set_project_context(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut cfg = config::load(&app);
     cfg.project_context = enabled;
+    config::save(&app, &cfg).map_err(|e| e.to_string())
+}
+
+/// Liga/desliga o fallback de select-all (refinar o campo em foco quando nada esta selecionado).
+#[tauri::command]
+pub fn set_select_all_fallback(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut cfg = config::load(&app);
+    cfg.select_all_fallback = enabled;
     config::save(&app, &cfg).map_err(|e| e.to_string())
 }
 
@@ -319,12 +347,28 @@ pub async fn validate_key(
         openai_model: &cfg.openai_model,
         openai_base_url: &cfg.openai_base_url,
     };
-    let check = providers::validate(&state.http, p, &key, &pctx).await;
+    let probe = providers::validate(&state.http, p, &key, &pctx).await;
     // Guarda o resultado no cache de saude, para a pre-validacao/o veredicto refletirem ja.
     if let Ok(mut m) = state.key_checks.lock() {
-        m.insert(p, (check, crate::now_ms()));
+        m.insert(p, (probe.check, crate::now_ms()));
     }
-    Ok(check)
+    // A mesma resposta trouxe a listagem de modelos: guarda-a e reconcilia a escolha gravada.
+    crate::models_cache::absorb(&app, &state, p, &probe.models);
+    Ok(probe.check)
+}
+
+/// Listagem de modelos de um provider, para a UI deixar de ter ids escritos a mao. Serve o que
+/// foi descoberto no ultimo probe; sem descoberta (offline, sem chave, endpoint sem `/models`)
+/// serve a lista embutida com `live: false`, para a UI o poder dizer em vez de fingir.
+#[tauri::command]
+pub fn list_models(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    provider: String,
+) -> Result<crate::models_cache::ModelCatalog, String> {
+    let p = parse_provider(&provider)?;
+    let cfg = config::load(&app);
+    Ok(crate::models_cache::catalog(&state, p, &cfg.openai_base_url))
 }
 
 /// Veredicto de saude dos providers, para as settings mostrarem um aviso honesto quando nao ha
@@ -521,8 +565,27 @@ pub fn get_diagnostics(app: AppHandle) -> String {
     let log_path = crate::logging::log_file_path(&app)
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "unknown".into());
+    // Atalhos: quais estao configurados e, no Windows, o aviso da elevacao. As duas causas mais
+    // comuns de "a hotkey nao faz nada" sao um conflito com outra app (que ja falha no registo,
+    // com erro visivel) e a janela em foco ser de um processo elevado (que falha em SILENCIO).
+    let elevation = if cfg!(windows) {
+        if crate::foreground::is_elevated() {
+            "elevated (fires over elevated windows too)"
+        } else {
+            "not elevated (the hotkey will NOT fire while an elevated window has focus)"
+        }
+    } else {
+        "n/a"
+    };
+    let slot = |s: &str| {
+        if s.trim().is_empty() {
+            "(off)".to_string()
+        } else {
+            s.to_string()
+        }
+    };
     format!(
-        "Ember {version}\nOS: {} ({})\nGemini key: {}\nOpenAI key: {}\nClaude key: {}\nMode: {}  Thinking: {} ({})  Debug: {}\nLog: {log_path}",
+        "Ember {version}\nOS: {} ({})\nGemini key: {}\nOpenAI key: {}\nClaude key: {}\nMode: {}  Thinking: {} ({})  Debug: {}\nHotkeys: main={} polish={} turbo={}\nProcess: {elevation}\nSelect-all fallback: {}\nLog: {log_path}",
         std::env::consts::OS,
         std::env::consts::ARCH,
         key_state(Provider::Gemini),
@@ -532,6 +595,18 @@ pub fn get_diagnostics(app: AppHandle) -> String {
         cfg.thinking_enabled,
         cfg.thinking_level,
         cfg.debug_mode,
+        slot(&cfg.hotkey),
+        slot(&cfg.hotkey_polish),
+        slot(&cfg.hotkey_turbo),
+        if !cfg.select_all_fallback {
+            "off".to_string()
+        } else if crate::foreground::select_all_is_safe_here() {
+            format!("on (max {} chars)", cfg.select_all_max_chars)
+        } else {
+            // Estado que o utilizador nao consegue explicar sozinho: o toggle esta ligado nas
+            // settings e mesmo assim nao corre. Diz porque, em vez de o deixar a adivinhar.
+            "on in settings, but inactive on this OS (no terminal detection yet)".to_string()
+        },
     )
 }
 
@@ -571,6 +646,9 @@ pub(crate) async fn refine_text(
     state: &AppState,
     input: &str,
     foreground_title: Option<&str>,
+    // O modo deste refine vem do atalho que disparou (ver `flow::RunOpts`), nao de `cfg.mode`:
+    // com atalhos por modo, a config so decide o que faz o atalho principal.
+    mode: RefineMode,
     on_attempt: &(dyn Fn(Provider, usize, u32) + Send + Sync),
     on_delta: &(dyn Fn(&str) + Send + Sync),
 ) -> Result<(String, ember_core::Prepared, String), ember_core::CoreError> {
@@ -613,12 +691,12 @@ pub(crate) async fn refine_text(
     }
     // Motor Ember, fase 1: normaliza o input, mascara codigo/URLs e escapa marcadores. O modelo
     // ve o `masked_input`; o `prepared` volta para o `flow.rs` reconstruir o output.
-    let prepared = ember_core::precondition(input, cfg.mode);
+    let prepared = ember_core::precondition(input, mode);
     let req = build_llm_request(
         &prepared.masked_input,
         &resolved.profile,
         &cfg.gemini_model,
-        cfg.mode,
+        mode,
         cfg.thinking_enabled,
         &cfg.thinking_level,
         project_ctx.as_ref().map(|pc| pc.block.as_str()),

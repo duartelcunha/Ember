@@ -42,6 +42,55 @@ pub fn is_terminal_foreground() -> bool {
     false
 }
 
+/// O processo Ember corre elevado (Administrador)?
+///
+/// Isto NAO e um detalhe de curiosidade: no Windows, uma app nao-elevada nunca recebe um atalho
+/// global enquanto a janela em foco pertencer a um processo ELEVADO (User Interface Privilege
+/// Isolation). Do lado do utilizador isso e indistinguivel de "a hotkey esta partida": carrega,
+/// nao acontece nada, e nao ha erro nenhum em lado nenhum. Por isso vai para o diagnostico.
+#[cfg(windows)]
+pub fn is_elevated() -> bool {
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    unsafe {
+        let mut token = HANDLE::default();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).is_err() {
+            return false;
+        }
+        let mut elevation = TOKEN_ELEVATION::default();
+        let mut size = 0u32;
+        let ok = GetTokenInformation(
+            token,
+            TokenElevation,
+            Some(&mut elevation as *mut _ as *mut _),
+            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+            &mut size,
+        )
+        .is_ok();
+        let _ = CloseHandle(token);
+        ok && elevation.TokenIsElevated != 0
+    }
+}
+
+#[cfg(not(windows))]
+pub fn is_elevated() -> bool {
+    false
+}
+
+/// O fallback de select-all (Ctrl/Cmd+A quando nao havia seleccao) so e seguro onde sabemos
+/// distinguir um terminal do resto. Num terminal, um Cmd+A seleciona o SCROLLBACK INTEIRO e o
+/// paste que se lhe seguisse seria destrutivo.
+///
+/// `is_terminal_foreground` so tem implementacao no Windows: no macOS devolve sempre `false`,
+/// ou seja, um Terminal.app seria tratado como uma app normal e apanhava o Cmd+A. Por isso o
+/// fallback fica desligado la ate a deteccao existir (precisa do bundle id da app em primeiro
+/// plano, via NSWorkspace). Ate la o macOS mantem o comportamento antigo: sem seleccao, o
+/// refine diz "Select text first" em vez de arriscar. Ver `docs/macos-parity.md`.
+pub const fn select_all_is_safe_here() -> bool {
+    cfg!(windows)
+}
+
 /// So para diagnostico: o caminho do exe em foco (para o log perceber porque um terminal nao
 /// foi ou foi classificado como tal). Nao usado no fluxo normal.
 #[cfg(windows)]

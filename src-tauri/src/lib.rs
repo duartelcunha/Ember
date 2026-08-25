@@ -6,6 +6,7 @@ mod config;
 mod flow;
 mod foreground;
 mod logging;
+mod models_cache;
 mod preview_hook;
 mod profile;
 mod project;
@@ -21,6 +22,7 @@ use tauri::tray::TrayIconBuilder;
 use tauri::window::Color;
 use tauri::{AppHandle, Manager, PhysicalPosition, WebviewWindow, WebviewWindowBuilder, Emitter};
 use tauri_plugin_autostart::MacosLauncher;
+use ember_core::model::RefineMode;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 /// Offset do orb em relacao ao cursor (centro do orb ~ cursor + isto), em px fisicos.
@@ -330,11 +332,16 @@ async fn prevalidate_providers(app: AppHandle) {
         // O caminho do refine vai, a seu tempo, reportar KeyStore honestamente quando for preciso.
         match secrets::try_get(provider) {
             Ok(Some(key)) => {
-                let check = providers::validate(&state.http, provider, &key, &pctx).await;
+                let probe = providers::validate(&state.http, provider, &key, &pctx).await;
                 if let Ok(mut m) = state.key_checks.lock() {
-                    m.insert(provider, (check, now_ms()));
+                    m.insert(provider, (probe.check, now_ms()));
                 }
-                log::info!("prevalidate {provider:?}: {check:?}");
+                log::info!(
+                    "prevalidate {provider:?}: {:?} ({} modelos)",
+                    probe.check,
+                    probe.models.len()
+                );
+                models_cache::absorb(&app, &state, provider, &probe.models);
             }
             Ok(None) => {}
             Err(_) => log::warn!("prevalidate {provider:?}: keyring read failed, skipping"),
@@ -366,10 +373,45 @@ pub(crate) fn apply_devtools(app: &AppHandle, enabled: bool) {
     }
 }
 
-/// (Re)regista o atalho global a partir de uma string (ex: "CmdOrCtrl+Shift+Space").
-pub(crate) fn register_hotkey(app: &AppHandle, hotkey: &str) -> Result<(), String> {
+/// (Re)regista TODOS os atalhos globais a partir da config: o principal (que usa o modo
+/// escolhido nas settings) e os dois que fixam um modo.
+///
+/// Tudo-ou-nada. O `unregister_all` no inicio deixa a app sem atalho nenhum, por isso um
+/// registo que falhe a meio deixaria o utilizador sem forma de disparar o refine, e sem
+/// perceber porque. Em caso de erro, tudo o que ja tinha sido registado e desfeito e o erro
+/// sobe; quem chama restaura a config anterior (ver `commands::set_hotkeys`).
+///
+/// Um atalho de modo VAZIO nao e um erro: quer dizer "nao registes este". Quem so quer um
+/// atalho fica com um, sem arriscar conflitos com outras apps por causa de dois que nao usa.
+pub(crate) fn register_hotkeys(app: &AppHandle, cfg: &config::Config) -> Result<(), String> {
     let gs = app.global_shortcut();
     let _ = gs.unregister_all();
+    let wanted: [(&str, Option<RefineMode>); 3] = [
+        // `None` = "usa o modo das settings", lido a cada disparo para o dropdown ter efeito
+        // imediato sem re-registar atalhos.
+        (cfg.hotkey.as_str(), None),
+        (cfg.hotkey_polish.as_str(), Some(RefineMode::Polish)),
+        (cfg.hotkey_turbo.as_str(), Some(RefineMode::Turbo)),
+    ];
+    for (combo, mode) in wanted {
+        if combo.trim().is_empty() {
+            continue;
+        }
+        if let Err(e) = register_one(app, combo, mode) {
+            let _ = gs.unregister_all();
+            return Err(format!("{combo}: {e}"));
+        }
+    }
+    Ok(())
+}
+
+/// Regista um atalho. `forced_mode` a `None` significa "o modo que estiver nas settings".
+fn register_one(
+    app: &AppHandle,
+    hotkey: &str,
+    forced_mode: Option<RefineMode>,
+) -> Result<(), String> {
+    let gs = app.global_shortcut();
     gs.on_shortcut(hotkey, move |app, _shortcut, event| {
         if event.state == ShortcutState::Pressed {
             // Guarda de reentrancia. Se ja houver um refine a decorrer, esta segunda tecla
@@ -387,7 +429,8 @@ pub(crate) fn register_hotkey(app: &AppHandle, hotkey: &str) -> Result<(), Strin
             // mostrar o orb: a app em foco ainda e o alvo, o nosso orb nao rouba o foco.
             let terminal = cfg.terminal_handling && foreground::is_terminal_foreground();
             log::info!(
-                "hotkey: terminal_handling={} exe={:?} -> terminal={}",
+                "hotkey: mode={:?} terminal_handling={} exe={:?} -> terminal={}",
+                forced_mode.unwrap_or(cfg.mode),
                 cfg.terminal_handling,
                 foreground::debug_foreground_exe(),
                 terminal
@@ -397,16 +440,24 @@ pub(crate) fn register_hotkey(app: &AppHandle, hotkey: &str) -> Result<(), Strin
             } else {
                 None
             };
-            let timing = flow::CaptureTiming {
-                polls: cfg.capture_polls,
-                step_ms: cfg.capture_step_ms,
-                settle_ms: cfg.paste_settle_ms,
+            let opts = flow::RunOpts {
+                terminal,
+                timing: flow::CaptureTiming {
+                    polls: cfg.capture_polls,
+                    step_ms: cfg.capture_step_ms,
+                    settle_ms: cfg.paste_settle_ms,
+                },
+                project_title,
+                preview: cfg.preview_before_paste,
+                select_all_fallback: cfg.select_all_fallback
+                    && foreground::select_all_is_safe_here(),
+                select_all_max_chars: cfg.select_all_max_chars,
+                mode: forced_mode.unwrap_or(cfg.mode),
             };
-            let preview = cfg.preview_before_paste;
             show_orb_at_cursor(app);
             let app = app.clone();
             tauri::async_runtime::spawn(async move {
-                flow::run(app.clone(), terminal, timing, project_title, preview).await;
+                flow::run(app.clone(), opts).await;
                 // Liberta a guarda so no fim do ciclo (o orb ja foi escondido dentro de run):
                 // ate aqui, o hide_after deste ciclo nao pode ser pisado por outra tecla.
                 app.state::<state::AppState>()
@@ -494,6 +545,8 @@ pub fn run() {
             commands::set_api_key,
             commands::clear_api_key,
             commands::validate_key,
+            commands::list_models,
+            commands::set_select_all_fallback,
             commands::get_provider_health,
             commands::set_profile,
             commands::reload_profile,
@@ -568,9 +621,26 @@ pub fn run() {
             }
             // Se o atalho guardado nao registar (ocupado por outra app, ou invalido de uma
             // versao anterior), abre as settings em vez de arrancar sem hotkey em silencio.
-            if let Err(e) = register_hotkey(&handle, &cfg.hotkey) {
-                log::warn!("hotkey '{}' failed to register ({e}); opening settings", cfg.hotkey);
-                show_settings(&handle);
+            if let Err(e) = register_hotkeys(&handle, &cfg) {
+                // Um dos tres nao registou (ocupado por outra app, ou invalido de uma versao
+                // anterior). O registo e tudo-ou-nada, por isso neste ponto a app esta SEM
+                // atalho nenhum: um atalho de modo opcional em conflito teria acabado de levar
+                // o principal com ele. Tenta outra vez so com o principal, que e o que torna a
+                // app utilizavel, e so abre as settings se nem esse registar.
+                log::warn!("hotkeys failed to register ({e}); retrying with the main one only");
+                let mut only_main = cfg.clone();
+                only_main.hotkey_polish.clear();
+                only_main.hotkey_turbo.clear();
+                match register_hotkeys(&handle, &only_main) {
+                    Ok(()) => {
+                        log::warn!("main hotkey is up; the per-mode ones are off until fixed");
+                        show_settings(&handle);
+                    }
+                    Err(e2) => {
+                        log::warn!("main hotkey '{}' also failed ({e2})", cfg.hotkey);
+                        show_settings(&handle);
+                    }
+                }
             }
             Ok(())
         })

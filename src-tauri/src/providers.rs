@@ -3,6 +3,7 @@
 
 use ember_core::error::{CoreError, OutcomeClass};
 use ember_core::health::KeyCheck;
+use ember_core::models::ModelInfo;
 use ember_core::model::{LlmRequest, LlmResponse, Provider};
 use ember_core::providers::{self as wire, ClaudeStreamEvent, OpenAiStreamEvent};
 use ember_core::retry::{classify, plan, Decision, LoopState, RetryConfig};
@@ -303,6 +304,20 @@ pub async fn refine(
     }
 }
 
+/// O que um probe descobriu: se a chave serve, e que modelos o provider diz servir hoje.
+///
+/// Os dois vem do MESMO pedido de proposito. O probe ja batia em `GET /models` para validar a
+/// chave e deitava o corpo fora; agora aproveita-o. Zero pedidos extra, e a listagem chega com a
+/// mesma frescura (e o mesmo TTL) do resultado da validacao.
+#[derive(Debug, Clone)]
+pub struct Probe {
+    pub check: KeyCheck,
+    /// Vazia quando a chave nao serve, quando a rede falhou, ou quando o endpoint nao publica
+    /// `/models` (um Ollama local, por exemplo). Vazia significa "nao sei", nunca "nao ha
+    /// nenhum": `ember_core::models::reconcile` trata as duas coisas de forma diferente.
+    pub models: Vec<ModelInfo>,
+}
+
 /// Probe barato de validacao de chave (pre-validacao). `KeyCheck` vive em `ember_core::health`.
 /// O probe bate num endpoint diferente do `refine` (GET /models vs POST chat) e NUNCA tira o
 /// provider da cadeia, so informa a saude (uma chave pode passar num e falhar no outro).
@@ -311,7 +326,7 @@ pub async fn validate(
     provider: Provider,
     key: &str,
     pctx: &ProviderCtx<'_>,
-) -> KeyCheck {
+) -> Probe {
     let result = match provider {
         Provider::Gemini => {
             client
@@ -337,10 +352,32 @@ pub async fn validate(
         }
     };
     match result {
-        Ok(resp) if resp.status().is_success() => KeyCheck::Valid,
+        Ok(resp) if resp.status().is_success() => {
+            // O corpo e a listagem de modelos. Se nao vier ou vier num formato que nao
+            // reconhecemos, a chave continua valida e a lista fica vazia ("nao sei"): a
+            // descoberta e um extra, nunca uma razao para declarar uma chave boa como ma.
+            let models = match resp.json::<serde_json::Value>().await {
+                Ok(body) => match provider {
+                    Provider::Gemini => ember_core::models::parse_gemini_models(&body),
+                    Provider::Claude => ember_core::models::parse_anthropic_models(&body),
+                    Provider::OpenAi => ember_core::models::parse_openai_models(&body),
+                },
+                Err(_) => Vec::new(),
+            };
+            Probe {
+                check: KeyCheck::Valid,
+                models,
+            }
+        }
         // Qualquer resposta HTTP (401/403/etc.) e o provider a recusar a chave.
-        Ok(_) => KeyCheck::Invalid,
+        Ok(_) => Probe {
+            check: KeyCheck::Invalid,
+            models: Vec::new(),
+        },
         // Falha de transporte (sem rede, DNS, timeout): nao diz nada sobre a chave.
-        Err(_) => KeyCheck::NetworkError,
+        Err(_) => Probe {
+            check: KeyCheck::NetworkError,
+            models: Vec::new(),
+        },
     }
 }
