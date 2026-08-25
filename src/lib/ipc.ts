@@ -25,6 +25,16 @@ export interface ProviderHealth {
 /** Qual dos tres atalhos. O "main" usa o modo escolhido nas settings; os outros fixam o seu. */
 export type HotkeySlot = "main" | "polish" | "turbo";
 
+/** Veredicto sobre uma combinacao ANTES de a gravar. Espelha `ember_core::hotkey`. */
+export type HotkeyVerdict =
+  | { kind: "available" }
+  /** Reservada pelo SO, ou ja tomada por outra aplicacao. `owner` diz por quem. */
+  | { kind: "reserved_by_os"; owner: string }
+  /** Ja atribuida a outro atalho do proprio Ember. */
+  | { kind: "used_by_ember"; slot: HotkeySlot }
+  /** So modificadores, sem tecla principal. */
+  | { kind: "incomplete" };
+
 /** Um modelo que o provider disse servir, ja normalizado pelo Rust (ember_core::models). */
 export interface ModelInfo {
   id: string;
@@ -126,6 +136,11 @@ export const ipc = {
     invoke<void>("set_openai_base_url", { baseUrl }),
   setHotkey: (which: HotkeySlot, hotkey: string) =>
     invoke<void>("set_hotkey", { which, hotkey }),
+  /** Pergunta se a combinacao pode ser gravada, sem a gravar. Junta a lista de atalhos que o
+   *  SO reserva (a unica defesa no macOS, onde o registo passa e o sistema ganha depois) com um
+   *  teste de registo real (a unica defesa contra outra app qualquer). */
+  checkHotkey: (which: HotkeySlot, hotkey: string) =>
+    invoke<HotkeyVerdict>("check_hotkey", { which, hotkey }),
   setSelectAllFallback: (enabled: boolean) =>
     invoke<void>("set_select_all_fallback", { enabled }),
   /** Modelos que o provider diz servir hoje. Ver `ModelCatalog.live` antes de os apresentar

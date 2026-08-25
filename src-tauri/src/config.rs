@@ -282,6 +282,31 @@ mod tests {
     }
 
     #[test]
+    fn a_config_written_by_an_older_build_keeps_the_new_defaults() {
+        // Uma config gravada antes destes campos existirem nao os tem. O `#[serde(default)]` no
+        // struct manda preencher a partir de `Config::default()`, nao do default do TIPO, que
+        // para um bool seria `false` e deixava o fallback de select-all desligado em toda a gente
+        // que ja tinha a app instalada, sem ninguem o ter escolhido. Este teste e a prova disso,
+        // porque a diferenca entre as duas leituras do `serde(default)` nao se ve no codigo.
+        let antigo = r#"{
+            "gemini_model": "gemini-2.5-flash",
+            "claude_model": "claude-haiku-4-5",
+            "openai_model": "llama-3.3-70b-versatile",
+            "openai_base_url": "https://api.groq.com/openai/v1",
+            "hotkey": "CmdOrCtrl+Shift+Space",
+            "autostart": false,
+            "mode": "adaptive"
+        }"#;
+        let c: Config = serde_json::from_str(antigo).expect("config antiga tem de desserializar");
+        assert!(c.select_all_fallback, "campo em falta tem de vir a ON");
+        assert_eq!(c.select_all_max_chars, 8_000);
+        assert!(c.hotkey_polish.is_empty());
+        assert_eq!(c.theme, "cream");
+        // E o que ESTAVA gravado continua a ganhar ao default.
+        assert_eq!(c.gemini_model, "gemini-2.5-flash");
+    }
+
+    #[test]
     fn per_mode_hotkeys_ship_off_and_only_the_main_one_is_restored_when_blank() {
         // O default vazio nao e distraccao: `CmdOrCtrl+Alt+Space` (o candidato obvio) ja estava
         // ocupado na primeira maquina onde isto correu, e o registo dos atalhos e tudo-ou-nada.

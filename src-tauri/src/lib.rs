@@ -405,6 +405,37 @@ pub(crate) fn register_hotkeys(app: &AppHandle, cfg: &config::Config) -> Result<
     Ok(())
 }
 
+/// O SO onde estamos, para a politica pura de atalhos (`ember_core::hotkey`).
+pub(crate) fn current_os() -> ember_core::hotkey::Os {
+    if cfg!(windows) {
+        ember_core::hotkey::Os::Windows
+    } else if cfg!(target_os = "macos") {
+        ember_core::hotkey::Os::MacOs
+    } else {
+        ember_core::hotkey::Os::Other
+    }
+}
+
+/// Tenta registar `accel` so para ver se o SO o aceita, e liberta-o logo a seguir.
+///
+/// E o unico teste que vale no Windows, onde o `RegisterHotKey` falha mesmo quando outra app ja
+/// tem a combinacao. No macOS este teste passa quase sempre (o sistema deixa registar e depois
+/// ganha em silencio), e por isso e que a lista de atalhos reservados existe: sao as duas metades
+/// da mesma resposta, nenhuma chega sozinha.
+///
+/// Nao mexe nos atalhos ja registados: regista SO o candidato e desfaz. Se o candidato for um dos
+/// nossos, o caller ja o apanhou antes de chegar aqui.
+pub(crate) fn probe_hotkey_free(app: &AppHandle, accel: &str) -> bool {
+    let gs = app.global_shortcut();
+    match gs.register(accel) {
+        Ok(()) => {
+            let _ = gs.unregister(accel);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
 /// Regista um atalho. `forced_mode` a `None` significa "o modo que estiver nas settings".
 fn register_one(
     app: &AppHandle,
@@ -546,6 +577,7 @@ pub fn run() {
             commands::clear_api_key,
             commands::validate_key,
             commands::list_models,
+            commands::check_hotkey,
             commands::set_select_all_fallback,
             commands::get_provider_health,
             commands::set_profile,
@@ -586,9 +618,19 @@ pub fn run() {
             };
             
             let window_name = if is_install { "splash" } else { "startup_anim" };
-            if let Some(anim) = get_or_create_window(&handle, window_name) {
-                let _ = anim.set_ignore_cursor_events(true);
-                let _ = anim.show();
+            match get_or_create_window(&handle, window_name) {
+                Some(anim) => {
+                    let _ = anim.set_ignore_cursor_events(true);
+                    let _ = anim.show();
+                    log::info!("startup animation: showing '{window_name}'");
+                }
+                // A animacao de arranque E o sinal de vida da app: sem ela nao ha nada a dizer
+                // ao utilizador que o Ember arrancou. Se a janela nao nasce, isso tem de ficar
+                // no log em vez de a app arrancar muda e parecer que nao correu. A causa mais
+                // comum e ja haver outra instancia (o WebView2 devolve "resource is in use").
+                None => log::error!(
+                    "startup animation: could not create '{window_name}'; Ember started with no                      visible sign of life (another instance running?)"
+                ),
             }
             
             // Pre-cria a janela overlay (escondida) para o listener do orb estar pronto

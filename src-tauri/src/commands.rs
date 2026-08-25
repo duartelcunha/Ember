@@ -191,6 +191,70 @@ pub fn set_openai_base_url(
     config::save(&app, &cfg).map_err(|e| e.to_string())
 }
 
+/// Os slots de atalho JA OCUPADOS, excluindo `editing`. Sem excluir o slot que esta a ser
+/// editado, regravar a mesma combinacao onde ela ja estava acusava conflito consigo propria.
+fn other_slots(cfg: &config::Config, editing: &str) -> Vec<(String, String)> {
+    [
+        ("main", &cfg.hotkey),
+        ("polish", &cfg.hotkey_polish),
+        ("turbo", &cfg.hotkey_turbo),
+    ]
+    .into_iter()
+    .filter(|(slot, _)| *slot != editing)
+    .map(|(slot, accel)| (slot.to_string(), accel.clone()))
+    .collect()
+}
+
+/// Avalia uma combinacao ANTES de a gravar, para a UI a poder recusar na hora em vez de a
+/// aceitar e o utilizador so descobrir mais tarde que o atalho nunca dispara.
+///
+/// Duas metades, porque nenhuma chega sozinha. A politica pura (`ember_core::hotkey`) apanha o
+/// que o SO nao recusa: os atalhos do sistema no macOS, e a combinacao ja dada a outro modo do
+/// Ember. O teste de registo real apanha o resto: qualquer outra aplicacao que ja tenha a
+/// combinacao, coisa que nenhuma lista escrita a mao pode saber.
+#[tauri::command]
+pub fn check_hotkey(
+    app: AppHandle,
+    which: String,
+    hotkey: String,
+) -> Result<ember_core::hotkey::HotkeyVerdict, String> {
+    use ember_core::hotkey::{self, HotkeyVerdict};
+    if !matches!(which.as_str(), "main" | "polish" | "turbo") {
+        return Err(format!("invalid hotkey slot: {which}"));
+    }
+    let cfg = config::load(&app);
+    let os = crate::current_os();
+
+    // Regravar a MESMA combinacao no mesmo slot passa sem tocar em nada: ela ja esta registada
+    // por nos, e o teste de registo iria falhar com "already registered" e mentir ao utilizador.
+    let current = match which.as_str() {
+        "main" => &cfg.hotkey,
+        "polish" => &cfg.hotkey_polish,
+        _ => &cfg.hotkey_turbo,
+    };
+    if hotkey::same_hotkey(&hotkey, current, os) {
+        return Ok(HotkeyVerdict::Available);
+    }
+
+    let others = other_slots(&cfg, &which);
+    let refs: Vec<(&str, &str)> = others
+        .iter()
+        .map(|(s, a)| (s.as_str(), a.as_str()))
+        .collect();
+    match hotkey::evaluate(&hotkey, os, &refs) {
+        HotkeyVerdict::Available => {
+            if crate::probe_hotkey_free(&app, &hotkey) {
+                Ok(HotkeyVerdict::Available)
+            } else {
+                Ok(HotkeyVerdict::ReservedByOs {
+                    owner: "another application".into(),
+                })
+            }
+        }
+        verdict => Ok(verdict),
+    }
+}
+
 /// Grava os tres atalhos de uma vez. `which` = "main" | "polish" | "turbo".
 ///
 /// Regista PRIMEIRO, persiste depois. Se o novo atalho for invalido ou estiver ocupado, restaura
@@ -430,8 +494,16 @@ pub fn reset_profile(app: AppHandle) -> Result<SettingsDto, String> {
 
 #[tauri::command]
 pub fn close_splash(app: AppHandle) {
-    if let Some(splash) = app.get_webview_window("splash") {
-        let _ = splash.close();
+    // As DUAS janelas de animacao de entrada, nao so a de instalacao. O arranque normal usa a
+    // `startup_anim` (ver `lib.rs`: `if is_install { "splash" } else { "startup_anim" }`) e este
+    // comando so fechava a `splash`, por isso em todos os arranques que nao eram o primeiro a
+    // janela ficava viva para sempre: ecra inteiro, transparente, sempre-a-frente, e uma
+    // instancia de WebView2 inteira presa por lancamento. Invisivel no fim da animacao (acaba a
+    // opacidade 0) e a deixar passar os cliques, logo ninguem reparava.
+    for label in ["splash", "startup_anim"] {
+        if let Some(w) = app.get_webview_window(label) {
+            let _ = w.close();
+        }
     }
 }
 

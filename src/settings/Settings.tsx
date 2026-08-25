@@ -53,6 +53,10 @@ const GEMINI_PRESETS = ["gemini-2.5-flash", "gemini-3.1-flash-lite", "gemini-3.5
 const CLAUDE_PRESETS = ["claude-haiku-4-5", "claude-sonnet-4-6"];
 const CUSTOM = "__custom__";
 
+/** O aviso do macOS so faz sentido no macOS; no Windows seria ruido sobre um problema que la
+ *  nao existe (o RegisterHotKey do Windows recusa mesmo os conflitos). */
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.userAgent);
+
 /**
  * Endpoints OpenAI-compatible conhecidos, para o provider de fallback. O utilizador escolhe um
  * (ou escreve a sua Base URL) e leva os modelos certos: um preset de modelos so faz sentido
@@ -116,26 +120,54 @@ function Section({
   title,
   titleId,
   hint,
+  detail,
   action,
   children,
 }: {
   title: string;
   /** Id opcional no titulo, para controlos sem Label proprio se associarem via aria-labelledby. */
   titleId?: string;
+  /** UMA linha. O que a pessoa precisa de ler para decidir o toggle. */
   hint?: string;
+  /** O porque, as excecoes, os limites. Fica atras do (i) em vez de ocupar o ecra: quem esta a
+   *  mexer numa definicao quer decidir depressa, e quem quer o detalhe sabe onde o encontrar. */
+  detail?: React.ReactNode;
   /** Controlo opcional no canto superior direito do card (ex.: "Get a key" nos providers). */
   action?: React.ReactNode;
   children: React.ReactNode;
 }) {
+  const [showDetail, setShowDetail] = useState(false);
   return (
     <div className="rounded-lg border border-[color:var(--border-subtle)] bg-surface-1 p-5">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <h3 id={titleId} className="text-sm font-semibold text-fg">{title}</h3>
+          <div className="flex items-center gap-1.5">
+            <h3 id={titleId} className="text-sm font-semibold text-fg">{title}</h3>
+            {detail && (
+              <button
+                type="button"
+                aria-label={`More about ${title}`}
+                aria-expanded={showDetail}
+                onClick={() => setShowDetail((v) => !v)}
+                className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border text-[10px] leading-none transition-colors ${
+                  showDetail
+                    ? "border-[color:var(--border-accent)] text-fg"
+                    : "border-[color:var(--border-subtle)] text-fg-muted hover:text-fg"
+                }`}
+              >
+                i
+              </button>
+            )}
+          </div>
           {hint && <p className="mt-1 text-xs text-fg-muted">{hint}</p>}
         </div>
         {action && <div className="shrink-0">{action}</div>}
       </div>
+      {detail && showDetail && (
+        <div className="mt-3 border-l-2 border-[color:var(--border-subtle)] pl-3 text-xs text-fg-muted">
+          {detail}
+        </div>
+      )}
       <div className="mt-4 flex flex-col gap-4">{children}</div>
     </div>
   );
@@ -474,20 +506,60 @@ function NumberField({
   );
 }
 
+// Os nomes visiveis sao VERBOS, nao adjetivos. "Adaptive", "Polish" e "Turbo" descreviam o
+// comportamento interno e obrigavam a ler tres frases para perceber a diferenca; "Fix", "Improve"
+// e "Rebuild" dizem o que sai do outro lado. Os ids continuam adaptive/polish/turbo: sao contrato
+// com o Rust e com a config em disco, e renomear isso partia as definicoes de quem ja tem a app.
+//
+// A ordem e por intensidade crescente, que e como as pessoas escolhem: mexe pouco, mexe o
+// necessario, mexe tudo.
 const MODE_COPY: Record<RefineMode, { title: string; hint: string }> = {
-  adaptive: {
-    title: "Adaptive",
-    hint: "Scales to the input: short asks get polished, tasks get structured.",
-  },
   polish: {
-    title: "Polish",
-    hint: "Only fixes grammar and clarity. Keeps your structure and length.",
+    title: "Fix",
+    hint: "Fixes spelling and wording. Same length, same shape.",
+  },
+  adaptive: {
+    title: "Improve",
+    hint: "Fixes it, and tidies the structure when the text needs it.",
   },
   turbo: {
-    title: "Turbo",
-    hint: "Restructures as much as possible: role, context, requirements, format.",
+    title: "Rebuild",
+    hint: "Turns it into a full prompt: role, context, requirements, output format.",
   },
 };
+
+/** O mesmo texto refinado pelos tres modos, para a diferenca se VER em vez de se ler. E um
+ *  exemplo escrito a mao, nao um refine ao vivo, e a UI diz isso: mostrar uma amostra colada
+ *  como se fosse output real seria uma promessa que nao podemos garantir. */
+const MODE_EXAMPLE = {
+  input: "marca reuniao amanha com o joao",
+  outputs: {
+    polish: "Marca reunião amanhã com o João.",
+    adaptive: "Agenda uma reunião com o João para amanhã e confirma a hora com ele.",
+    turbo:
+      [
+        "És o meu assistente de agenda.",
+        "Objetivo: marcar uma reunião com o João.",
+        "Quando: amanhã, hora ainda por confirmar.",
+        "Devolve: o convite pronto a enviar.",
+      ].join("\n"),
+  } as Record<RefineMode, string>,
+};
+
+/** Mostra o exemplo do modo escolhido, antes e depois. */
+function ModeExample({ mode }: { mode: RefineMode }) {
+  return (
+    <div className="rounded-sm border border-[color:var(--border-subtle)] bg-surface-2 p-3">
+      <p className="text-[10px] uppercase tracking-wide text-fg-muted">Example</p>
+      <p className="mt-1.5 font-mono text-xs text-fg-muted line-through decoration-1">
+        {MODE_EXAMPLE.input}
+      </p>
+      <p className="mt-1.5 whitespace-pre-line font-mono text-xs text-fg">
+        {MODE_EXAMPLE.outputs[mode]}
+      </p>
+    </div>
+  );
+}
 
 const THINKING_LEVELS: ThinkingLevel[] = ["minimal", "low", "medium", "high"];
 
@@ -843,18 +915,26 @@ export function Settings() {
                   dismissed={healthDismissed}
                   onDismiss={() => setHealthDismissed(true)}
                 />
-                <p className="text-xs text-fg-muted">
-                  Bring your own keys. <strong className="text-fg">One key is enough to start</strong>{" "}
-                  (Gemini is the fastest to set up and free). Ember tries them top to bottom, so a
-                  second key is a backup for when the first is down or rate-limited. Keys live in
-                  your OS credential vault, never in plain text.
-                </p>
-                <p className="text-xs text-fg-muted">
-                  <strong className="text-fg">Hitting rate limits?</strong> Free tiers have daily
-                  caps, and free models are shared with everyone, so they get busy at peak times.
-                  That is normal, not a broken key. Either wait, or add a paid key (Claude Haiku
-                  costs cents) as a third family that never queues.
-                </p>
+                <Section
+                  title="Your keys"
+                  hint="One key is enough to start. Gemini is free and takes a minute."
+                  detail={
+                    <>
+                      <p>
+                        Ember tries the keys top to bottom, so a second one is the backup for when
+                        the first is down or rate-limited. Keys live in your OS credential vault,
+                        never in plain text.
+                      </p>
+                      <p className="mt-2">
+                        Rate limits are normal, not a broken key: free tiers have daily caps and
+                        free models are shared with everyone. Wait, or add a paid key (Claude
+                        Haiku costs cents) as a third family that never queues.
+                      </p>
+                    </>
+                  }
+                >
+                  <></>
+                </Section>
                 <ProviderConfig
                   kind="gemini"
                   title="Gemini (primary)"
@@ -909,7 +989,18 @@ export function Settings() {
   
             <TabsContent value="refining">
               <div className="flex flex-col gap-4">
-                <Section title="Refine mode" titleId="refine-mode-heading" hint={MODE_COPY[s.mode].hint}>
+                <Section
+                  title="Refine mode"
+                  titleId="refine-mode-heading"
+                  hint={MODE_COPY[s.mode].hint}
+                  detail={
+                    <p>
+                      This is what your main shortcut does. The example below is written by hand
+                      to show the difference between the three, not a live refine. Bind a
+                      shortcut to Fix or Rebuild under Shortcut to switch as you press.
+                    </p>
+                  }
+                >
                   <Select value={s.mode} onValueChange={(v) => setMode(v as RefineMode)}>
                     <SelectTrigger aria-labelledby="refine-mode-heading">
                       <SelectValue />
@@ -922,6 +1013,7 @@ export function Settings() {
                       ))}
                     </SelectContent>
                   </Select>
+                  <ModeExample mode={s.mode} />
                 </Section>
   
                 <Section
@@ -960,7 +1052,7 @@ export function Settings() {
   
                 <Section
                   title="Terminals"
-                  hint="Use Ctrl+Shift+C/V in terminal apps, since Ctrl+C sends an interrupt there."
+                  hint="Use Ctrl+Shift+C/V in terminals, where Ctrl+C interrupts instead of copying."
                 >
                   <div className="flex items-center justify-between">
                     <Label htmlFor="terminal-handling">Detect terminals automatically</Label>
@@ -979,7 +1071,15 @@ export function Settings() {
   
                 <Section
                   title="Nothing selected"
-                  hint="When you fire the hotkey without selecting anything, Ember selects the field you are typing in and refines the whole thing. This is what makes it work in a chat composer, where you have typed a prompt but never highlighted it. If the capture looks like a whole page instead of a field, Ember stops and pastes nothing, and a refine that came in this way always asks you to confirm before replacing. Windows only for now."
+                  hint="Fire the hotkey with nothing selected and Ember refines the whole field."
+                  detail={
+                    <p>
+                      This is what makes it work in a chat composer, where you typed a prompt but
+                      never highlighted it. If what it grabs looks like a whole page instead of a
+                      field, Ember stops and pastes nothing, and a refine that came in this way
+                      always asks you to confirm before replacing. Windows only for now.
+                    </p>
+                  }
                 >
                   <div className="flex items-center justify-between">
                     <Label htmlFor="select-all-fallback">Refine the whole field</Label>
@@ -998,7 +1098,16 @@ export function Settings() {
 
                 <Section
                   title="Project context"
-                  hint="Detects the CLAUDE.md, AGENTS.md or GEMINI.md of the project in your focused window and merges it with your global profile. Off by default: turn it on only where you're OK sending a project's conventions to the LLM. Ember reads only those known files, redacts secret-shaped lines, and falls back to your global profile when no project is detected."
+                  hint="Merges the focused project's CLAUDE.md into the refine."
+                  detail={
+                    <p>
+                      Reads the CLAUDE.md, AGENTS.md or GEMINI.md of the project in your focused
+                      window. Off by default: turn it on only where you are fine sending a
+                      project's conventions to the LLM. Ember reads only those known files,
+                      redacts secret-shaped lines, and falls back to your global profile when no
+                      project is detected.
+                    </p>
+                  }
                 >
                   <div className="flex items-center justify-between">
                     <Label htmlFor="project-context">Use the focused project's CLAUDE.md</Label>
@@ -1017,7 +1126,14 @@ export function Settings() {
 
                 <Section
                   title="Preview before paste"
-                  hint="After refining, show a small confirmation by your cursor and paste only when you press Enter. Press Esc (or your hotkey) to keep your original. Windows only."
+                  hint="Confirm by your cursor before anything is pasted."
+                  detail={
+                    <p>
+                      After refining, a small prompt appears by your cursor and Ember pastes only
+                      when you press Enter. Esc, or your shortcut, keeps your original. Windows
+                      only.
+                    </p>
+                  }
                 >
                   <div className="flex items-center justify-between">
                     <Label htmlFor="preview-before-paste">Confirm before pasting</Label>
@@ -1096,10 +1212,27 @@ export function Settings() {
               <Section
                 title="Global shortcut"
                 titleId="hotkey-heading"
-                hint="Click Set shortcut, then press the combo you want (e.g. Shift+Space). It's saved the moment you press it. Press it again while Ember is working to cancel that refine."
+                hint="Press the combo you want. One key to four, modifiers optional."
+                detail={
+                  <>
+                    <p>
+                      It is saved the moment you press it. A combo already taken by another app is
+                      refused on the spot and nothing is saved, so you can try another right away.
+                      Press your shortcut again while Ember is working to cancel that refine.
+                    </p>
+                    {IS_MAC && (
+                      <p className="mt-2">
+                        On macOS some system shortcuts win over any app without reporting a
+                        conflict. Ember knows the common ones and refuses them, but if a shortcut
+                        saves and then never fires, that is what happened: pick another.
+                      </p>
+                    )}
+                  </>
+                }
               >
                 <HotkeyCapture
                   value={hotkey}
+                  slot="main"
                   ariaLabel="Main shortcut"
                   onCommit={(accel) => commitHotkey("main", accel)}
                 />
@@ -1107,24 +1240,33 @@ export function Settings() {
               <div className="mt-4">
                 <Section
                   title="Shortcuts per mode"
-                  hint="Optional and off until you set them. Each fires one mode straight away, so you can choose as you press instead of opening settings first. The main shortcut above keeps using the mode picked in Refining. Pick combos you know are free: if one is already taken by another app, Ember says so and keeps the shortcuts you had."
+                  hint="Optional. Fire one mode directly, without opening settings first."
+                  detail={
+                    <p>
+                      Off until you set them. The main shortcut above keeps using the mode picked
+                      in Refining; these two ignore it and always run their own. Leave one empty
+                      and Ember does not claim that combo at all.
+                    </p>
+                  }
                 >
                   <div className="flex flex-col gap-4">
                     <div className="flex flex-col gap-2">
-                      <Label>Polish (fix wording, keep the shape)</Label>
+                      <Label>Fix</Label>
                       <HotkeyCapture
                         value={s.hotkeyPolish}
+                        slot="polish"
                         clearable
-                        ariaLabel="Polish shortcut"
+                        ariaLabel="Fix shortcut"
                         onCommit={(accel) => commitHotkey("polish", accel)}
                       />
                     </div>
                     <div className="flex flex-col gap-2">
-                      <Label>Turbo (restructure into a full prompt)</Label>
+                      <Label>Rebuild</Label>
                       <HotkeyCapture
                         value={s.hotkeyTurbo}
+                        slot="turbo"
                         clearable
-                        ariaLabel="Turbo shortcut"
+                        ariaLabel="Rebuild shortcut"
                         onCommit={(accel) => commitHotkey("turbo", accel)}
                       />
                     </div>

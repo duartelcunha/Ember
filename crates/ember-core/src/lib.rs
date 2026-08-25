@@ -8,6 +8,7 @@
 pub mod engine;
 pub mod error;
 pub mod health;
+pub mod hotkey;
 pub mod model;
 pub mod models;
 pub mod modifiers;
@@ -22,6 +23,7 @@ pub mod selection;
 pub use engine::{postprocess, precondition, DegradeReason, EngineResult, Prepared};
 pub use error::{CoreError, OutcomeClass};
 pub use health::{assess_providers, KeyCheck, ProviderStatus, Readiness, SystemHealth};
+pub use hotkey::{evaluate as evaluate_hotkey, HotkeyVerdict, Os};
 pub use model::{LlmRequest, LlmResponse, Profile, ProfileSource, Provider, RefineMode};
 pub use models::{pick_default, rank, reconcile, ModelInfo};
 pub use modifiers::{decide_neutralize, Modifier, ModifierState, NeutralizeDecision};
