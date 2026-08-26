@@ -73,6 +73,35 @@ fn is_non_text(id: &str) -> bool {
     NON_TEXT_MARKERS.iter().any(|m| lower.contains(m))
 }
 
+/// Modelos ESPECIALIZADOS que a listagem do Gemini devolve com `generateContent` mas que nao
+/// servem para refinar um prompt: musica (lyria), imagem (nano-banana, `-image-`), robotica,
+/// controlo de computador, pesquisa profunda, audio nativo e as sessoes `live`.
+///
+/// Porque isto e preciso alem do `NON_TEXT_MARKERS`: eles ANUNCIAM `generateContent`, portanto
+/// o filtro de capacidade deixa-os passar. A listagem real trazia 34 modelos e a maioria era
+/// isto, o que fazia da escolha do modelo uma lista impossivel de ler. Anunciar uma capacidade
+/// nao e o mesmo que servir para o trabalho.
+const SPECIALTY_MARKERS: [&str; 9] = [
+    "lyria",
+    "nano-banana",
+    "-image",
+    "image-",
+    "robotics",
+    "computer-use",
+    "deep-research",
+    "native-audio",
+    "-live-",
+];
+
+/// Este id do Gemini serve para refinar texto? Exige ser da familia `gemini-` (o resto da
+/// listagem sao produtos a parte) e nao ser um dos especializados.
+pub fn gemini_is_text_refiner(id: &str) -> bool {
+    let lower = id.to_ascii_lowercase();
+    lower.starts_with("gemini-")
+        && !is_non_text(&lower)
+        && !SPECIALTY_MARKERS.iter().any(|m| lower.contains(m))
+}
+
 /// Extrai a geracao de um id de modelo como `major * 100 + minor`, para "2.5" < "3.1" < "4.5"
 /// ordenarem como numeros e nao como strings (em ordem lexicografica "10" vinha antes de "9").
 ///
@@ -156,7 +185,7 @@ pub fn parse_gemini_models(body: &Value) -> Vec<ModelInfo> {
                 .and_then(Value::as_str)?
                 .trim_start_matches("models/")
                 .to_string();
-            if id.is_empty() || is_non_text(&id) {
+            if !gemini_is_text_refiner(&id) {
                 return None;
             }
             let free = gemini_is_free_tier(&id);
@@ -177,23 +206,19 @@ pub fn gemini_is_free_tier(id: &str) -> bool {
     lower.contains("flash") && !lower.contains("pro") && !lower.contains("ultra")
 }
 
-/// `GET https://api.anthropic.com/v1/models`, resposta `{"data":[{"id","display_name"}]}`.
-pub fn parse_anthropic_models(body: &Value) -> Vec<ModelInfo> {
-    parse_data_array(body, |m| {
-        let display = m
-            .get("display_name")
-            .and_then(Value::as_str)
-            .map(str::to_string);
-        (display, false)
-    })
-}
-
 /// `GET {base_url}/models` de qualquer endpoint OpenAI-compatible (Groq, OpenAI, OpenRouter,
 /// DeepSeek, Ollama), resposta minima comum `{"data":[{"id"}]}`. O OpenRouter marca os modelos
 /// gratuitos no proprio id, com o sufixo `:free`, e ai o free tier e facto e nao heuristica.
 pub fn parse_openai_models(body: &Value) -> Vec<ModelInfo> {
     parse_data_array(body, |m| {
-        let display = m.get("name").and_then(Value::as_str).map(str::to_string);
+        // `name` e o campo do OpenRouter; `display_name` e o da Anthropic, que entra por aqui
+        // desde que deixou de ter caminho proprio. Sem o segundo, um modelo Claude aparecia na
+        // lista com o id cru em vez do nome legivel.
+        let display = m
+            .get("name")
+            .or_else(|| m.get("display_name"))
+            .and_then(Value::as_str)
+            .map(str::to_string);
         let free = m
             .get("id")
             .and_then(Value::as_str)
@@ -245,19 +270,11 @@ fn family_rank(provider: Provider, id: &str) -> u8 {
                 0
             }
         }
-        Provider::Claude => {
-            if l.contains("haiku") {
-                3
-            } else if l.contains("sonnet") {
-                2
-            } else if l.contains("opus") {
-                1
-            } else {
-                0
-            }
-        }
-        // Endpoint arbitrario (Groq, OpenAI, DeepSeek, Ollama): nao ha familias que saibamos
-        // comparar entre si. Tudo empata aqui e o desempate fica com a geracao.
+        // Endpoint arbitrario (Groq, OpenAI, Anthropic, DeepSeek, Ollama): nao ha familias
+        // que saibamos comparar entre si sem inventar uma tabela por vendedor, que envelhecia
+        // como as listas que este modulo veio substituir. Tudo empata aqui e o desempate fica
+        // com a geracao. Na pratica pesa pouco: o `reconcile` so escolhe sozinho quando o
+        // modelo gravado desapareceu, e mesmo ai tenta primeiro o default do endpoint.
         Provider::OpenAi => 0,
     }
 }
@@ -388,6 +405,37 @@ mod tests {
     }
 
     #[test]
+    fn the_gemini_listing_drops_everything_that_is_not_a_text_refiner() {
+        // Ids reais vindos da listagem do Gemini, tal como apareceram no dropdown: 34 modelos,
+        // e a maioria deles nada tinha a ver com refinar texto. Todos ANUNCIAM generateContent,
+        // por isso o filtro de capacidade sozinho deixava-os passar.
+        let lixo = [
+            "lyria-3-pro-preview",              // musica
+            "lyria-3-clip-preview",
+            "nano-banana-pro-preview",          // imagem
+            "gemini-3-pro-image-preview",
+            "gemini-robotics-er-2-preview",     // robotica
+            "gemini-2.5-computer-use-preview-10-2025",
+            "deep-research-pro-preview-12-2025",
+            "antigravity-preview-05-2026",
+            "gemini-2.5-flash-native-audio",
+        ];
+        for id in lixo {
+            assert!(!gemini_is_text_refiner(id), "{id} devia ter sido filtrado");
+        }
+        // E o que serve continua a passar.
+        for id in [
+            "gemini-2.5-flash",
+            "gemini-3.1-flash-lite",
+            "gemini-3.5-flash",
+            "gemini-2.5-pro",
+            "gemini-pro-latest",
+        ] {
+            assert!(gemini_is_text_refiner(id), "{id} devia ter passado");
+        }
+    }
+
+    #[test]
     fn gemini_free_tier_is_the_flash_family_only() {
         assert!(gemini_is_free_tier("gemini-2.5-flash"));
         assert!(gemini_is_free_tier("gemini-3.1-flash-lite"));
@@ -396,11 +444,14 @@ mod tests {
     }
 
     #[test]
-    fn anthropic_and_openai_listings_parse_their_own_shapes() {
+    fn model_listings_parse_the_shapes_the_providers_actually_send() {
+        // A Anthropic entra pelo caminho OpenAI-compativel e usa `display_name` onde o
+        // OpenRouter usa `name`. Os dois tem de ser lidos, senao um modelo Claude aparecia na
+        // lista com o id cru.
         let anthropic = json!({"data": [
             {"id": "claude-haiku-4-5", "display_name": "Claude Haiku 4.5", "type": "model"},
         ]});
-        let got = parse_anthropic_models(&anthropic);
+        let got = parse_openai_models(&anthropic);
         assert_eq!(got[0].id, "claude-haiku-4-5");
         assert_eq!(got[0].display_name, "Claude Haiku 4.5");
 
@@ -423,7 +474,7 @@ mod tests {
         assert!(parse_gemini_models(&json!({})).is_empty());
         assert!(parse_gemini_models(&json!({"models": "nope"})).is_empty());
         assert!(parse_openai_models(&json!({"data": [{"no_id": 1}]})).is_empty());
-        assert!(parse_anthropic_models(&json!({"error": "unauthorized"})).is_empty());
+        assert!(parse_openai_models(&json!({"error": "unauthorized"})).is_empty());
     }
 
     #[test]
@@ -461,19 +512,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn claude_ranking_keeps_the_cheap_family_first() {
-        // Decisao de custo ja tomada no projeto: o fallback e haiku, nao sonnet.
-        let models = vec![
-            m("claude-sonnet-4-6", false),
-            m("claude-haiku-4-6", false),
-            m("claude-opus-4-6", false),
-        ];
-        assert_eq!(
-            pick_default(Provider::Claude, &models).unwrap(),
-            "claude-haiku-4-6"
-        );
-    }
 
     #[test]
     fn ranking_is_stable_across_refreshes() {

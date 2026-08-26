@@ -88,6 +88,8 @@ function refusal(accel: string, v: HotkeyVerdict): string | null {
       return `${accel} is already your ${v.slot} shortcut.`;
     case "incomplete":
       return "Hold your modifiers and press a key.";
+    case "needs_modifier":
+      return `${accel} on its own would take that key from every app. Add Ctrl, Alt or Shift.`;
   }
 }
 

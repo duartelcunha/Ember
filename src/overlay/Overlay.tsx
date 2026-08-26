@@ -43,7 +43,7 @@ export function Overlay() {
         <div className="flex h-screen items-center justify-start p-2" aria-hidden="true">
           <AnimatePresence mode="popLayout">
             {s.phase === "refining" && (
-              // Orb + legenda opcional: o nucleo emite "Trying Claude...""/"Retrying..."
+              // Orb + legenda opcional: o nucleo emite "Trying <provider>..."/"Retrying..."
               // durante fallback/retry, e a cauda do texto a ser gerado durante o stream,
               // para o refine deixar de ser um orb mudo. Largura capada: a janela do
               // overlay so clampa a caixa minuscula do orb ao ecra nesta fase (nao a
@@ -67,7 +67,7 @@ export function Overlay() {
               </div>
             )}
             {s.phase === "success" && (
-              // Mostra o provider: torna visivel quando o Gemini falhou e o Claude salvou.
+              // Mostra o provider: torna visivel quando o Gemini falhou e o fallback salvou.
               <Pill key="ok" kind="success" text={s.provider ? `Refined by ${s.provider}` : "Refined"} />
             )}
             {s.phase === "error" && (

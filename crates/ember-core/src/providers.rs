@@ -1,16 +1,12 @@
 //! Mapping puro entre o `LlmRequest`/resposta normalizada e o wire-format de cada
-//! provider (Gemini, Claude). Sem rede: so constroi JSON e interpreta JSON.
+//! provider (Gemini, e qualquer endpoint OpenAI-compativel). Sem rede: so constroi JSON e
+//! interpreta JSON.
 
 use crate::model::LlmRequest;
 use serde_json::{json, Value};
 
-/// Header de versao obrigatorio da API Anthropic.
-pub const ANTHROPIC_VERSION: &str = "2023-06-01";
 /// Modelo Gemini primario por defeito (ultimo Flash, com thinking).
 pub const DEFAULT_GEMINI_MODEL: &str = "gemini-2.5-flash";
-/// Modelo Claude de fallback por defeito: o tier barato e rapido (Haiku), comparavel em custo
-/// ao Gemini Flash. NAO o Sonnet (bem mais caro) por defeito; fica como opcao para quem quiser.
-pub const DEFAULT_CLAUDE_MODEL: &str = "claude-haiku-4-5";
 /// Base URL do provider de fallback (OpenAI-compatible) por defeito: **Groq**.
 ///
 /// Era o OpenRouter, e isso estava errado. Um fallback existe para estar la quando o primario
@@ -161,72 +157,15 @@ pub fn gemini_stream_text_delta(chunk: &Value) -> Option<String> {
     }
 }
 
-// ---------------------------------------------------------------------------------------
-// Claude / Anthropic
-// ---------------------------------------------------------------------------------------
-
-pub fn claude_url() -> &'static str {
-    "https://api.anthropic.com/v1/messages"
-}
-
-pub fn claude_request_body(req: &LlmRequest, stream: bool) -> Value {
-    // Sem `temperature`: os modelos Claude recentes (Opus 4.7+, Sonnet 5, Fable 5) rejeitam
-    // qualquer temperatura nao-default com HTTP 400, e o utilizador pode escrever qualquer
-    // id de modelo nas settings. Omitir aceita em todos; a orientacao vem do system prompt.
-    json!({
-        "model": req.model,
-        "max_tokens": req.max_tokens,
-        "system": req.system,
-        "messages": [{ "role": "user", "content": req.user }],
-        "stream": stream
-    })
-}
-
-/// Recusa por politica: stop_reason == "refusal".
-pub fn claude_is_content_policy(body: &Value) -> bool {
-    body.get("stop_reason").and_then(Value::as_str) == Some("refusal")
-}
-
-/// Resposta cortada pelo teto de tokens: stop_reason == "max_tokens". Texto incompleto,
-/// nunca colar por cima da seleccao.
-pub fn claude_is_truncated(body: &Value) -> bool {
-    body.get("stop_reason").and_then(Value::as_str) == Some("max_tokens")
-}
-
-/// Um evento do stream de mensagens Claude, ja classificado a partir do `type` do JSON.
-/// So os dois casos que importam ao refiner tem variante propria; o resto (message_start,
-/// content_block_start/stop, thinking_delta, ping, ...) cai em `Other` e e ignorado.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ClaudeStreamEvent {
-    /// `content_block_delta` com `delta.type == "text_delta"`: texto novo desta tranche.
-    TextDelta(String),
-    /// `message_delta` com `delta.stop_reason` presente: terminal. O caller classifica com
-    /// `claude_is_truncated`/`claude_is_content_policy` sobre `{"stop_reason": ..}`.
-    Stopped { stop_reason: String },
-    Other,
-}
-
-/// Classifica um chunk de streaming Claude (SSE `data:` ja parseado como JSON) pelo seu
-/// campo `type`, ignorando o `event:` da linha SSE (redundante com o `type` do corpo).
-pub fn claude_stream_event(chunk: &Value) -> ClaudeStreamEvent {
-    match chunk.get("type").and_then(Value::as_str) {
-        Some("content_block_delta")
-            if chunk.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta") =>
-        {
-            match chunk.pointer("/delta/text").and_then(Value::as_str) {
-                Some(t) => ClaudeStreamEvent::TextDelta(t.to_string()),
-                None => ClaudeStreamEvent::Other,
-            }
-        }
-        Some("message_delta") => match chunk.pointer("/delta/stop_reason").and_then(Value::as_str) {
-            Some(sr) => ClaudeStreamEvent::Stopped {
-                stop_reason: sr.to_string(),
-            },
-            None => ClaudeStreamEvent::Other,
-        },
-        _ => ClaudeStreamEvent::Other,
-    }
-}
+// A Anthropic ja NAO tem wire-format proprio aqui. O caminho nativo (`/v1/messages`, o header
+// `anthropic-version`, o `ClaudeStreamEvent` e os seus proprios campos de erro) foi todo
+// removido: a Anthropic serve um endpoint OpenAI-compativel, e passar por ele custa uma entrada
+// numa lista de servicos em vez de uma familia inteira de codigo, testes e casos especiais.
+//
+// A propria Anthropic diz que essa camada e para testar e comparar modelos, nao para producao.
+// A ressalva vale para quem usa ferramentas com schema estrito ou audio; um refine e uma chamada
+// de texto com um system prompt e nada mais, que e exatamente o que a camada faz bem. Fica dito
+// na UI, para a escolha ser informada.
 
 // ---------------------------------------------------------------------------------------
 // OpenAI-compatible (OpenRouter, DeepSeek, Groq, Ollama... todos partilham /chat/completions)
@@ -557,63 +496,10 @@ mod tests {
         assert_eq!(gemini_stream_text_delta(&no_parts), None);
     }
 
-    #[test]
-    fn claude_body_shape() {
-        let b = claude_request_body(&req(), true);
-        assert_eq!(b.get("system").unwrap(), "sys");
-        assert_eq!(b.pointer("/messages/0/content").unwrap(), "usr");
-        assert_eq!(b.get("stream").unwrap(), true);
-    }
 
-    #[test]
-    fn claude_stream_event_extracts_text_delta() {
-        let chunk = json!({
-            "type": "content_block_delta",
-            "index": 0,
-            "delta": { "type": "text_delta", "text": "Refina" }
-        });
-        assert_eq!(
-            claude_stream_event(&chunk),
-            ClaudeStreamEvent::TextDelta("Refina".into())
-        );
-    }
 
-    #[test]
-    fn claude_stream_event_ignores_non_text_deltas_and_other_events() {
-        let thinking = json!({
-            "type": "content_block_delta",
-            "delta": { "type": "thinking_delta", "thinking": "..." }
-        });
-        assert_eq!(claude_stream_event(&thinking), ClaudeStreamEvent::Other);
 
-        let start = json!({ "type": "message_start" });
-        assert_eq!(claude_stream_event(&start), ClaudeStreamEvent::Other);
 
-        let ping = json!({ "type": "ping" });
-        assert_eq!(claude_stream_event(&ping), ClaudeStreamEvent::Other);
-    }
-
-    #[test]
-    fn claude_stream_event_extracts_stop_reason_from_message_delta() {
-        let chunk = json!({
-            "type": "message_delta",
-            "delta": { "stop_reason": "end_turn" },
-            "usage": { "output_tokens": 42 }
-        });
-        assert_eq!(
-            claude_stream_event(&chunk),
-            ClaudeStreamEvent::Stopped { stop_reason: "end_turn".into() }
-        );
-
-        // message_delta sem stop_reason (acontece em deltas intermedios de usage) e Other.
-        let no_stop = json!({ "type": "message_delta", "delta": {} });
-        assert_eq!(claude_stream_event(&no_stop), ClaudeStreamEvent::Other);
-    }
-
-    #[test]
-    fn claude_detects_refusal() {
-        assert!(claude_is_content_policy(&json!({ "stop_reason": "refusal" })));
-    }
 
     #[test]
     fn gemini_detects_truncation() {
@@ -626,10 +512,6 @@ mod tests {
         assert!(gemini_is_truncated(&chunk));
     }
 
-    #[test]
-    fn claude_detects_truncation() {
-        assert!(claude_is_truncated(&json!({ "stop_reason": "max_tokens" })));
-    }
 
     #[test]
     fn split_sse_events_splits_on_blank_line_and_keeps_incomplete_remainder() {
@@ -725,11 +607,6 @@ mod tests {
         assert!((temp - 0.3).abs() < 1e-6);
     }
 
-    #[test]
-    fn claude_never_sends_temperature() {
-        let b = claude_request_body(&req(), false);
-        assert!(b.get("temperature").is_none());
-    }
 
     // ----- OpenAI-compatible -----
 

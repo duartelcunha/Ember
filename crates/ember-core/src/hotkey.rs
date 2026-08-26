@@ -33,6 +33,26 @@ pub enum HotkeyVerdict {
     UsedByEmber { slot: String },
     /// Sem tecla principal (so modificadores), ou vazia.
     Incomplete,
+    /// Uma tecla sozinha que o utilizador precisa para escrever. Um atalho global captura a
+    /// tecla em TODO o sistema, por isso um `Enter` sem modificador nenhum tira o Enter a toda
+    /// a gente enquanto o Ember estiver aberto. Nao e teoria: chegou a ficar gravado assim.
+    NeedsModifier { key: String },
+}
+
+/// Teclas que podem ser atalho SOZINHAS, sem modificador nenhum.
+///
+/// A regra e simples: uma tecla que nao serve para escrever nem para navegar pode ser
+/// capturada globalmente sem custo. As F13 a F24 existem quase para isto (nenhum teclado as
+/// usa para nada), e as F1 a F12 sao aceites porque no maximo tapam uma ajuda contextual.
+/// Tudo o resto (letras, digitos, Enter, Space, Tab, Backspace, setas, pontuacao) precisa de
+/// pelo menos um modificador, senao o atalho torna a maquina inutilizavel.
+fn is_safe_bare_key(key: &str) -> bool {
+    if let Some(n) = key.strip_prefix('f') {
+        if let Ok(num) = n.parse::<u32>() {
+            return (1..=24).contains(&num);
+        }
+    }
+    matches!(key, "pause" | "scrolllock" | "numlock")
 }
 
 /// Atalhos que o Windows reclama para si. O `RegisterHotKey` recusa a maior parte destes com um
@@ -144,6 +164,22 @@ pub fn same_hotkey(a: &str, b: &str, os: Os) -> bool {
     }
 }
 
+/// Candidatos para o atalho principal, por ordem de preferencia, para o primeiro arranque.
+///
+/// Todos sao Ctrl+Shift+<letra> com letras que existem em qualquer teclado, seja qual for o
+/// layout: nada de teclas de pontuacao (que mudam de sitio entre PT, US e DE), nada de F13+
+/// (que muitos portateis nao tem), nada de numpad. Um atalho fixo nao serve, porque qualquer
+/// combinacao pode ja estar ocupada na maquina de alguem e o registo e tudo-ou-nada; o
+/// arranque testa esta lista por ordem e fica com o primeiro que o sistema aceitar.
+pub const DEFAULT_HOTKEY_CANDIDATES: [&str; 6] = [
+    "CmdOrCtrl+Shift+E",
+    "CmdOrCtrl+Shift+D",
+    "CmdOrCtrl+Shift+G",
+    "CmdOrCtrl+Shift+U",
+    "CmdOrCtrl+Shift+J",
+    "CmdOrCtrl+Shift+Space",
+];
+
 /// Avalia uma combinacao contra o SO e contra os atalhos que o Ember ja tem atribuidos.
 ///
 /// `taken` sao os slots ja ocupados, como (slot, acelerador). O slot que esta a ser editado NAO
@@ -153,6 +189,12 @@ pub fn evaluate(accel: &str, os: Os, taken: &[(&str, &str)]) -> HotkeyVerdict {
     let Some(canon) = canonical(accel) else {
         return HotkeyVerdict::Incomplete;
     };
+    // Tecla sozinha: so passa se nao for precisa para escrever. Isto vem ANTES de tudo o resto
+    // porque nem sequer chega ao SO: o `RegisterHotKey` aceita um `Enter` sem se queixar, e o
+    // estrago so aparece quando a pessoa tenta escrever noutro sitio qualquer.
+    if !canon.contains('+') && !is_safe_bare_key(&canon) {
+        return HotkeyVerdict::NeedsModifier { key: canon };
+    }
     let mine = for_comparison(&canon, os);
 
     let reserved = match os {
@@ -202,12 +244,30 @@ mod tests {
     }
 
     #[test]
-    fn a_single_key_with_no_modifier_is_a_valid_hotkey() {
-        // Pedido explicito: de uma tecla ate quatro. Uma tecla sozinha e legitima (F13, por
-        // exemplo, existe precisamente para isto).
+    fn a_single_key_is_allowed_when_it_is_not_needed_for_typing() {
+        // Pedido explicito: de uma tecla ate quatro. As F-keys existem precisamente para isto.
         assert_eq!(canonical("F13").as_deref(), Some("f13"));
-        assert_eq!(canonical("Space").as_deref(), Some("space"));
         assert_eq!(evaluate("F13", Os::Windows, &[]), HotkeyVerdict::Available);
+        assert_eq!(evaluate("F5", Os::Windows, &[]), HotkeyVerdict::Available);
+        assert_eq!(evaluate("F24", Os::MacOs, &[]), HotkeyVerdict::Available);
+    }
+
+    #[test]
+    fn a_bare_typing_key_is_refused_because_it_would_hijack_the_whole_system() {
+        // Regressao real e das feias: ficou gravado `"hotkey": "Enter"`. O SO regista sem se
+        // queixar, e a partir dai o Enter deixa de funcionar em qualquer sitio enquanto o Ember
+        // estiver aberto. O estrago so aparece longe daqui, o que o torna dificil de ligar a
+        // causa; por isso a recusa e no ponto onde se escolhe.
+        for key in ["Enter", "Space", "Tab", "Backspace", "A", "1", "Up", "Delete", "-"] {
+            assert_eq!(
+                evaluate(key, Os::Windows, &[]),
+                HotkeyVerdict::NeedsModifier { key: key.to_ascii_lowercase() },
+                "{key} sozinho devia ter sido recusado"
+            );
+        }
+        // Com um modificador, as mesmas teclas sao atalhos perfeitamente normais.
+        assert_eq!(evaluate("CmdOrCtrl+Enter", Os::Windows, &[]), HotkeyVerdict::Available);
+        assert_eq!(evaluate("CmdOrCtrl+Shift+A", Os::Windows, &[]), HotkeyVerdict::Available);
     }
 
     #[test]
@@ -285,6 +345,33 @@ mod tests {
             evaluate("CmdOrCtrl+Shift+Space", Os::Windows, &taken),
             HotkeyVerdict::Available
         );
+    }
+
+    #[test]
+    fn every_default_candidate_is_a_valid_hotkey_on_both_systems() {
+        // Um candidato que nem sequer canonicaliza seria um arranque falhado sem explicacao.
+        // E nenhum pode colidir com o que o SO reserva, senao a lista gastava tentativas em
+        // combinacoes que nunca iam funcionar.
+        for combo in DEFAULT_HOTKEY_CANDIDATES {
+            assert!(canonical(combo).is_some(), "{combo} nao canonicaliza");
+            for os in [Os::Windows, Os::MacOs] {
+                assert_eq!(
+                    evaluate(combo, os, &[]),
+                    HotkeyVerdict::Available,
+                    "{combo} bate num atalho reservado em {os:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_candidates_are_all_different_from_each_other() {
+        // Um duplicado gastava uma tentativa a testar algo que ja tinha falhado.
+        for (i, a) in DEFAULT_HOTKEY_CANDIDATES.iter().enumerate() {
+            for b in &DEFAULT_HOTKEY_CANDIDATES[i + 1..] {
+                assert!(!same_hotkey(a, b, Os::Windows), "{a} e {b} sao o mesmo atalho");
+            }
+        }
     }
 
     #[test]

@@ -44,25 +44,40 @@ pub fn absorb(app: &AppHandle, state: &AppState, provider: Provider, models: &[M
     reconcile_saved(app, provider, &ranked);
 }
 
-/// Se o modelo gravado deixou de existir na listagem viva, troca-o pelo melhor que existe e
-/// grava. E isto que substitui a lista `DEAD_MODELS` escrita a mao: um modelo descontinuado
-/// desaparece da listagem do provider sozinho, sem ninguem ter de o vir apagar do nosso codigo.
+/// Poe o modelo gravado de acordo com o que existe hoje.
+///
+/// Dois comportamentos, e a diferenca esta na flag `gemini_model_auto`:
+/// - **automatico** (o default): fica sempre com o melhor gratuito que o provider anunciar, e
+///   acompanha sozinho as geracoes novas. E o que faz com que ninguem tenha de perceber de ids
+///   de modelos para a app funcionar bem;
+/// - **fixado a mao**: so mexemos se o modelo escolhido tiver DESAPARECIDO da listagem. Enquanto
+///   existir, a escolha do utilizador manda, mesmo que nao fosse a nossa.
+///
+/// Isto e o que substitui a lista `DEAD_MODELS` escrita a mao: um modelo descontinuado desaparece
+/// da listagem do provider sozinho, sem ninguem ter de o vir apagar do nosso codigo.
 fn reconcile_saved(app: &AppHandle, provider: Provider, live: &[ModelInfo]) {
     let mut cfg = config::load(app);
     let d = config::Config::default();
     let (saved, fallback) = match provider {
         Provider::Gemini => (cfg.gemini_model.clone(), d.gemini_model.clone()),
-        Provider::Claude => (cfg.claude_model.clone(), d.claude_model.clone()),
         Provider::OpenAi => (cfg.openai_model.clone(), d.openai_model.clone()),
     };
-    let next = models::reconcile(provider, &saved, live, &fallback);
+    let auto = matches!(provider, Provider::Gemini) && cfg.gemini_model_auto;
+    let next = if auto {
+        models::pick_default(provider, live).unwrap_or(saved.clone())
+    } else {
+        models::reconcile(provider, &saved, live, &fallback)
+    };
     if next == saved {
         return;
     }
-    log::info!("modelo {provider:?} '{saved}' ja nao existe no provider; passa a '{next}'");
+    if auto {
+        log::info!("modelo {provider:?} automatico: '{saved}' -> '{next}'");
+    } else {
+        log::info!("modelo {provider:?} '{saved}' ja nao existe no provider; passa a '{next}'");
+    }
     match provider {
         Provider::Gemini => cfg.gemini_model = next,
-        Provider::Claude => cfg.claude_model = next,
         Provider::OpenAi => cfg.openai_model = next,
     }
     if let Err(e) = config::save(app, &cfg) {
@@ -110,7 +125,6 @@ fn fallback_catalog(provider: Provider, base_url: &str) -> Vec<ModelInfo> {
     use ember_core::providers as wire;
     let ids: &[&str] = match provider {
         Provider::Gemini => &[wire::DEFAULT_GEMINI_MODEL],
-        Provider::Claude => &[wire::DEFAULT_CLAUDE_MODEL],
         Provider::OpenAi => {
             if wire::openai_is_openrouter(base_url) {
                 &wire::OPENROUTER_FREE_MODELS

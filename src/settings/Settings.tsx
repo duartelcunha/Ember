@@ -50,7 +50,6 @@ import {
 // por isso trocar de modelo aqui da uma quota diaria nova. E a saida gratuita quando um deles
 // esgota.
 const GEMINI_PRESETS = ["gemini-2.5-flash", "gemini-3.1-flash-lite", "gemini-3.5-flash"];
-const CLAUDE_PRESETS = ["claude-haiku-4-5", "claude-sonnet-4-6"];
 const CUSTOM = "__custom__";
 
 /** O aviso do macOS so faz sentido no macOS; no Windows seria ruido sobre um problema que la
@@ -85,14 +84,23 @@ const OPENAI_ENDPOINTS = [
   },
   {
     id: "openrouter",
-    label: "OpenRouter (free models, low daily cap)",
+    label: "OpenRouter (free models, low cap)",
     baseUrl: "https://openrouter.ai/api/v1",
     models: [
       "meta-llama/llama-3.3-70b-instruct:free",
       "google/gemma-4-31b-it:free",
       "qwen/qwen3-next-80b-a3b-instruct:free",
     ],
-    note: "One key, many models. The free models are capped at roughly 50 requests a day, and they are shared with everyone, so they get busy. Topping up $10 of credit raises the cap about twentyfold and is not spent on free models.",
+    note: "One key, many models. Free models are capped near 50 requests a day and shared with everyone.",
+  },
+  {
+    // A Anthropic entrou aqui quando o Claude deixou de ser um provider proprio. Fala o
+    // protocolo OpenAI na mesma Base URL, por isso nao precisa de codigo nenhum a parte.
+    id: "anthropic",
+    label: "Anthropic (paid, Claude models)",
+    baseUrl: "https://api.anthropic.com/v1",
+    models: ["claude-haiku-4-5", "claude-sonnet-4-6"],
+    note: "Cents per refine and never queues. Goes through Anthropic's OpenAI-compatible endpoint.",
   },
 ] as const;
 
@@ -192,7 +200,7 @@ const KEY_CONSOLES: Record<KeyConsole, { label: string; icon: React.ReactNode }>
     icon: <Atom size={14} weight="fill" color="#10A37F" aria-hidden="true" />,
   },
   openrouter: { label: "OpenRouter", icon: <BrandIcon brand="openrouter" size={14} /> },
-  claude: { label: "Anthropic Console", icon: <BrandIcon brand="claude" size={14} /> },
+  anthropic: { label: "Anthropic Console", icon: <BrandIcon brand="claude" size={14} /> },
 };
 
 /** Botao que abre, no browser, a consola onde se cria a chave. Poupa ao utilizador ter de
@@ -222,6 +230,8 @@ function ModelPicker({
   presets,
   catalog,
   model,
+  auto,
+  onSetAuto,
   onCommit,
 }: {
   kind: ProviderKind;
@@ -229,6 +239,11 @@ function ModelPicker({
   /** Listagem viva do provider. `null` = ainda nao houve descoberta. */
   catalog?: ModelCatalog | null;
   model: string;
+  /** O Ember e que escolhe este modelo? Quando `true`, nao ha dropdown nenhum: mostra-se o que
+   *  ficou escolhido e um botao para quem quiser mesmo mexer. Ninguem devia ter de perceber de
+   *  ids de modelos para a app funcionar bem, e a escolha certa muda a cada geracao nova. */
+  auto?: boolean;
+  onSetAuto?: (enabled: boolean) => void;
   onCommit: (model: string) => Promise<void>;
 }) {
   const [picked, setPicked] = useState(presets.includes(model) ? model : CUSTOM);
@@ -242,6 +257,26 @@ function ModelPicker({
     setPicked(presets.includes(model) ? model : CUSTOM);
     setCustom(model);
   }, [model, presets]);
+
+  if (auto) {
+    return (
+      <div className="flex flex-col gap-2">
+        <Label>Model</Label>
+        <div className="flex items-center gap-2">
+          <div className="flex h-9 flex-1 items-center rounded-sm border border-[color:var(--border-subtle)] bg-surface-2 px-3 font-mono text-sm text-fg">
+            {model}
+          </div>
+          <Button variant="ghost" onClick={() => onSetAuto?.(false)}>
+            Change
+          </Button>
+        </div>
+        <p className="text-xs text-fg-muted">
+          Chosen for you: the best free model this provider serves. It follows new generations on
+          its own.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-2">
@@ -290,6 +325,15 @@ function ModelPicker({
           placeholder="exact model id"
         />
       )}
+      {onSetAuto && (
+        <button
+          type="button"
+          onClick={() => onSetAuto(true)}
+          className="self-start text-xs text-fg-muted underline underline-offset-2 hover:text-fg"
+        >
+          Let Ember choose again
+        </button>
+      )}
     </div>
   );
 }
@@ -302,6 +346,8 @@ function ProviderConfig({
   model,
   presets,
   catalog,
+  auto,
+  onSetAuto,
   baseUrl,
   onCommitBaseUrl,
   onKeyChanged,
@@ -313,6 +359,8 @@ function ProviderConfig({
   model: string;
   presets: string[];
   catalog?: ModelCatalog | null;
+  auto?: boolean;
+  onSetAuto?: (enabled: boolean) => void;
   /** So o provider OpenAI-compatible mostra base URL (OpenRouter/DeepSeek/Groq/Ollama...). */
   baseUrl?: string;
   onCommitBaseUrl?: (url: string) => Promise<void>;
@@ -470,6 +518,8 @@ function ProviderConfig({
         presets={presets}
         catalog={catalog}
         model={model}
+        auto={auto}
+        onSetAuto={onSetAuto}
         onCommit={commitModel}
       />
     </Section>
@@ -693,7 +743,7 @@ export function Settings() {
   /** Rebusca as listagens. Best-effort: uma falha deixa o select como estava, sem toast, porque
    *  nao ha nada que o utilizador possa fazer e a lista embutida continua a servir. */
   const refreshCatalogs = () => {
-    (["gemini", "openai", "claude"] as ProviderKind[]).forEach((kind) => {
+    (["gemini", "openai"] as ProviderKind[]).forEach((kind) => {
       ipc
         .listModels(kind)
         .then((c) => setCatalogs((prev) => ({ ...prev, [kind]: c })))
@@ -721,8 +771,7 @@ export function Settings() {
   const presetsFor = (kind: ProviderKind, builtIn: string[]): string[] => {
     const c = catalogs[kind];
     const base = c?.live && c.models.length ? c.models.map((m) => m.id) : builtIn;
-    const saved =
-      kind === "gemini" ? s.geminiModel : kind === "claude" ? s.claudeModel : s.openaiModel;
+    const saved = kind === "gemini" ? s.geminiModel : s.openaiModel;
     return saved && !base.includes(saved) ? [saved, ...base] : base;
   };
 
@@ -927,8 +976,8 @@ export function Settings() {
                       </p>
                       <p className="mt-2">
                         Rate limits are normal, not a broken key: free tiers have daily caps and
-                        free models are shared with everyone. Wait, or add a paid key (Claude
-                        Haiku costs cents) as a third family that never queues.
+                        free models are shared with everyone. Wait, or point the fallback at a
+                        paid service, which costs cents per refine and never queues.
                       </p>
                     </>
                   }
@@ -938,11 +987,21 @@ export function Settings() {
                 <ProviderConfig
                   kind="gemini"
                   title="Gemini (primary)"
-                  subtitle="Start here: free, fast, and the key takes a minute to create. The free tier has a daily cap that resets each day."
+                  subtitle="Free, fast, and the key takes a minute. Ember picks the model for you."
                   hasKey={s.hasGeminiKey}
                   model={s.geminiModel}
                   presets={presetsFor("gemini", GEMINI_PRESETS)}
                   catalog={catalogs.gemini}
+                  auto={s.geminiModelAuto}
+                  onSetAuto={(enabled) => {
+                    // Otimista, e o backend devolve o estado ja resolvido (ligar o automatico
+                    // muda tambem o modelo, a partir da listagem em cache).
+                    setS({ ...s, geminiModelAuto: enabled });
+                    ipc
+                      .setGeminiModelAuto(enabled)
+                      .then(setS)
+                      .catch(() => setS((prev) => ({ ...prev, geminiModelAuto: !enabled })));
+                  }}
                   onKeyChanged={() => {
                     refreshHealth();
                     refreshCatalogs();
@@ -950,8 +1009,8 @@ export function Settings() {
                 />
                 <ProviderConfig
                   kind="openai"
-                  title="Fallback (Groq, OpenAI, OpenRouter…)"
-                  subtitle="Used whenever Gemini fails or runs out of quota. Pick a service below and Ember sets the right models for it. Any OpenAI-compatible endpoint works, so you can also point it at DeepSeek or a local Ollama."
+                  title="Fallback"
+                  subtitle="Used whenever Gemini fails or runs out of quota. Pick a service below."
                   hasKey={s.hasOpenAiKey}
                   model={s.openaiModel}
                   // Os modelos vivem COLADOS ao servico: um id do OpenRouter no Groq da 404.
@@ -969,19 +1028,6 @@ export function Settings() {
                     setS(res);
                     refreshHealth();
                     toast.success("Base URL updated.");
-                  }}
-                />
-                <ProviderConfig
-                  kind="claude"
-                  title="Claude (optional third family)"
-                  subtitle="Paid, but Haiku costs cents and never waits in a free-tier queue. Add this if you refine a lot and keep hitting limits. Tried last, only when the two above fail."
-                  hasKey={s.hasClaudeKey}
-                  model={s.claudeModel}
-                  presets={presetsFor("claude", CLAUDE_PRESETS)}
-                  catalog={catalogs.claude}
-                  onKeyChanged={() => {
-                    refreshHealth();
-                    refreshCatalogs();
                   }}
                 />
               </div>
@@ -1294,21 +1340,32 @@ export function Settings() {
               <Section
                 title="Personalization profile"
                 titleId="profile-heading"
-                hint={`Current source: ${sourceLabel[s.profileSource]}.`}
+                hint={`How Ember writes like you. Current source: ${sourceLabel[s.profileSource]}.`}
+                detail={
+                  <p>
+                    Your tone, your rules, the words you never use. It is added to every refine.
+                    Ember picks up the global profile you already keep for your coding agent
+                    (<code className="font-mono">CLAUDE.md</code>,{" "}
+                    <code className="font-mono">AGENTS.md</code>, or{" "}
+                    <code className="font-mono">GEMINI.md</code>), or you can load any markdown
+                    file and edit it here.
+                  </p>
+                }
               >
-                <p className="text-xs text-fg-muted">
-                  This is how Ember learns to write like <em>you</em>: your tone, your rules, the
-                  words you never use. It is added to every refine. Ember picks up the global
-                  profile you already keep for your coding agent (
-                  <code className="font-mono">CLAUDE.md</code>,{" "}
-                  <code className="font-mono">AGENTS.md</code>, or{" "}
-                  <code className="font-mono">GEMINI.md</code>), or you can load any markdown file
-                  and edit it here.
-                </p>
-                {s.profilePath && <p className="font-mono text-xs text-fg-muted">{s.profilePath}</p>}
+                {s.profilePath && (
+                  <p className="truncate font-mono text-xs text-fg-muted" title={s.profilePath}>
+                    {s.profilePath}
+                  </p>
+                )}
+                {/* Altura FIXA em vez de `rows`: o perfil de qualquer pessoa que use um CLAUDE.md
+                    a serio tem centenas de linhas, e com uma textarea a crescer com o conteudo os
+                    botoes de Save e Re-detect eram empurrados para fora do ecra. Aqui a caixa
+                    ocupa o espaco que sobra e faz o seu proprio scroll; os botoes ficam sempre a
+                    vista. O `min-h-0` e o que permite ao flex encolher a caixa (sem ele, o
+                    conteudo impoe a altura minima e o overflow volta a sair para a pagina). */}
                 <Textarea
                   aria-labelledby="profile-heading"
-                  rows={12}
+                  className="h-[clamp(140px,38vh,420px)] min-h-0 resize-none overflow-y-auto"
                   value={profileText}
                   onChange={(e) => setProfileText(e.target.value)}
                   placeholder="Your style and tone preferences (language, rules like 'no em-dashes'…)."
@@ -1391,10 +1448,9 @@ export function Settings() {
               <div className="flex flex-col gap-4">
                 <Section title="Ember">
                   <p className="text-sm text-fg-muted">
-                    In-the-moment text refiner for any app, prompts, emails, messages, docs and
-                    more. Gemini primary, with an OpenAI-compatible fallback (OpenRouter by
-                    default) and Claude as an optional third family, guided by your profile. Built
-                    with Tauri.
+                    In-the-moment text refiner for any app: prompts, emails, messages, docs.
+                    Gemini as the free primary, with one OpenAI-compatible fallback of your
+                    choosing, guided by your profile. Built with Tauri.
                   </p>
                   <button
                     onClick={() =>

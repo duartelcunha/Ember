@@ -17,15 +17,14 @@ use crate::{config, profile, providers, secrets};
 #[serde(rename_all = "camelCase")]
 pub struct SettingsDto {
     gemini_model: String,
-    claude_model: String,
     openai_model: String,
     openai_base_url: String,
+    gemini_model_auto: bool,
     hotkey: String,
     hotkey_polish: String,
     hotkey_turbo: String,
     autostart: bool,
     has_gemini_key: bool,
-    has_claude_key: bool,
     has_openai_key: bool,
     /// `Some(msg)` quando nao foi possivel ler o cofre de credenciais (bloqueado/partido). A UI
     /// mostra um banner persistente. Honra a regra de nao degradar em silencio: em vez de mentir
@@ -76,30 +75,28 @@ fn build_dto(app: &AppHandle, cfg: &config::Config) -> SettingsDto {
     let resolved = profile::resolve(app, cfg.profile_override.as_deref(), cfg.ignore_claude_md);
     // Le as 3 chaves honestamente: uma falha do cofre (Err) nao se colapsa em "sem chave".
     // Se o cofre estiver bloqueado, todas ficam false e key_store_error informa a UI.
-    let (has_g, has_c, has_o, key_store_error) = match (
+    let (has_g, has_o, key_store_error) = match (
         secrets::try_has(Provider::Gemini),
-        secrets::try_has(Provider::Claude),
         secrets::try_has(Provider::OpenAi),
     ) {
-        (Ok(g), Ok(c), Ok(o)) => (g, c, o, None),
-        (e_g, e_c, e_o) => {
+        (Ok(g), Ok(o)) => (g, o, None),
+        (e_g, e_o) => {
             // Pelo menos um falhou a ler o cofre. Loga para diagnostico; a UI mostra banner.
-            let any_err = e_g.err().or_else(|| e_c.err()).or_else(|| e_o.err());
+            let any_err = e_g.err().or_else(|| e_o.err());
             log::warn!("settings: credential vault read failed: {:?}", any_err);
-            (false, false, false, Some("credential vault unreadable".to_string()))
+            (false, false, Some("credential vault unreadable".to_string()))
         }
     };
     SettingsDto {
         gemini_model: cfg.gemini_model.clone(),
-        claude_model: cfg.claude_model.clone(),
         openai_model: cfg.openai_model.clone(),
         openai_base_url: cfg.openai_base_url.clone(),
+        gemini_model_auto: cfg.gemini_model_auto,
         hotkey: cfg.hotkey.clone(),
         hotkey_polish: cfg.hotkey_polish.clone(),
         hotkey_turbo: cfg.hotkey_turbo.clone(),
         autostart: cfg.autostart,
         has_gemini_key: has_g,
-        has_claude_key: has_c,
         has_openai_key: has_o,
         key_store_error,
         profile_text: resolved.profile.text,
@@ -135,7 +132,6 @@ fn key_state(p: Provider) -> &'static str {
 fn parse_provider(s: &str) -> Result<Provider, String> {
     match s {
         "gemini" => Ok(Provider::Gemini),
-        "claude" => Ok(Provider::Claude),
         "openai" => Ok(Provider::OpenAi),
         _ => Err(format!("invalid provider: {s}")),
     }
@@ -157,16 +153,44 @@ pub fn get_settings(app: AppHandle) -> SettingsDto {
     build_dto(&app, &cfg)
 }
 
+/// Fixa um modelo a mao. Escolher o do Gemini desliga o automatico: a partir daqui a escolha
+/// e dele e a descoberta deixa de lhe mexer (ver `config::Config::gemini_model_auto`).
 #[tauri::command]
 pub fn set_model(app: AppHandle, provider: String, model: String) -> Result<(), String> {
     let mut cfg = config::load(&app);
     match provider.as_str() {
-        "gemini" => cfg.gemini_model = model,
-        "claude" => cfg.claude_model = model,
+        "gemini" => {
+            cfg.gemini_model = model;
+            cfg.gemini_model_auto = false;
+        }
         "openai" => cfg.openai_model = model,
         _ => return Err(format!("invalid provider: {provider}")),
     }
     config::save(&app, &cfg).map_err(|e| e.to_string())
+}
+
+/// Devolve a escolha do modelo do Gemini ao automatico. O modelo passa a acompanhar o melhor
+/// gratuito que o provider anunciar, e muda sozinho quando a Google lanca uma geracao nova.
+#[tauri::command]
+pub fn set_gemini_model_auto(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<SettingsDto, String> {
+    let mut cfg = config::load(&app);
+    cfg.gemini_model_auto = enabled;
+    // Aplica JA a partir da listagem em cache, para o dropdown mudar no mesmo instante em vez de
+    // so no proximo probe. Sem listagem, fica o que estava e o proximo probe resolve.
+    if enabled {
+        let catalog = crate::models_cache::catalog(&state, Provider::Gemini, &cfg.openai_base_url);
+        if catalog.live {
+            if let Some(best) = ember_core::models::pick_default(Provider::Gemini, &catalog.models) {
+                cfg.gemini_model = best;
+            }
+        }
+    }
+    config::save(&app, &cfg).map_err(|e| e.to_string())?;
+    Ok(get_settings(app))
 }
 
 #[tauri::command]
@@ -407,7 +431,6 @@ pub async fn validate_key(
     let cfg = config::load(&app);
     let pctx = providers::ProviderCtx {
         gemini_model: &cfg.gemini_model,
-        claude_model: &cfg.claude_model,
         openai_model: &cfg.openai_model,
         openai_base_url: &cfg.openai_base_url,
     };
@@ -446,7 +469,7 @@ pub fn get_provider_health(
     let cache = state.key_checks.lock();
     let cache_ref = cache.as_ref().ok();
     let mut entries = Vec::new();
-    for p in [Provider::Gemini, Provider::OpenAi, Provider::Claude] {
+    for p in [Provider::Gemini, Provider::OpenAi] {
         let configured = secrets::try_has(p)
             .map_err(|_| "Couldn't read saved keys (credential vault may be locked).".to_string())?;
         entries.push(ember_core::health::ProviderStatus {
@@ -599,7 +622,7 @@ pub fn open_key_console(provider: String) -> Result<(), String> {
         "groq" => "https://console.groq.com/keys",
         "openai" => "https://platform.openai.com/api-keys",
         "openrouter" => "https://openrouter.ai/keys",
-        "claude" => "https://console.anthropic.com/settings/keys",
+        "anthropic" => "https://console.anthropic.com/settings/keys",
         _ => return Err(format!("unknown key console: {provider}")),
     };
     open_in_browser(url)
@@ -649,6 +672,13 @@ pub fn get_diagnostics(app: AppHandle) -> String {
     } else {
         "n/a"
     };
+    // Chave orfa do Claude: a app deixou de ter esse provider, mas a credencial pode continuar
+    // no cofre. Nao a apagamos sozinhos (e do utilizador), mas esconder que existe seria pior.
+    let legacy = if secrets::has_legacy_claude_key() {
+        "\nLeftover: an old Claude key is still in your credential vault (unused; remove it there if you want)"
+    } else {
+        ""
+    };
     let slot = |s: &str| {
         if s.trim().is_empty() {
             "(off)".to_string()
@@ -657,16 +687,16 @@ pub fn get_diagnostics(app: AppHandle) -> String {
         }
     };
     format!(
-        "Ember {version}\nOS: {} ({})\nGemini key: {}\nOpenAI key: {}\nClaude key: {}\nMode: {}  Thinking: {} ({})  Debug: {}\nHotkeys: main={} polish={} turbo={}\nProcess: {elevation}\nSelect-all fallback: {}\nLog: {log_path}",
+        "Ember {version}\nOS: {} ({})\nGemini key: {}\nFallback key: {}\nMode: {}  Thinking: {} ({})  Debug: {}\nFallback endpoint: {}\nHotkeys: main={} polish={} turbo={}\nProcess: {elevation}\nSelect-all fallback: {}{legacy}\nLog: {log_path}",
         std::env::consts::OS,
         std::env::consts::ARCH,
         key_state(Provider::Gemini),
         key_state(Provider::OpenAi),
-        key_state(Provider::Claude),
         mode_str(cfg.mode),
         cfg.thinking_enabled,
         cfg.thinking_level,
         cfg.debug_mode,
+        cfg.openai_base_url,
         slot(&cfg.hotkey),
         slot(&cfg.hotkey_polish),
         slot(&cfg.hotkey_turbo),
@@ -708,7 +738,7 @@ pub(crate) fn friendly_error(e: &ember_core::CoreError) -> String {
     }
 }
 
-/// Refina `input` com a chain Gemini->OpenAi->Claude (filtrada pelos configurados). Devolve
+/// Refina `input` com a chain Gemini->fallback (filtrada pelos configurados). Devolve
 /// (texto CRU do modelo, `Prepared`, provider) ou CoreError: o pos-processamento do motor corre
 /// em `flow.rs`, para um output que degrada cair no ramo de restauro do clipboard (nao colar por
 /// cima da seleccao). `on_attempt` recebe (provider, indice, tentativa) antes de cada chamada;
@@ -727,9 +757,8 @@ pub(crate) async fn refine_text(
     let cfg = config::load(app);
     let mut chain: Vec<(Provider, String)> = Vec::new();
     let mut key_store_failed = false;
-    // Ordem de prioridade: Gemini primario, OpenAI-compatible (OpenRouter) fallback principal,
-    // Claude terceira familia opcional.
-    for provider in [Provider::Gemini, Provider::OpenAi, Provider::Claude] {
+    // Ordem de prioridade: Gemini primario (gratuito), depois o slot de fallback.
+    for provider in [Provider::Gemini, Provider::OpenAi] {
         match secrets::try_get(provider) {
             Ok(Some(k)) => chain.push((provider, k)),
             Ok(None) => {}
@@ -779,7 +808,6 @@ pub(crate) async fn refine_text(
     };
     let pctx = providers::ProviderCtx {
         gemini_model: &cfg.gemini_model,
-        claude_model: &cfg.claude_model,
         openai_model: &cfg.openai_model,
         openai_base_url: &cfg.openai_base_url,
     };
@@ -803,7 +831,6 @@ mod tests {
     #[test]
     fn parse_provider_accepts_known_rejects_unknown() {
         assert_eq!(parse_provider("gemini").unwrap(), Provider::Gemini);
-        assert_eq!(parse_provider("claude").unwrap(), Provider::Claude);
         assert_eq!(parse_provider("openai").unwrap(), Provider::OpenAi);
         assert!(parse_provider("mistral").is_err());
     }

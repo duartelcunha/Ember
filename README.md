@@ -48,8 +48,8 @@ you dial how far it goes.
 | 🎚️ **Three modes, one keystroke away** | **Fix** corrects spelling and wording and leaves the shape alone. **Improve** also tidies the structure when the text needs it. **Rebuild** turns it into a full prompt with role, context, requirements, and an output format. Settings shows the same sentence through all three, so you pick by looking. Bind an optional shortcut to Fix or Rebuild and you choose as you press. |
 | 🧬 **Never mangles your text** | Before the model ever sees it, Ember masks your code, URLs, file paths, and placeholders, then verifies they came back **exactly** intact. If anything is lost, the output looks wrong, or the model quietly translated your text instead of refining it, it degrades: your original selection stays untouched instead of getting overwritten with something broken. |
 | ✋ **You get the last word** | Turn on **Confirm before pasting** and Ember shows a tiny prompt by your cursor after refining, applying only when you press Enter (Esc keeps your original). It captures the keys without stealing focus, so Enter never leaks into the app you're in. |
-| 🔄 **The model list keeps itself current** | Ember reads the models each provider actually serves today, from the same call that validates your key, and keeps Gemini on the free-tier family. A model that gets discontinued disappears from the list on its own, and if it was the one you had selected, Ember moves you to one that still exists. No hardcoded list to go stale. |
-| 🆓 **Runs on free tiers** | Primary is Google **Gemini**, whose free tier covers everyday personal use. The fallback is any **OpenAI-compatible** endpoint, defaulting to **Groq**: free, no credit card, and roughly 14,000 requests a day, so the safety net is actually there when you need it. Switch it to OpenAI or OpenRouter in one click, or point it at DeepSeek or a local Ollama. Free tiers do have daily caps; for heavy use, add a cheap paid key (Claude Haiku) as a third family. |
+| 🔄 **You never pick a model** | Ember reads what each provider actually serves today, from the same call that validates your key, and runs Gemini on the best free model it finds. New generation ships, Ember follows it. Model discontinued, Ember moves off it before you notice. There is a **Change** button for the day you want to override, and after that your choice is yours. |
+| 🆓 **Runs on free tiers** | Two slots, no more. Primary is Google **Gemini**, whose free tier covers everyday personal use, and Ember picks the model for you. The fallback is any **OpenAI-compatible** endpoint, defaulting to **Groq**: free, no credit card, roughly 14,000 requests a day. One dropdown switches it to OpenAI, OpenRouter, Anthropic, DeepSeek or a local Ollama. |
 | 🛡️ **Resilient, not fragile** | A pure retry/fallback state machine handles rate-limits, truncation, content-policy, and outages. Fallbacks are pre-validated at startup, never guessed at the moment of failure. It degrades honestly instead of silently. |
 | 🔒 **BYOK, strictly local** | Your API keys live in the Windows Credential Manager, never in plain text, never anywhere but the provider. |
 | 🎭 **It writes like you** | Ember reads the profile you already keep for your coding agent (`CLAUDE.md`, `AGENTS.md`, or `GEMINI.md`) and applies your tone, your rules, and the words you never use to every refine. Point it at any other markdown file, or just write your own in Settings. |
@@ -62,14 +62,19 @@ you dial how far it goes.
 
 1. Grab the latest installer from the [**Releases**](https://github.com/duartelcunha/Ember/releases/latest) page.
 2. Launch Ember. It settles into your system tray.
-3. Open **Settings** and drop in a free API key. [Gemini](https://aistudio.google.com/apikey) and [Groq](https://console.groq.com/keys) are both free, need no credit card, and take a minute to grab. Each provider card has a button that opens the right page for you. *(Zero-key setup is on the [roadmap](#roadmap).)*
-4. Select text anywhere and press `Ctrl+Shift+Space` (rebindable to any combo you like). Or select nothing at all, and Ember refines the whole field you are typing in.
+3. Open **Settings** and drop in a free API key. [Gemini](https://aistudio.google.com/apikey) and [Groq](https://console.groq.com/keys) are both free, need no credit card, and take a minute to grab. Each card has a button that opens the right page for you. You never pick a model. *(Zero-key setup is on the [roadmap](#roadmap).)*
+4. Select text anywhere and press your shortcut. Or select nothing at all, and Ember refines the whole field you are typing in.
 5. That's it, the polished version lands right where your text was.
 
-Press the shortcut again while the orb is up to cancel that refine. In Settings you
-can also bind two optional extra shortcuts that fire **Polish** and **Turbo**
-directly, so you can choose how far to go without opening Settings first. They are
-off until you set them, so Ember never claims a combo you did not ask for.
+**Your shortcut is picked on first run**, not imposed. Ember tries a short list of
+`Ctrl+Shift` combos and keeps the first one your system actually accepts, so a clean
+install never starts with a shortcut that some other app already owns. Change it in
+Settings whenever you like: a combo that is already taken is refused as you press it,
+and Ember names what is using it.
+
+Press the shortcut again while the orb is up to cancel that refine. You can also bind
+two optional extra shortcuts that fire **Fix** and **Rebuild** directly, so you choose
+how far to go as you press. They are off until you set them.
 
 > **Terminals are handled.** In Windows Terminal, PowerShell, and friends, Ember
 > uses `Ctrl+Shift+C/V`, replaces the current input line instead of appending, and
@@ -102,21 +107,27 @@ page where its key is created, so you never have to go hunting for it.
 Ember tries providers in priority order, keeping only the ones you've configured:
 
 ```
-Gemini  →  OpenAI-compatible (Groq)  →  Claude
-primary       default fallback         optional third family
+Gemini  →  OpenAI-compatible (Groq by default)
+primary            one fallback, your pick
 ```
 
-The middle slot is any **OpenAI-compatible** endpoint. Pick the service in Settings
-and Ember loads the models that service serves right now:
+The fallback is any **OpenAI-compatible** endpoint. Pick the service in Settings and
+Ember loads the models that service serves right now:
 
 | Service | Cost | Why you'd pick it |
 |---|---|---|
 | **Groq** (default) | Free, no card | Roughly 14,000 requests a day. A safety net that is actually there when you need it. |
 | **OpenAI** | Paid | Small models cost a fraction of a cent per refine and never wait in a queue. |
 | **OpenRouter** | Free models | One key, many models, but the free ones are capped near 50 requests a day and get busy. |
+| **Anthropic** | Paid | Claude models, cents per refine, never queues. Goes through Anthropic's OpenAI-compatible endpoint. |
 
 Anything else that speaks the same protocol works too, including **DeepSeek** and a
 local **Ollama**: paste its base URL and model id.
+
+Claude used to be a third provider with its own card and its own code path. It is now
+one entry in the list above, because Anthropic speaks the OpenAI protocol and a whole
+extra family was not paying for itself. Nothing is lost: pick **Anthropic** and paste
+the same key.
 
 Transient errors retry with backoff on the same provider, honouring the server's
 `Retry-After` instead of guessing, because retrying inside a cooldown just earns
@@ -150,7 +161,8 @@ npm install          # dependencies
 npm run tauri dev    # run in dev (tray app + hot reload)
 ```
 
-Default shortcut: `Ctrl+Shift+Space`. Everything is tweakable from Settings.
+The shortcut is chosen on first run from the combos your system leaves free.
+Everything is tweakable from Settings.
 
 **Tests** (the whole workspace, matching CI):
 

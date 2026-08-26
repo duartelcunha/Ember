@@ -5,7 +5,7 @@ use ember_core::error::{CoreError, OutcomeClass};
 use ember_core::health::KeyCheck;
 use ember_core::models::ModelInfo;
 use ember_core::model::{LlmRequest, LlmResponse, Provider};
-use ember_core::providers::{self as wire, ClaudeStreamEvent, OpenAiStreamEvent};
+use ember_core::providers::{self as wire, OpenAiStreamEvent};
 use ember_core::retry::{classify, plan, Decision, LoopState, RetryConfig};
 use futures_util::StreamExt;
 use reqwest::Client;
@@ -16,7 +16,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 /// uma lista de strings crescente. Interno do shell (a decisao de resiliencia vive no core).
 pub struct ProviderCtx<'a> {
     pub gemini_model: &'a str,
-    pub claude_model: &'a str,
     pub openai_model: &'a str,
     pub openai_base_url: &'a str,
 }
@@ -62,11 +61,6 @@ async fn call_once(
             .post(wire::gemini_url(&req.model, true))
             .header("x-goog-api-key", key)
             .json(&wire::gemini_request_body(req)),
-        Provider::Claude => client
-            .post(wire::claude_url())
-            .header("x-api-key", key)
-            .header("anthropic-version", wire::ANTHROPIC_VERSION)
-            .json(&wire::claude_request_body(req, true)),
         Provider::OpenAi => client
             .post(wire::openai_chat_url(pctx.openai_base_url))
             .header("Authorization", format!("Bearer {key}"))
@@ -181,22 +175,6 @@ async fn consume_stream(
                             text_acc.push_str(&delta);
                         }
                     }
-                    Provider::Claude => match wire::claude_stream_event(&v) {
-                        ClaudeStreamEvent::TextDelta(delta) => {
-                            on_delta(&delta);
-                            text_acc.push_str(&delta);
-                        }
-                        ClaudeStreamEvent::Stopped { stop_reason } => {
-                            let fake = json!({ "stop_reason": stop_reason });
-                            if wire::claude_is_content_policy(&fake) {
-                                return Err(OutcomeClass::ContentPolicy);
-                            }
-                            if wire::claude_is_truncated(&fake) {
-                                return Err(OutcomeClass::Truncated);
-                            }
-                        }
-                        ClaudeStreamEvent::Other => {}
-                    },
                     Provider::OpenAi => match wire::openai_stream_event(&v) {
                         OpenAiStreamEvent::ContentDelta(delta) => {
                             on_delta(&delta);
@@ -255,7 +233,6 @@ pub async fn refine(
         let (provider, key) = &chain[state.provider_index];
         let model = match provider {
             Provider::Gemini => pctx.gemini_model,
-            Provider::Claude => pctx.claude_model,
             Provider::OpenAi => pctx.openai_model,
         };
         let mut req = base_req.clone();
@@ -335,14 +312,6 @@ pub async fn validate(
                 .send()
                 .await
         }
-        Provider::Claude => {
-            client
-                .get("https://api.anthropic.com/v1/models")
-                .header("x-api-key", key)
-                .header("anthropic-version", wire::ANTHROPIC_VERSION)
-                .send()
-                .await
-        }
         Provider::OpenAi => {
             client
                 .get(wire::openai_models_url(pctx.openai_base_url))
@@ -359,7 +328,6 @@ pub async fn validate(
             let models = match resp.json::<serde_json::Value>().await {
                 Ok(body) => match provider {
                     Provider::Gemini => ember_core::models::parse_gemini_models(&body),
-                    Provider::Claude => ember_core::models::parse_anthropic_models(&body),
                     Provider::OpenAi => ember_core::models::parse_openai_models(&body),
                 },
                 Err(_) => Vec::new(),

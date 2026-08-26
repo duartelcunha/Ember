@@ -2,7 +2,7 @@
 //! As chaves de API NAO vivem aqui: ficam no Windows Credential Manager (ver secrets.rs).
 
 use ember_core::model::RefineMode;
-use ember_core::providers::{DEFAULT_CLAUDE_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_OPENAI_BASE_URL, DEFAULT_OPENAI_MODEL};
+use ember_core::providers::{DEFAULT_GEMINI_MODEL, DEFAULT_OPENAI_BASE_URL, DEFAULT_OPENAI_MODEL};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -12,9 +12,17 @@ use tauri::{AppHandle, Manager};
 #[serde(default)]
 pub struct Config {
     pub gemini_model: String,
-    pub claude_model: String,
     /// Modelo do provider OpenAI-compatible (default fallback). Id livre; a UI aceita Custom.
     pub openai_model: String,
+    /// O modelo do Gemini e escolhido pelo Ember (o melhor gratuito que o provider anunciar) ou
+    /// foi fixado a mao pelo utilizador?
+    ///
+    /// Default `true`: o utilizador nao tem de perceber de ids de modelos para a app funcionar
+    /// bem, e a escolha certa muda quando a Google lanca uma geracao nova. Passa a `false` no
+    /// instante em que ele escolhe um a mao, e a partir dai nao lhe mexemos mais. Sem esta flag
+    /// nao havia forma de distinguir "ainda nao escolheu" de "escolheu este de proposito", e a
+    /// descoberta acabava por lhe apagar a escolha a cada arranque.
+    pub gemini_model_auto: bool,
     /// Base URL do provider OpenAI-compatible. Default: OpenRouter. Serve DeepSeek/Groq/Ollama.
     pub openai_base_url: String,
     /// Atalho principal: dispara o refine no `mode` escolhido nas settings.
@@ -84,8 +92,8 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             gemini_model: DEFAULT_GEMINI_MODEL.to_string(),
-            claude_model: DEFAULT_CLAUDE_MODEL.to_string(),
             openai_model: DEFAULT_OPENAI_MODEL.to_string(),
+            gemini_model_auto: true,
             openai_base_url: DEFAULT_OPENAI_BASE_URL.to_string(),
             hotkey: "CmdOrCtrl+Shift+Space".to_string(),
             hotkey_polish: String::new(),
@@ -179,9 +187,6 @@ impl Config {
         // versao anterior; reescreve-o para o default valido para nao ir parar ao pedido.
         if self.gemini_model.trim().is_empty() || self.gemini_model == "gemini-3.5-flash" {
             self.gemini_model = d.gemini_model;
-        }
-        if self.claude_model.trim().is_empty() {
-            self.claude_model = d.claude_model;
         }
         // Base URL vazia -> default; barra final removida (nao duplicar no caminho do endpoint).
         // Resolvida ANTES do modelo, porque a migracao do modelo depende do endpoint.

@@ -323,11 +323,10 @@ async fn prevalidate_providers(app: AppHandle) {
     let cfg = config::load(&app);
     let pctx = providers::ProviderCtx {
         gemini_model: &cfg.gemini_model,
-        claude_model: &cfg.claude_model,
         openai_model: &cfg.openai_model,
         openai_base_url: &cfg.openai_base_url,
     };
-    for provider in [Provider::Gemini, Provider::OpenAi, Provider::Claude] {
+    for provider in [Provider::Gemini, Provider::OpenAi] {
         // Bug A: ler pelo try_get. Um cofre bloqueado (Err) nao rebenta o arranque: loga e salta.
         // O caminho do refine vai, a seu tempo, reportar KeyStore honestamente quando for preciso.
         match secrets::try_get(provider) {
@@ -403,6 +402,25 @@ pub(crate) fn register_hotkeys(app: &AppHandle, cfg: &config::Config) -> Result<
         }
     }
     Ok(())
+}
+
+/// Escolhe o primeiro atalho da lista de candidatos que o sistema aceite, e devolve-o.
+///
+/// Existe porque um atalho fixo por omissao nao serve: qualquer combinacao pode ja estar tomada
+/// na maquina de alguem, o registo e tudo-ou-nada, e o resultado seria uma instalacao limpa a
+/// arrancar com um aviso por causa de um atalho que a pessoa nem escolheu. Testar a lista custa
+/// microssegundos e resolve isso de vez.
+///
+/// `None` se nenhum candidato estiver livre, caso em que o caller fica com o que tinha e abre as
+/// settings: nesse ponto so o utilizador pode decidir.
+pub(crate) fn first_free_hotkey(app: &AppHandle) -> Option<String> {
+    for combo in ember_core::hotkey::DEFAULT_HOTKEY_CANDIDATES {
+        if probe_hotkey_free(app, combo) {
+            return Some(combo.to_string());
+        }
+        log::info!("first-run hotkey: {combo} ja esta ocupado, tento o seguinte");
+    }
+    None
 }
 
 /// O SO onde estamos, para a politica pura de atalhos (`ember_core::hotkey`).
@@ -578,6 +596,7 @@ pub fn run() {
             commands::validate_key,
             commands::list_models,
             commands::check_hotkey,
+            commands::set_gemini_model_auto,
             commands::set_select_all_fallback,
             commands::get_provider_health,
             commands::set_profile,
@@ -638,7 +657,34 @@ pub fn run() {
             let _ = get_or_create_window(&handle, "overlay");
             // Pre-valida os fallbacks em background (nao bloqueia o arranque).
             tauri::async_runtime::spawn(prevalidate_providers(handle.clone()));
-            let cfg = config::load(&handle);
+            let mut cfg = config::load(&handle);
+            // Escolhe um atalho que esteja mesmo livre nesta maquina em dois casos: no primeiro
+            // arranque (em vez de impor um fixo que pode ja estar ocupado), e quando o que esta
+            // gravado nao pode ser registado com seguranca.
+            //
+            // O segundo caso nao e hipotetico: ficou gravado `"hotkey": "Enter"`, que o SO aceita
+            // sem se queixar e que a partir dai rouba o Enter a toda a gente enquanto o Ember
+            // estiver aberto. Uma config assim tem de ser corrigida no arranque, porque o
+            // utilizador nao consegue ligar o sintoma (o Enter deixou de funcionar) a esta causa.
+            let saved_verdict = ember_core::hotkey::evaluate(&cfg.hotkey, current_os(), &[]);
+            let unsafe_saved = !matches!(saved_verdict, ember_core::hotkey::HotkeyVerdict::Available);
+            if is_install || unsafe_saved {
+                if unsafe_saved {
+                    log::warn!(
+                        "saved hotkey '{}' is not safe to register ({saved_verdict:?}); picking another",
+                        cfg.hotkey
+                    );
+                }
+                if let Some(free) = first_free_hotkey(&handle) {
+                    if free != cfg.hotkey {
+                        log::info!("hotkey chosen automatically: {free}");
+                        cfg.hotkey = free;
+                        if let Err(e) = config::save(&handle, &cfg) {
+                            log::warn!("hotkey: could not persist the chosen one: {e}");
+                        }
+                    }
+                }
+            }
             log::info!(
                 "Ember {} started (install={is_install}, debug={}, hotkey={})",
                 handle.package_info().version,
@@ -679,7 +725,21 @@ pub fn run() {
                         show_settings(&handle);
                     }
                     Err(e2) => {
+                        // Nem o principal registou: outra app tem-no. Em vez de arrancar sem
+                        // atalho nenhum (a app fica inutil e sem dizer porque), procura um livre
+                        // e fica com esse, exatamente como no primeiro arranque.
                         log::warn!("main hotkey '{}' also failed ({e2})", cfg.hotkey);
+                        match first_free_hotkey(&handle) {
+                            Some(free) => {
+                                only_main.hotkey = free.clone();
+                                if register_hotkeys(&handle, &only_main).is_ok() {
+                                    log::warn!("main hotkey moved to '{free}'");
+                                    cfg.hotkey = free;
+                                    let _ = config::save(&handle, &cfg);
+                                }
+                            }
+                            None => log::error!("no free hotkey found; Ember has none registered"),
+                        }
                         show_settings(&handle);
                     }
                 }
