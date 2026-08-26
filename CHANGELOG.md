@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.0](https://github.com/duartelcunha/Ember/compare/v0.6.1...v0.7.0) (2026-08-26)
+
+
+### Features
+
+* **profile:** detect every agent profile, and load one from any file ([26d7dd4](https://github.com/duartelcunha/Ember/commit/26d7dd4406140d50270807cdb1babdf8989d4cbf))
+* refine text you never selected, two providers, no model to pick ([#13](https://github.com/duartelcunha/Ember/issues/13)) ([3682dfd](https://github.com/duartelcunha/Ember/commit/3682dfd7441a37a896d1e6ad1da3333e26d3ba17))
+
 ## [0.6.1](https://github.com/duartelcunha/Ember/compare/v0.6.0...v0.6.1) (2026-07-14)
 
 
