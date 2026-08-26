@@ -5,10 +5,23 @@ use ember_core::model::Provider;
 
 const SERVICE: &str = "Ember";
 
+/// Entrada do cofre do provider Claude, que existiu ate a Anthropic passar a ser mais um servico
+/// do slot OpenAI-compativel. Fica aqui nomeada para se saber que pode existir uma chave orfa no
+/// Credential Manager de quem ja usava a app. NAO a apagamos: e uma credencial do utilizador, e
+/// apagar segredos sem ele pedir e a decisao errada por omissao. O Diagnostics menciona-a.
+const LEGACY_CLAUDE_ENTRY: &str = "claude_api_key";
+
+/// Ficou uma chave do Claude no cofre de quem ja usava a app? So para o Diagnostics: e melhor
+/// dizer-lhe que ela la esta do que deixar uma credencial esquecida sem ninguem saber.
+pub fn has_legacy_claude_key() -> bool {
+    keyring::Entry::new(SERVICE, LEGACY_CLAUDE_ENTRY)
+        .and_then(|e| e.get_password())
+        .is_ok()
+}
+
 fn entry_name(provider: Provider) -> &'static str {
     match provider {
         Provider::Gemini => "gemini_api_key",
-        Provider::Claude => "claude_api_key",
         Provider::OpenAi => "openai_api_key",
     }
 }

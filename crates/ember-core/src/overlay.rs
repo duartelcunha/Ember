@@ -15,6 +15,9 @@ pub enum FlowOutcome {
     ClipboardBusy,
     /// Nao havia seleccao (o poll esgotou sem o clipboard mudar).
     NoSelectionFound,
+    /// O fallback de select-all trouxe texto a mais para ser um campo: o foco nao estava numa
+    /// caixa de texto e o Ctrl+A agarrou o documento todo. Nada foi colado.
+    SelectAllTooBig,
     /// Uma segunda tecla cancelou o ciclo em curso.
     Cancelled,
     /// O texto refinado nao chegou a ser armado no clipboard antes do paste.
@@ -29,6 +32,10 @@ pub enum FlowOutcome {
     /// O utilizador (ou o timeout) recusou aplicar o refinado no gate de preview. A seleccao
     /// original foi restaurada; nada foi colado.
     PreviewRejected,
+    /// O modelo traduziu o texto em vez de o refinar. Caso proprio, e nao mais um
+    /// `RefineUnclean`, porque a accao util e diferente e concreta: quase sempre e o perfil a
+    /// pedir uma lingua. Um "couldn't refine cleanly" generico nao levava ninguem la.
+    RefineTranslated,
 }
 
 /// O que mostrar no overlay e por quanto tempo, dado um `FlowOutcome`.
@@ -71,6 +78,14 @@ pub fn feedback_for(outcome: FlowOutcome) -> OverlayFeedback {
             provider: None,
             hide_after_ms: 1400,
         },
+        // "hint" e nao "error": nada falhou, e o utilizador que precisa de clicar na caixa ou
+        // selecionar o trecho. Fica mais tempo visivel porque a mensagem e mais longa.
+        FlowOutcome::SelectAllTooBig => OverlayFeedback {
+            phase: "hint",
+            message: Some("Click into a text field, or select the text you want".into()),
+            provider: None,
+            hide_after_ms: 2200,
+        },
         FlowOutcome::Cancelled => OverlayFeedback {
             phase: "hint",
             message: Some("Cancelled".into()),
@@ -100,6 +115,12 @@ pub fn feedback_for(outcome: FlowOutcome) -> OverlayFeedback {
             message: Some("Couldn't refine cleanly. Nothing changed.".into()),
             provider: None,
             hide_after_ms: 1600,
+        },
+        FlowOutcome::RefineTranslated => OverlayFeedback {
+            phase: "error",
+            message: Some("The model translated it. Kept your original.".into()),
+            provider: None,
+            hide_after_ms: 2000,
         },
         FlowOutcome::PreviewRejected => OverlayFeedback {
             phase: "hint",

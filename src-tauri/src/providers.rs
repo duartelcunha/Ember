@@ -3,8 +3,9 @@
 
 use ember_core::error::{CoreError, OutcomeClass};
 use ember_core::health::KeyCheck;
+use ember_core::models::ModelInfo;
 use ember_core::model::{LlmRequest, LlmResponse, Provider};
-use ember_core::providers::{self as wire, ClaudeStreamEvent, OpenAiStreamEvent};
+use ember_core::providers::{self as wire, OpenAiStreamEvent};
 use ember_core::retry::{classify, plan, Decision, LoopState, RetryConfig};
 use futures_util::StreamExt;
 use reqwest::Client;
@@ -15,7 +16,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 /// uma lista de strings crescente. Interno do shell (a decisao de resiliencia vive no core).
 pub struct ProviderCtx<'a> {
     pub gemini_model: &'a str,
-    pub claude_model: &'a str,
     pub openai_model: &'a str,
     pub openai_base_url: &'a str,
 }
@@ -61,11 +61,6 @@ async fn call_once(
             .post(wire::gemini_url(&req.model, true))
             .header("x-goog-api-key", key)
             .json(&wire::gemini_request_body(req)),
-        Provider::Claude => client
-            .post(wire::claude_url())
-            .header("x-api-key", key)
-            .header("anthropic-version", wire::ANTHROPIC_VERSION)
-            .json(&wire::claude_request_body(req, true)),
         Provider::OpenAi => client
             .post(wire::openai_chat_url(pctx.openai_base_url))
             .header("Authorization", format!("Bearer {key}"))
@@ -180,22 +175,6 @@ async fn consume_stream(
                             text_acc.push_str(&delta);
                         }
                     }
-                    Provider::Claude => match wire::claude_stream_event(&v) {
-                        ClaudeStreamEvent::TextDelta(delta) => {
-                            on_delta(&delta);
-                            text_acc.push_str(&delta);
-                        }
-                        ClaudeStreamEvent::Stopped { stop_reason } => {
-                            let fake = json!({ "stop_reason": stop_reason });
-                            if wire::claude_is_content_policy(&fake) {
-                                return Err(OutcomeClass::ContentPolicy);
-                            }
-                            if wire::claude_is_truncated(&fake) {
-                                return Err(OutcomeClass::Truncated);
-                            }
-                        }
-                        ClaudeStreamEvent::Other => {}
-                    },
                     Provider::OpenAi => match wire::openai_stream_event(&v) {
                         OpenAiStreamEvent::ContentDelta(delta) => {
                             on_delta(&delta);
@@ -254,7 +233,6 @@ pub async fn refine(
         let (provider, key) = &chain[state.provider_index];
         let model = match provider {
             Provider::Gemini => pctx.gemini_model,
-            Provider::Claude => pctx.claude_model,
             Provider::OpenAi => pctx.openai_model,
         };
         let mut req = base_req.clone();
@@ -303,6 +281,20 @@ pub async fn refine(
     }
 }
 
+/// O que um probe descobriu: se a chave serve, e que modelos o provider diz servir hoje.
+///
+/// Os dois vem do MESMO pedido de proposito. O probe ja batia em `GET /models` para validar a
+/// chave e deitava o corpo fora; agora aproveita-o. Zero pedidos extra, e a listagem chega com a
+/// mesma frescura (e o mesmo TTL) do resultado da validacao.
+#[derive(Debug, Clone)]
+pub struct Probe {
+    pub check: KeyCheck,
+    /// Vazia quando a chave nao serve, quando a rede falhou, ou quando o endpoint nao publica
+    /// `/models` (um Ollama local, por exemplo). Vazia significa "nao sei", nunca "nao ha
+    /// nenhum": `ember_core::models::reconcile` trata as duas coisas de forma diferente.
+    pub models: Vec<ModelInfo>,
+}
+
 /// Probe barato de validacao de chave (pre-validacao). `KeyCheck` vive em `ember_core::health`.
 /// O probe bate num endpoint diferente do `refine` (GET /models vs POST chat) e NUNCA tira o
 /// provider da cadeia, so informa a saude (uma chave pode passar num e falhar no outro).
@@ -311,20 +303,12 @@ pub async fn validate(
     provider: Provider,
     key: &str,
     pctx: &ProviderCtx<'_>,
-) -> KeyCheck {
+) -> Probe {
     let result = match provider {
         Provider::Gemini => {
             client
                 .get("https://generativelanguage.googleapis.com/v1beta/models")
                 .header("x-goog-api-key", key)
-                .send()
-                .await
-        }
-        Provider::Claude => {
-            client
-                .get("https://api.anthropic.com/v1/models")
-                .header("x-api-key", key)
-                .header("anthropic-version", wire::ANTHROPIC_VERSION)
                 .send()
                 .await
         }
@@ -337,10 +321,31 @@ pub async fn validate(
         }
     };
     match result {
-        Ok(resp) if resp.status().is_success() => KeyCheck::Valid,
+        Ok(resp) if resp.status().is_success() => {
+            // O corpo e a listagem de modelos. Se nao vier ou vier num formato que nao
+            // reconhecemos, a chave continua valida e a lista fica vazia ("nao sei"): a
+            // descoberta e um extra, nunca uma razao para declarar uma chave boa como ma.
+            let models = match resp.json::<serde_json::Value>().await {
+                Ok(body) => match provider {
+                    Provider::Gemini => ember_core::models::parse_gemini_models(&body),
+                    Provider::OpenAi => ember_core::models::parse_openai_models(&body),
+                },
+                Err(_) => Vec::new(),
+            };
+            Probe {
+                check: KeyCheck::Valid,
+                models,
+            }
+        }
         // Qualquer resposta HTTP (401/403/etc.) e o provider a recusar a chave.
-        Ok(_) => KeyCheck::Invalid,
+        Ok(_) => Probe {
+            check: KeyCheck::Invalid,
+            models: Vec::new(),
+        },
         // Falha de transporte (sem rede, DNS, timeout): nao diz nada sobre a chave.
-        Err(_) => KeyCheck::NetworkError,
+        Err(_) => Probe {
+            check: KeyCheck::NetworkError,
+            models: Vec::new(),
+        },
     }
 }

@@ -126,7 +126,7 @@ mod tests {
     fn two_fresh_valid_is_healthy_with_prevalidated_fallback() {
         let entries = [
             st(Provider::Gemini, Some((KeyCheck::Valid, 4800))),
-            st(Provider::Claude, Some((KeyCheck::Valid, 4900))),
+            st(Provider::OpenAi, Some((KeyCheck::Valid, 4900))),
         ];
         let r = assess_providers(&entries, 5000, TTL);
         assert_eq!(r.health, SystemHealth::Healthy);
@@ -148,19 +148,19 @@ mod tests {
         // Um Valid + um NetworkError: nao ha 2 provados, portanto Degraded (honesto).
         let entries = [
             st(Provider::Gemini, Some((KeyCheck::Valid, 4900))),
-            st(Provider::Claude, Some((KeyCheck::NetworkError, 4900))),
+            st(Provider::OpenAi, Some((KeyCheck::NetworkError, 4900))),
         ];
         let r = assess_providers(&entries, 5000, TTL);
         assert_eq!(r.health, SystemHealth::Degraded);
         assert_eq!(r.prevalidated_count, 1);
-        assert!(r.needs_revalidation.contains(&Provider::Claude));
+        assert!(r.needs_revalidation.contains(&Provider::OpenAi));
     }
 
     #[test]
     fn fresh_invalid_primary_stays_configured_but_degrades() {
         let entries = [
             st(Provider::Gemini, Some((KeyCheck::Invalid, 4900))),
-            st(Provider::Claude, Some((KeyCheck::Valid, 4900))),
+            st(Provider::OpenAi, Some((KeyCheck::Valid, 4900))),
         ];
         let r = assess_providers(&entries, 5000, TTL);
         assert_eq!(r.configured_count, 2); // continua configurado (nunca removido)
@@ -173,7 +173,7 @@ mod tests {
         // Valid mas fora do TTL: nao conta como provado e pede revalidacao.
         let entries = [
             st(Provider::Gemini, Some((KeyCheck::Valid, 1000))),
-            st(Provider::Claude, Some((KeyCheck::Valid, 4900))),
+            st(Provider::OpenAi, Some((KeyCheck::Valid, 4900))),
         ];
         let r = assess_providers(&entries, 5000, TTL);
         assert_eq!(r.prevalidated_count, 1);
@@ -183,58 +183,48 @@ mod tests {
 
     #[test]
     fn order_chain_keeps_priority_and_filters_unconfigured() {
-        let priority = [Provider::Gemini, Provider::Claude];
+        let priority = [Provider::Gemini, Provider::OpenAi];
         assert_eq!(
-            order_chain(&[Provider::Claude], &priority),
-            vec![Provider::Claude]
+            order_chain(&[Provider::OpenAi], &priority),
+            vec![Provider::OpenAi]
         );
         assert_eq!(
-            order_chain(&[Provider::Claude, Provider::Gemini], &priority),
-            vec![Provider::Gemini, Provider::Claude]
+            order_chain(&[Provider::OpenAi, Provider::Gemini], &priority),
+            vec![Provider::Gemini, Provider::OpenAi]
         );
     }
 
-    #[test]
-    fn three_configured_two_fresh_valid_is_healthy() {
-        // O default fallback agora e Gemini + OpenAi. Com os dois provados Valid (fresco) e o
-        // Claude opcional configurado mas nao provado, continua Healthy: ha >= 2 pre-validados.
-        let entries = [
-            st(Provider::Gemini, Some((KeyCheck::Valid, 4800))),
-            st(Provider::OpenAi, Some((KeyCheck::Valid, 4900))),
-            st(Provider::Claude, None),
-        ];
-        let r = assess_providers(&entries, 5000, TTL);
-        assert_eq!(r.health, SystemHealth::Healthy);
-        assert!(r.has_prevalidated_fallback);
-        assert_eq!(r.prevalidated_count, 2);
-        assert!(r.needs_revalidation.contains(&Provider::Claude));
-    }
 
     #[test]
-    fn three_configured_only_one_valid_is_degraded() {
+    fn a_valid_primary_with_a_rejected_fallback_is_degraded() {
+        // Com dois slots, "degradado" e exatamente isto: o primario serve, o fallback foi
+        // recusado, e nao ha rede de seguranca nenhuma provada. O aviso na UI vive deste caso.
         let entries = [
             st(Provider::Gemini, Some((KeyCheck::Valid, 4900))),
             st(Provider::OpenAi, Some((KeyCheck::Invalid, 4900))),
-            st(Provider::Claude, None),
         ];
         let r = assess_providers(&entries, 5000, TTL);
-        assert_eq!(r.configured_count, 3);
+        assert_eq!(r.configured_count, 2);
         assert_eq!(r.health, SystemHealth::Degraded);
         assert!(!r.has_prevalidated_fallback);
+        assert!(r.needs_revalidation.contains(&Provider::OpenAi));
     }
 
     #[test]
-    fn order_chain_priority_is_gemini_openai_claude() {
-        let priority = [Provider::Gemini, Provider::OpenAi, Provider::Claude];
-        // Todos configurados: respeita a prioridade.
+    fn order_chain_puts_gemini_first_whatever_order_it_is_given() {
+        // A cadeia e sempre Gemini -> fallback, mesmo que os configurados venham por outra
+        // ordem. Sem isto, o fallback pago podia ser tentado antes do primario gratuito.
+        let priority = [Provider::Gemini, Provider::OpenAi];
         assert_eq!(
-            order_chain(&[Provider::Claude, Provider::OpenAi, Provider::Gemini], &priority),
-            vec![Provider::Gemini, Provider::OpenAi, Provider::Claude]
+            order_chain(&[Provider::OpenAi, Provider::Gemini], &priority),
+            vec![Provider::Gemini, Provider::OpenAi]
         );
-        // Sem o do meio: salta para o Claude.
+        // So o fallback configurado: e esse que corre, sozinho.
         assert_eq!(
-            order_chain(&[Provider::Gemini, Provider::Claude], &priority),
-            vec![Provider::Gemini, Provider::Claude]
+            order_chain(&[Provider::OpenAi], &priority),
+            vec![Provider::OpenAi]
         );
+        // Nenhum configurado: cadeia vazia, e o caller reporta NoProvidersConfigured.
+        assert!(order_chain(&[], &priority).is_empty());
     }
 }

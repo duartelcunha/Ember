@@ -6,7 +6,7 @@ export interface OverlayState {
   phase: OverlayPhase;
   /** Mensagem (fase error/hint). */
   message?: string | null;
-  /** Provider usado ("Gemini"/"Claude"), fase success. */
+  /** Provider usado ("Gemini"/"OpenAI-compatible"), fase success. */
   provider?: string | null;
 }
 

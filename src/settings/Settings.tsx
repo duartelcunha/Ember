@@ -37,18 +37,24 @@ import {
   type RefineMode,
   type Theme,
   type ThinkingLevel,
+  type ModelCatalog,
+  type HotkeySlot,
 } from "@/lib/ipc";
 
-// O `gemini-2.5-flash-lite` saiu daqui: a Google fechou-o a contas NOVAS ("no longer available to
-// new users"), portanto qualquer utilizador novo que o escolhesse levava um 404. Continua a
-// funcionar para quem ja o usava, por isso nao o migramos a forca; so deixamos de o oferecer.
+// ESTAS LISTAS SAO SO O ARRANQUE A FRIO. Assim que houver uma chave validada, os modelos vem da
+// listagem que o proprio provider publica (`ipc.listModels`, alimentada pelo mesmo `GET /models`
+// que valida a chave), por isso um modelo descontinuado desaparece daqui sozinho e nao ha nada
+// para vir apagar a mao. E o que se ve enquanto nao ha chave nenhuma, e mais nada.
 //
 // A quota gratuita do Gemini e POR MODELO (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`),
 // por isso trocar de modelo aqui da uma quota diaria nova. E a saida gratuita quando um deles
 // esgota.
 const GEMINI_PRESETS = ["gemini-2.5-flash", "gemini-3.1-flash-lite", "gemini-3.5-flash"];
-const CLAUDE_PRESETS = ["claude-haiku-4-5", "claude-sonnet-4-6"];
 const CUSTOM = "__custom__";
+
+/** O aviso do macOS so faz sentido no macOS; no Windows seria ruido sobre um problema que la
+ *  nao existe (o RegisterHotKey do Windows recusa mesmo os conflitos). */
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.userAgent);
 
 /**
  * Endpoints OpenAI-compatible conhecidos, para o provider de fallback. O utilizador escolhe um
@@ -78,14 +84,23 @@ const OPENAI_ENDPOINTS = [
   },
   {
     id: "openrouter",
-    label: "OpenRouter (free models, low daily cap)",
+    label: "OpenRouter (free models, low cap)",
     baseUrl: "https://openrouter.ai/api/v1",
     models: [
       "meta-llama/llama-3.3-70b-instruct:free",
       "google/gemma-4-31b-it:free",
       "qwen/qwen3-next-80b-a3b-instruct:free",
     ],
-    note: "One key, many models. The free models are capped at roughly 50 requests a day, and they are shared with everyone, so they get busy. Topping up $10 of credit raises the cap about twentyfold and is not spent on free models.",
+    note: "One key, many models. Free models are capped near 50 requests a day and shared with everyone.",
+  },
+  {
+    // A Anthropic entrou aqui quando o Claude deixou de ser um provider proprio. Fala o
+    // protocolo OpenAI na mesma Base URL, por isso nao precisa de codigo nenhum a parte.
+    id: "anthropic",
+    label: "Anthropic (paid, Claude models)",
+    baseUrl: "https://api.anthropic.com/v1",
+    models: ["claude-haiku-4-5", "claude-sonnet-4-6"],
+    note: "Cents per refine and never queues. Goes through Anthropic's OpenAI-compatible endpoint.",
   },
 ] as const;
 
@@ -113,26 +128,54 @@ function Section({
   title,
   titleId,
   hint,
+  detail,
   action,
   children,
 }: {
   title: string;
   /** Id opcional no titulo, para controlos sem Label proprio se associarem via aria-labelledby. */
   titleId?: string;
+  /** UMA linha. O que a pessoa precisa de ler para decidir o toggle. */
   hint?: string;
+  /** O porque, as excecoes, os limites. Fica atras do (i) em vez de ocupar o ecra: quem esta a
+   *  mexer numa definicao quer decidir depressa, e quem quer o detalhe sabe onde o encontrar. */
+  detail?: React.ReactNode;
   /** Controlo opcional no canto superior direito do card (ex.: "Get a key" nos providers). */
   action?: React.ReactNode;
   children: React.ReactNode;
 }) {
+  const [showDetail, setShowDetail] = useState(false);
   return (
     <div className="rounded-lg border border-[color:var(--border-subtle)] bg-surface-1 p-5">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <h3 id={titleId} className="text-sm font-semibold text-fg">{title}</h3>
+          <div className="flex items-center gap-1.5">
+            <h3 id={titleId} className="text-sm font-semibold text-fg">{title}</h3>
+            {detail && (
+              <button
+                type="button"
+                aria-label={`More about ${title}`}
+                aria-expanded={showDetail}
+                onClick={() => setShowDetail((v) => !v)}
+                className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border text-[10px] leading-none transition-colors ${
+                  showDetail
+                    ? "border-[color:var(--border-accent)] text-fg"
+                    : "border-[color:var(--border-subtle)] text-fg-muted hover:text-fg"
+                }`}
+              >
+                i
+              </button>
+            )}
+          </div>
           {hint && <p className="mt-1 text-xs text-fg-muted">{hint}</p>}
         </div>
         {action && <div className="shrink-0">{action}</div>}
       </div>
+      {detail && showDetail && (
+        <div className="mt-3 border-l-2 border-[color:var(--border-subtle)] pl-3 text-xs text-fg-muted">
+          {detail}
+        </div>
+      )}
       <div className="mt-4 flex flex-col gap-4">{children}</div>
     </div>
   );
@@ -157,7 +200,7 @@ const KEY_CONSOLES: Record<KeyConsole, { label: string; icon: React.ReactNode }>
     icon: <Atom size={14} weight="fill" color="#10A37F" aria-hidden="true" />,
   },
   openrouter: { label: "OpenRouter", icon: <BrandIcon brand="openrouter" size={14} /> },
-  claude: { label: "Anthropic Console", icon: <BrandIcon brand="claude" size={14} /> },
+  anthropic: { label: "Anthropic Console", icon: <BrandIcon brand="claude" size={14} /> },
 };
 
 /** Botao que abre, no browser, a consola onde se cria a chave. Poupa ao utilizador ter de
@@ -185,16 +228,27 @@ function GetKeyButton({ console: target }: { console: KeyConsole }) {
 function ModelPicker({
   kind,
   presets,
+  catalog,
   model,
+  auto,
+  onSetAuto,
   onCommit,
 }: {
   kind: ProviderKind;
   presets: string[];
+  /** Listagem viva do provider. `null` = ainda nao houve descoberta. */
+  catalog?: ModelCatalog | null;
   model: string;
+  /** O Ember e que escolhe este modelo? Quando `true`, nao ha dropdown nenhum: mostra-se o que
+   *  ficou escolhido e um botao para quem quiser mesmo mexer. Ninguem devia ter de perceber de
+   *  ids de modelos para a app funcionar bem, e a escolha certa muda a cada geracao nova. */
+  auto?: boolean;
+  onSetAuto?: (enabled: boolean) => void;
   onCommit: (model: string) => Promise<void>;
 }) {
   const [picked, setPicked] = useState(presets.includes(model) ? model : CUSTOM);
   const [custom, setCustom] = useState(model);
+  const live = catalog?.live ? catalog : null;
 
   // O `model` real so chega depois do getSettings assincrono; o estado local foi inicializado
   // com o default. Ressincroniza quando o modelo guardado aterra, senao a UI mostrava sempre
@@ -203,6 +257,26 @@ function ModelPicker({
     setPicked(presets.includes(model) ? model : CUSTOM);
     setCustom(model);
   }, [model, presets]);
+
+  if (auto) {
+    return (
+      <div className="flex flex-col gap-2">
+        <Label>Model</Label>
+        <div className="flex items-center gap-2">
+          <div className="flex h-9 flex-1 items-center rounded-sm border border-[color:var(--border-subtle)] bg-surface-2 px-3 font-mono text-sm text-fg">
+            {model}
+          </div>
+          <Button variant="ghost" onClick={() => onSetAuto?.(false)}>
+            Change
+          </Button>
+        </div>
+        <p className="text-xs text-fg-muted">
+          Chosen for you: the best free model this provider serves. It follows new generations on
+          its own.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-2">
@@ -218,14 +292,30 @@ function ModelPicker({
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          {presets.map((p) => (
-            <SelectItem key={p} value={p}>
-              {p}
-            </SelectItem>
-          ))}
+          {presets.map((p) => {
+            const info = live?.models.find((m) => m.id === p);
+            return (
+              <SelectItem key={p} value={p}>
+                {p}
+                {info?.freeTier && " · free"}
+                {info?.preview && " · preview"}
+              </SelectItem>
+            );
+          })}
           <SelectItem value={CUSTOM}>Custom…</SelectItem>
         </SelectContent>
       </Select>
+      {/* Diz de onde vem a lista. Servir a lista embutida sem o dizer faria uma lista velha
+          passar por atual, que e exatamente o problema que a descoberta veio resolver. */}
+      <p className="text-xs text-fg-muted">
+        {live
+          ? `Live list from the provider${
+              live.fetchedAtMs
+                ? `, read at ${new Date(live.fetchedAtMs).toLocaleTimeString()}`
+                : ""
+            }. Discontinued models disappear on their own.`
+          : "Built-in list. Add and validate a key to load the models this provider serves today."}
+      </p>
       {picked === CUSTOM && (
         <Input
           aria-label={`Custom ${kind} model id`}
@@ -234,6 +324,15 @@ function ModelPicker({
           onBlur={() => custom.trim() && onCommit(custom.trim())}
           placeholder="exact model id"
         />
+      )}
+      {onSetAuto && (
+        <button
+          type="button"
+          onClick={() => onSetAuto(true)}
+          className="self-start text-xs text-fg-muted underline underline-offset-2 hover:text-fg"
+        >
+          Let Ember choose again
+        </button>
       )}
     </div>
   );
@@ -246,6 +345,9 @@ function ProviderConfig({
   hasKey,
   model,
   presets,
+  catalog,
+  auto,
+  onSetAuto,
   baseUrl,
   onCommitBaseUrl,
   onKeyChanged,
@@ -256,6 +358,9 @@ function ProviderConfig({
   hasKey: boolean;
   model: string;
   presets: string[];
+  catalog?: ModelCatalog | null;
+  auto?: boolean;
+  onSetAuto?: (enabled: boolean) => void;
   /** So o provider OpenAI-compatible mostra base URL (OpenRouter/DeepSeek/Groq/Ollama...). */
   baseUrl?: string;
   onCommitBaseUrl?: (url: string) => Promise<void>;
@@ -333,7 +438,10 @@ function ProviderConfig({
       await onCommitBaseUrl(next.baseUrl);
       await ipc.setModel("openai", next.models[0]);
       toast.success(`Fallback set to ${next.label.split(" (")[0]}.`);
-      onKeyChanged?.(); // refaz a saude: a chave guardada e de OUTRO servico
+      // Refaz o estado DEPOIS do setModel. O `onCommitBaseUrl` ja refez, mas nessa altura o
+      // modelo ainda era o do servico anterior, por isso a UI continuava a mostrar um modelo
+      // que ja nao estava em disco: Service = OpenAI com um modelo do Groq por baixo.
+      onKeyChanged?.();
     } catch {
       toast.error("Couldn't switch the service.");
     }
@@ -408,7 +516,15 @@ function ProviderConfig({
           />
         </div>
       )}
-      <ModelPicker kind={kind} presets={presets} model={model} onCommit={commitModel} />
+      <ModelPicker
+        kind={kind}
+        presets={presets}
+        catalog={catalog}
+        model={model}
+        auto={auto}
+        onSetAuto={onSetAuto}
+        onCommit={commitModel}
+      />
     </Section>
   );
 }
@@ -443,20 +559,60 @@ function NumberField({
   );
 }
 
+// Os nomes visiveis sao VERBOS, nao adjetivos. "Adaptive", "Polish" e "Turbo" descreviam o
+// comportamento interno e obrigavam a ler tres frases para perceber a diferenca; "Fix", "Improve"
+// e "Rebuild" dizem o que sai do outro lado. Os ids continuam adaptive/polish/turbo: sao contrato
+// com o Rust e com a config em disco, e renomear isso partia as definicoes de quem ja tem a app.
+//
+// A ordem e por intensidade crescente, que e como as pessoas escolhem: mexe pouco, mexe o
+// necessario, mexe tudo.
 const MODE_COPY: Record<RefineMode, { title: string; hint: string }> = {
-  adaptive: {
-    title: "Adaptive",
-    hint: "Scales to the input: short asks get polished, tasks get structured.",
-  },
   polish: {
-    title: "Polish",
-    hint: "Only fixes grammar and clarity. Keeps your structure and length.",
+    title: "Fix",
+    hint: "Fixes spelling and wording. Same length, same shape.",
+  },
+  adaptive: {
+    title: "Improve",
+    hint: "Fixes it, and tidies the structure when the text needs it.",
   },
   turbo: {
-    title: "Turbo",
-    hint: "Restructures as much as possible: role, context, requirements, format.",
+    title: "Rebuild",
+    hint: "Turns it into a full prompt: role, context, requirements, output format.",
   },
 };
+
+/** O mesmo texto refinado pelos tres modos, para a diferenca se VER em vez de se ler. E um
+ *  exemplo escrito a mao, nao um refine ao vivo, e a UI diz isso: mostrar uma amostra colada
+ *  como se fosse output real seria uma promessa que nao podemos garantir. */
+const MODE_EXAMPLE = {
+  input: "marca reuniao amanha com o joao",
+  outputs: {
+    polish: "Marca reunião amanhã com o João.",
+    adaptive: "Agenda uma reunião com o João para amanhã e confirma a hora com ele.",
+    turbo:
+      [
+        "És o meu assistente de agenda.",
+        "Objetivo: marcar uma reunião com o João.",
+        "Quando: amanhã, hora ainda por confirmar.",
+        "Devolve: o convite pronto a enviar.",
+      ].join("\n"),
+  } as Record<RefineMode, string>,
+};
+
+/** Mostra o exemplo do modo escolhido, antes e depois. */
+function ModeExample({ mode }: { mode: RefineMode }) {
+  return (
+    <div className="rounded-sm border border-[color:var(--border-subtle)] bg-surface-2 p-3">
+      <p className="text-[10px] uppercase tracking-wide text-fg-muted">Example</p>
+      <p className="mt-1.5 font-mono text-xs text-fg-muted line-through decoration-1">
+        {MODE_EXAMPLE.input}
+      </p>
+      <p className="mt-1.5 whitespace-pre-line font-mono text-xs text-fg">
+        {MODE_EXAMPLE.outputs[mode]}
+      </p>
+    </div>
+  );
+}
 
 const THINKING_LEVELS: ThinkingLevel[] = ["minimal", "low", "medium", "high"];
 
@@ -575,6 +731,9 @@ export function Settings() {
   // Saude dos providers, ao nivel do Settings, para refazer quando uma chave muda (Bug C) e
   // passar ja resolvida ao aviso (que deixa de ter useEffect proprio).
   const [health, setHealth] = useState<ProviderHealth | null>(null);
+  // Listagens de modelos por provider, descobertas em runtime. Nao bloqueiam nada: ate
+  // chegarem, os selects mostram a lista embutida e dizem que e essa.
+  const [catalogs, setCatalogs] = useState<Partial<Record<ProviderKind, ModelCatalog>>>({});
   const [healthDismissed, setHealthDismissed] = useState(false);
   // Ate o getSettings assincrono voltar, `s` sao os defaults. Mostrar os tabs ja com defaults
   // pisca um estado falso (ex.: "sem chave" antes da chave real aterrar). Segura o conteudo ate
@@ -584,6 +743,40 @@ export function Settings() {
     ipc.getProviderHealth().then(setHealth).catch(() => {
       /* cofre ilegivel / fora do Tauri: o banner de key-store trata o caso grave */
     });
+  /** Rebusca as listagens. Best-effort: uma falha deixa o select como estava, sem toast, porque
+   *  nao ha nada que o utilizador possa fazer e a lista embutida continua a servir. */
+  const refreshCatalogs = () => {
+    (["gemini", "openai"] as ProviderKind[]).forEach((kind) => {
+      ipc
+        .listModels(kind)
+        .then((c) => setCatalogs((prev) => ({ ...prev, [kind]: c })))
+        .catch(() => {});
+    });
+  };
+  /** Grava um dos tres atalhos. Em caso de recusa mostra a mensagem do SO (que diz se a
+   *  combinacao e invalida ou se ja esta ocupada por outra app), em vez de um erro generico
+   *  que deixava o utilizador sem saber o que tentar a seguir. O Rust ja restaurou o conjunto
+   *  anterior, por isso a app nunca fica sem atalho por causa de uma tentativa falhada. */
+  const commitHotkey = async (which: HotkeySlot, accel: string) => {
+    try {
+      await ipc.setHotkey(which, accel);
+      const res = await ipc.getSettings();
+      setS(res);
+      setHotkey(res.hotkey);
+      toast.success(accel ? `Shortcut set to ${accel}.` : "Shortcut cleared.");
+    } catch (e) {
+      toast.error(`Couldn't apply that shortcut. ${String(e)}`);
+    }
+  };
+  /** Ids a oferecer no select: a listagem viva quando existe, senao a lista embutida. Junta
+   *  sempre o modelo GRAVADO, mesmo que nao esteja na listagem, para uma escolha antiga nao
+   *  aparecer como "Custom..." so porque o provider parou de a anunciar. */
+  const presetsFor = (kind: ProviderKind, builtIn: string[]): string[] => {
+    const c = catalogs[kind];
+    const base = c?.live && c.models.length ? c.models.map((m) => m.id) : builtIn;
+    const saved = kind === "gemini" ? s.geminiModel : s.openaiModel;
+    return saved && !base.includes(saved) ? [saved, ...base] : base;
+  };
 
   useEffect(() => {
     // O fecho (X / Alt+F4) e tratado NATIVAMENTE no Rust (get_or_create_window): esconde a
@@ -609,6 +802,7 @@ export function Settings() {
         setS(res);
         setProfileText(res.profileText);
         setHotkey(res.hotkey);
+        refreshCatalogs();
         setPolls(res.capturePolls);
         setStepMs(res.captureStepMs);
         setSettleMs(res.pasteSettleMs);
@@ -773,37 +967,64 @@ export function Settings() {
                   dismissed={healthDismissed}
                   onDismiss={() => setHealthDismissed(true)}
                 />
-                <p className="text-xs text-fg-muted">
-                  Bring your own keys. <strong className="text-fg">One key is enough to start</strong>{" "}
-                  (Gemini is the fastest to set up and free). Ember tries them top to bottom, so a
-                  second key is a backup for when the first is down or rate-limited. Keys live in
-                  your OS credential vault, never in plain text.
-                </p>
-                <p className="text-xs text-fg-muted">
-                  <strong className="text-fg">Hitting rate limits?</strong> Free tiers have daily
-                  caps, and free models are shared with everyone, so they get busy at peak times.
-                  That is normal, not a broken key. Either wait, or add a paid key (Claude Haiku
-                  costs cents) as a third family that never queues.
-                </p>
+                <Section
+                  title="Your keys"
+                  hint="One key is enough to start. Gemini is free and takes a minute."
+                  detail={
+                    <>
+                      <p>
+                        Ember tries the keys top to bottom, so a second one is the backup for when
+                        the first is down or rate-limited. Keys live in your OS credential vault,
+                        never in plain text.
+                      </p>
+                      <p className="mt-2">
+                        Rate limits are normal, not a broken key: free tiers have daily caps and
+                        free models are shared with everyone. Wait, or point the fallback at a
+                        paid service, which costs cents per refine and never queues.
+                      </p>
+                    </>
+                  }
+                >
+                  <></>
+                </Section>
                 <ProviderConfig
                   kind="gemini"
                   title="Gemini (primary)"
-                  subtitle="Start here: free, fast, and the key takes a minute to create. The free tier has a daily cap that resets each day."
+                  subtitle="Free, fast, and the key takes a minute. Ember picks the model for you."
                   hasKey={s.hasGeminiKey}
                   model={s.geminiModel}
-                  presets={GEMINI_PRESETS}
-                  onKeyChanged={refreshHealth}
+                  presets={presetsFor("gemini", GEMINI_PRESETS)}
+                  catalog={catalogs.gemini}
+                  auto={s.geminiModelAuto}
+                  onSetAuto={(enabled) => {
+                    // Otimista, e o backend devolve o estado ja resolvido (ligar o automatico
+                    // muda tambem o modelo, a partir da listagem em cache).
+                    setS({ ...s, geminiModelAuto: enabled });
+                    ipc
+                      .setGeminiModelAuto(enabled)
+                      .then(setS)
+                      .catch(() => setS((prev) => ({ ...prev, geminiModelAuto: !enabled })));
+                  }}
+                  onKeyChanged={() => {
+                    refreshHealth();
+                    refreshCatalogs();
+                  }}
                 />
                 <ProviderConfig
                   kind="openai"
-                  title="Fallback (Groq, OpenAI, OpenRouter…)"
-                  subtitle="Used whenever Gemini fails or runs out of quota. Pick a service below and Ember sets the right models for it. Any OpenAI-compatible endpoint works, so you can also point it at DeepSeek or a local Ollama."
+                  title="Fallback"
+                  subtitle="Used whenever Gemini fails or runs out of quota. Pick a service below."
                   hasKey={s.hasOpenAiKey}
                   model={s.openaiModel}
                   // Os modelos vivem COLADOS ao servico: um id do OpenRouter no Groq da 404.
-                  presets={[...(endpointFor(s.openaiBaseUrl)?.models ?? [])]}
+                  presets={presetsFor("openai", [...(endpointFor(s.openaiBaseUrl)?.models ?? [])])}
+                  catalog={catalogs.openai}
                   baseUrl={s.openaiBaseUrl}
-                  onKeyChanged={refreshHealth}
+                  onKeyChanged={() => {
+                    ipc.getSettings().then(setS).catch(() => {});
+                    refreshHealth();
+                    refreshCatalogs();
+                  }}
                   onCommitBaseUrl={async (url) => {
                     await ipc.setOpenAiBaseUrl(url);
                     // O backend sanitiza; rebusca para refletir o que ficou gravado e revalida a saude.
@@ -813,21 +1034,23 @@ export function Settings() {
                     toast.success("Base URL updated.");
                   }}
                 />
-                <ProviderConfig
-                  kind="claude"
-                  title="Claude (optional third family)"
-                  subtitle="Paid, but Haiku costs cents and never waits in a free-tier queue. Add this if you refine a lot and keep hitting limits. Tried last, only when the two above fail."
-                  hasKey={s.hasClaudeKey}
-                  model={s.claudeModel}
-                  presets={CLAUDE_PRESETS}
-                  onKeyChanged={refreshHealth}
-                />
               </div>
             </TabsContent>
   
             <TabsContent value="refining">
               <div className="flex flex-col gap-4">
-                <Section title="Refine mode" titleId="refine-mode-heading" hint={MODE_COPY[s.mode].hint}>
+                <Section
+                  title="Refine mode"
+                  titleId="refine-mode-heading"
+                  hint={MODE_COPY[s.mode].hint}
+                  detail={
+                    <p>
+                      This is what your main shortcut does. The example below is written by hand
+                      to show the difference between the three, not a live refine. Bind a
+                      shortcut to Fix or Rebuild under Shortcut to switch as you press.
+                    </p>
+                  }
+                >
                   <Select value={s.mode} onValueChange={(v) => setMode(v as RefineMode)}>
                     <SelectTrigger aria-labelledby="refine-mode-heading">
                       <SelectValue />
@@ -840,6 +1063,7 @@ export function Settings() {
                       ))}
                     </SelectContent>
                   </Select>
+                  <ModeExample mode={s.mode} />
                 </Section>
   
                 <Section
@@ -878,7 +1102,7 @@ export function Settings() {
   
                 <Section
                   title="Terminals"
-                  hint="Use Ctrl+Shift+C/V in terminal apps, since Ctrl+C sends an interrupt there."
+                  hint="Use Ctrl+Shift+C/V in terminals, where Ctrl+C interrupts instead of copying."
                 >
                   <div className="flex items-center justify-between">
                     <Label htmlFor="terminal-handling">Detect terminals automatically</Label>
@@ -896,8 +1120,44 @@ export function Settings() {
                 </Section>
   
                 <Section
+                  title="Nothing selected"
+                  hint="Fire the hotkey with nothing selected and Ember refines the whole field."
+                  detail={
+                    <p>
+                      This is what makes it work in a chat composer, where you typed a prompt but
+                      never highlighted it. If what it grabs looks like a whole page instead of a
+                      field, Ember stops and pastes nothing, and a refine that came in this way
+                      always asks you to confirm before replacing. Windows only for now.
+                    </p>
+                  }
+                >
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="select-all-fallback">Refine the whole field</Label>
+                    <Switch
+                      id="select-all-fallback"
+                      checked={s.selectAllFallback}
+                      onCheckedChange={(v) => {
+                        setS({ ...s, selectAllFallback: v });
+                        ipc
+                          .setSelectAllFallback(v)
+                          .catch(() => setS((prev) => ({ ...prev, selectAllFallback: !v })));
+                      }}
+                    />
+                  </div>
+                </Section>
+
+                <Section
                   title="Project context"
-                  hint="Detects the CLAUDE.md, AGENTS.md or GEMINI.md of the project in your focused window and merges it with your global profile. Off by default: turn it on only where you're OK sending a project's conventions to the LLM. Ember reads only those known files, redacts secret-shaped lines, and falls back to your global profile when no project is detected."
+                  hint="Merges the focused project's CLAUDE.md into the refine."
+                  detail={
+                    <p>
+                      Reads the CLAUDE.md, AGENTS.md or GEMINI.md of the project in your focused
+                      window. Off by default: turn it on only where you are fine sending a
+                      project's conventions to the LLM. Ember reads only those known files,
+                      redacts secret-shaped lines, and falls back to your global profile when no
+                      project is detected.
+                    </p>
+                  }
                 >
                   <div className="flex items-center justify-between">
                     <Label htmlFor="project-context">Use the focused project's CLAUDE.md</Label>
@@ -916,7 +1176,14 @@ export function Settings() {
 
                 <Section
                   title="Preview before paste"
-                  hint="After refining, show a small confirmation by your cursor and paste only when you press Enter. Press Esc (or your hotkey) to keep your original. Windows only."
+                  hint="Confirm by your cursor before anything is pasted."
+                  detail={
+                    <p>
+                      After refining, a small prompt appears by your cursor and Ember pastes only
+                      when you press Enter. Esc, or your shortcut, keeps your original. Windows
+                      only.
+                    </p>
+                  }
                 >
                   <div className="flex items-center justify-between">
                     <Label htmlFor="preview-before-paste">Confirm before pasting</Label>
@@ -995,21 +1262,67 @@ export function Settings() {
               <Section
                 title="Global shortcut"
                 titleId="hotkey-heading"
-                hint="Click Set shortcut, then press the combo you want (e.g. Shift+Space). It's saved the moment you press it."
+                hint="Press the combo you want. One key to four, modifiers optional."
+                detail={
+                  <>
+                    <p>
+                      It is saved the moment you press it. A combo already taken by another app is
+                      refused on the spot and nothing is saved, so you can try another right away.
+                      Press your shortcut again while Ember is working to cancel that refine.
+                    </p>
+                    {IS_MAC && (
+                      <p className="mt-2">
+                        On macOS some system shortcuts win over any app without reporting a
+                        conflict. Ember knows the common ones and refuses them, but if a shortcut
+                        saves and then never fires, that is what happened: pick another.
+                      </p>
+                    )}
+                  </>
+                }
               >
                 <HotkeyCapture
                   value={hotkey}
-                  onCommit={async (accel) => {
-                    try {
-                      await ipc.setHotkey(accel);
-                      setHotkey(accel);
-                      toast.success(`Shortcut set to ${accel}.`);
-                    } catch {
-                      toast.error("Couldn't apply that shortcut (in use or invalid).");
-                    }
-                  }}
+                  slot="main"
+                  ariaLabel="Main shortcut"
+                  onCommit={(accel) => commitHotkey("main", accel)}
                 />
               </Section>
+              <div className="mt-4">
+                <Section
+                  title="Shortcuts per mode"
+                  hint="Optional. Fire one mode directly, without opening settings first."
+                  detail={
+                    <p>
+                      Off until you set them. The main shortcut above keeps using the mode picked
+                      in Refining; these two ignore it and always run their own. Leave one empty
+                      and Ember does not claim that combo at all.
+                    </p>
+                  }
+                >
+                  <div className="flex flex-col gap-4">
+                    <div className="flex flex-col gap-2">
+                      <Label>Fix</Label>
+                      <HotkeyCapture
+                        value={s.hotkeyPolish}
+                        slot="polish"
+                        clearable
+                        ariaLabel="Fix shortcut"
+                        onCommit={(accel) => commitHotkey("polish", accel)}
+                      />
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <Label>Rebuild</Label>
+                      <HotkeyCapture
+                        value={s.hotkeyTurbo}
+                        slot="turbo"
+                        clearable
+                        ariaLabel="Rebuild shortcut"
+                        onCommit={(accel) => commitHotkey("turbo", accel)}
+                      />
+                    </div>
+                  </div>
+                </Section>
+              </div>
               <div className="mt-4">
                 <Section title="Startup" hint="Launch Ember automatically with Windows.">
                   <div className="flex items-center justify-between">
@@ -1031,21 +1344,32 @@ export function Settings() {
               <Section
                 title="Personalization profile"
                 titleId="profile-heading"
-                hint={`Current source: ${sourceLabel[s.profileSource]}.`}
+                hint={`How Ember writes like you. Current source: ${sourceLabel[s.profileSource]}.`}
+                detail={
+                  <p>
+                    Your tone, your rules, the words you never use. It is added to every refine.
+                    Ember picks up the global profile you already keep for your coding agent
+                    (<code className="font-mono">CLAUDE.md</code>,{" "}
+                    <code className="font-mono">AGENTS.md</code>, or{" "}
+                    <code className="font-mono">GEMINI.md</code>), or you can load any markdown
+                    file and edit it here.
+                  </p>
+                }
               >
-                <p className="text-xs text-fg-muted">
-                  This is how Ember learns to write like <em>you</em>: your tone, your rules, the
-                  words you never use. It is added to every refine. Ember picks up the global
-                  profile you already keep for your coding agent (
-                  <code className="font-mono">CLAUDE.md</code>,{" "}
-                  <code className="font-mono">AGENTS.md</code>, or{" "}
-                  <code className="font-mono">GEMINI.md</code>), or you can load any markdown file
-                  and edit it here.
-                </p>
-                {s.profilePath && <p className="font-mono text-xs text-fg-muted">{s.profilePath}</p>}
+                {s.profilePath && (
+                  <p className="truncate font-mono text-xs text-fg-muted" title={s.profilePath}>
+                    {s.profilePath}
+                  </p>
+                )}
+                {/* Altura FIXA em vez de `rows`: o perfil de qualquer pessoa que use um CLAUDE.md
+                    a serio tem centenas de linhas, e com uma textarea a crescer com o conteudo os
+                    botoes de Save e Re-detect eram empurrados para fora do ecra. Aqui a caixa
+                    ocupa o espaco que sobra e faz o seu proprio scroll; os botoes ficam sempre a
+                    vista. O `min-h-0` e o que permite ao flex encolher a caixa (sem ele, o
+                    conteudo impoe a altura minima e o overflow volta a sair para a pagina). */}
                 <Textarea
                   aria-labelledby="profile-heading"
-                  rows={12}
+                  className="h-[clamp(140px,38vh,420px)] min-h-0 resize-none overflow-y-auto"
                   value={profileText}
                   onChange={(e) => setProfileText(e.target.value)}
                   placeholder="Your style and tone preferences (language, rules like 'no em-dashes'…)."
@@ -1128,10 +1452,9 @@ export function Settings() {
               <div className="flex flex-col gap-4">
                 <Section title="Ember">
                   <p className="text-sm text-fg-muted">
-                    In-the-moment text refiner for any app, prompts, emails, messages, docs and
-                    more. Gemini primary, with an OpenAI-compatible fallback (OpenRouter by
-                    default) and Claude as an optional third family, guided by your profile. Built
-                    with Tauri.
+                    In-the-moment text refiner for any app: prompts, emails, messages, docs.
+                    Gemini as the free primary, with one OpenAI-compatible fallback of your
+                    choosing, guided by your profile. Built with Tauri.
                   </p>
                   <button
                     onClick={() =>

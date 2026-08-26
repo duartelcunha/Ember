@@ -49,6 +49,9 @@ pub enum DegradeReason {
     EmptyAfterCleanup,
     /// O modelo perdeu ou mutou um span mascarado (codigo/URL): nao da para restaurar intacto.
     PreservationViolation,
+    /// O output veio noutra lingua que o input: o modelo traduziu apesar de o prompt o proibir.
+    /// Colar isto substituia o texto do utilizador por uma traducao que ele nao pediu.
+    LanguageFlipped,
 }
 
 /// Resultado do pos-processamento: colar o texto final, ou degradar sem colar.
@@ -93,6 +96,13 @@ pub fn postprocess(raw_model_text: &str, prepared: &Prepared) -> EngineResult {
     let finalized = finalize::finalize(&restored, prepared.eol);
     if guard::is_effectively_empty(&finalized) {
         return EngineResult::Degrade(DegradeReason::EmptyAfterCleanup);
+    }
+    // Guarda de lingua sobre o texto MASCARADO dos dois lados: os spans de codigo e URLs estao
+    // reduzidos a tokens, por isso um bloco de codigo em ingles dentro de um texto portugues nao
+    // desequilibra a contagem. (O `stripped` e o output ainda mascarado; o `finalized` ja tem o
+    // codigo de volta e daria um veredicto pior.)
+    if guard::language_flipped(&prepared.masked_input, &stripped) {
+        return EngineResult::Degrade(DegradeReason::LanguageFlipped);
     }
     EngineResult::Paste(finalized)
 }

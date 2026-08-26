@@ -17,13 +17,14 @@ use crate::{config, profile, providers, secrets};
 #[serde(rename_all = "camelCase")]
 pub struct SettingsDto {
     gemini_model: String,
-    claude_model: String,
     openai_model: String,
     openai_base_url: String,
+    gemini_model_auto: bool,
     hotkey: String,
+    hotkey_polish: String,
+    hotkey_turbo: String,
     autostart: bool,
     has_gemini_key: bool,
-    has_claude_key: bool,
     has_openai_key: bool,
     /// `Some(msg)` quando nao foi possivel ler o cofre de credenciais (bloqueado/partido). A UI
     /// mostra um banner persistente. Honra a regra de nao degradar em silencio: em vez de mentir
@@ -74,28 +75,28 @@ fn build_dto(app: &AppHandle, cfg: &config::Config) -> SettingsDto {
     let resolved = profile::resolve(app, cfg.profile_override.as_deref(), cfg.ignore_claude_md);
     // Le as 3 chaves honestamente: uma falha do cofre (Err) nao se colapsa em "sem chave".
     // Se o cofre estiver bloqueado, todas ficam false e key_store_error informa a UI.
-    let (has_g, has_c, has_o, key_store_error) = match (
+    let (has_g, has_o, key_store_error) = match (
         secrets::try_has(Provider::Gemini),
-        secrets::try_has(Provider::Claude),
         secrets::try_has(Provider::OpenAi),
     ) {
-        (Ok(g), Ok(c), Ok(o)) => (g, c, o, None),
-        (e_g, e_c, e_o) => {
+        (Ok(g), Ok(o)) => (g, o, None),
+        (e_g, e_o) => {
             // Pelo menos um falhou a ler o cofre. Loga para diagnostico; a UI mostra banner.
-            let any_err = e_g.err().or_else(|| e_c.err()).or_else(|| e_o.err());
+            let any_err = e_g.err().or_else(|| e_o.err());
             log::warn!("settings: credential vault read failed: {:?}", any_err);
-            (false, false, false, Some("credential vault unreadable".to_string()))
+            (false, false, Some("credential vault unreadable".to_string()))
         }
     };
     SettingsDto {
         gemini_model: cfg.gemini_model.clone(),
-        claude_model: cfg.claude_model.clone(),
         openai_model: cfg.openai_model.clone(),
         openai_base_url: cfg.openai_base_url.clone(),
+        gemini_model_auto: cfg.gemini_model_auto,
         hotkey: cfg.hotkey.clone(),
+        hotkey_polish: cfg.hotkey_polish.clone(),
+        hotkey_turbo: cfg.hotkey_turbo.clone(),
         autostart: cfg.autostart,
         has_gemini_key: has_g,
-        has_claude_key: has_c,
         has_openai_key: has_o,
         key_store_error,
         profile_text: resolved.profile.text,
@@ -131,7 +132,6 @@ fn key_state(p: Provider) -> &'static str {
 fn parse_provider(s: &str) -> Result<Provider, String> {
     match s {
         "gemini" => Ok(Provider::Gemini),
-        "claude" => Ok(Provider::Claude),
         "openai" => Ok(Provider::OpenAi),
         _ => Err(format!("invalid provider: {s}")),
     }
@@ -153,20 +153,52 @@ pub fn get_settings(app: AppHandle) -> SettingsDto {
     build_dto(&app, &cfg)
 }
 
+/// Fixa um modelo a mao. Escolher o do Gemini desliga o automatico: a partir daqui a escolha
+/// e dele e a descoberta deixa de lhe mexer (ver `config::Config::gemini_model_auto`).
 #[tauri::command]
 pub fn set_model(app: AppHandle, provider: String, model: String) -> Result<(), String> {
     let mut cfg = config::load(&app);
     match provider.as_str() {
-        "gemini" => cfg.gemini_model = model,
-        "claude" => cfg.claude_model = model,
+        "gemini" => {
+            cfg.gemini_model = model;
+            cfg.gemini_model_auto = false;
+        }
         "openai" => cfg.openai_model = model,
         _ => return Err(format!("invalid provider: {provider}")),
     }
     config::save(&app, &cfg).map_err(|e| e.to_string())
 }
 
+/// Devolve a escolha do modelo do Gemini ao automatico. O modelo passa a acompanhar o melhor
+/// gratuito que o provider anunciar, e muda sozinho quando a Google lanca uma geracao nova.
 #[tauri::command]
-pub fn set_openai_base_url(app: AppHandle, base_url: String) -> Result<(), String> {
+pub fn set_gemini_model_auto(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<SettingsDto, String> {
+    let mut cfg = config::load(&app);
+    cfg.gemini_model_auto = enabled;
+    // Aplica JA a partir da listagem em cache, para o dropdown mudar no mesmo instante em vez de
+    // so no proximo probe. Sem listagem, fica o que estava e o proximo probe resolve.
+    if enabled {
+        let catalog = crate::models_cache::catalog(&state, Provider::Gemini, &cfg.openai_base_url);
+        if catalog.live {
+            if let Some(best) = ember_core::models::pick_default(Provider::Gemini, &catalog.models) {
+                cfg.gemini_model = best;
+            }
+        }
+    }
+    config::save(&app, &cfg).map_err(|e| e.to_string())?;
+    Ok(get_settings(app))
+}
+
+#[tauri::command]
+pub fn set_openai_base_url(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    base_url: String,
+) -> Result<(), String> {
     let mut cfg = config::load(&app);
     cfg.openai_base_url = base_url;
     // Re-sanitiza so este campo (vazio -> default, tira barra final) antes de gravar.
@@ -177,21 +209,97 @@ pub fn set_openai_base_url(app: AppHandle, base_url: String) -> Result<(), Strin
     } else {
         trimmed.to_string()
     };
+    // Endpoint novo, listagem velha: os modelos do servico anterior nao existem neste. Esquece,
+    // e a UI volta a lista embutida (marcada como nao-viva) ate o proximo probe trazer a certa.
+    crate::models_cache::forget(&state, Provider::OpenAi);
     config::save(&app, &cfg).map_err(|e| e.to_string())
 }
 
+/// Os slots de atalho JA OCUPADOS, excluindo `editing`. Sem excluir o slot que esta a ser
+/// editado, regravar a mesma combinacao onde ela ja estava acusava conflito consigo propria.
+fn other_slots(cfg: &config::Config, editing: &str) -> Vec<(String, String)> {
+    [
+        ("main", &cfg.hotkey),
+        ("polish", &cfg.hotkey_polish),
+        ("turbo", &cfg.hotkey_turbo),
+    ]
+    .into_iter()
+    .filter(|(slot, _)| *slot != editing)
+    .map(|(slot, accel)| (slot.to_string(), accel.clone()))
+    .collect()
+}
+
+/// Avalia uma combinacao ANTES de a gravar, para a UI a poder recusar na hora em vez de a
+/// aceitar e o utilizador so descobrir mais tarde que o atalho nunca dispara.
+///
+/// Duas metades, porque nenhuma chega sozinha. A politica pura (`ember_core::hotkey`) apanha o
+/// que o SO nao recusa: os atalhos do sistema no macOS, e a combinacao ja dada a outro modo do
+/// Ember. O teste de registo real apanha o resto: qualquer outra aplicacao que ja tenha a
+/// combinacao, coisa que nenhuma lista escrita a mao pode saber.
 #[tauri::command]
-pub fn set_hotkey(app: AppHandle, hotkey: String) -> Result<(), String> {
+pub fn check_hotkey(
+    app: AppHandle,
+    which: String,
+    hotkey: String,
+) -> Result<ember_core::hotkey::HotkeyVerdict, String> {
+    use ember_core::hotkey::{self, HotkeyVerdict};
+    if !matches!(which.as_str(), "main" | "polish" | "turbo") {
+        return Err(format!("invalid hotkey slot: {which}"));
+    }
+    let cfg = config::load(&app);
+    let os = crate::current_os();
+
+    // Regravar a MESMA combinacao no mesmo slot passa sem tocar em nada: ela ja esta registada
+    // por nos, e o teste de registo iria falhar com "already registered" e mentir ao utilizador.
+    let current = match which.as_str() {
+        "main" => &cfg.hotkey,
+        "polish" => &cfg.hotkey_polish,
+        _ => &cfg.hotkey_turbo,
+    };
+    if hotkey::same_hotkey(&hotkey, current, os) {
+        return Ok(HotkeyVerdict::Available);
+    }
+
+    let others = other_slots(&cfg, &which);
+    let refs: Vec<(&str, &str)> = others
+        .iter()
+        .map(|(s, a)| (s.as_str(), a.as_str()))
+        .collect();
+    match hotkey::evaluate(&hotkey, os, &refs) {
+        HotkeyVerdict::Available => {
+            if crate::probe_hotkey_free(&app, &hotkey) {
+                Ok(HotkeyVerdict::Available)
+            } else {
+                Ok(HotkeyVerdict::ReservedByOs {
+                    owner: "another application".into(),
+                })
+            }
+        }
+        verdict => Ok(verdict),
+    }
+}
+
+/// Grava os tres atalhos de uma vez. `which` = "main" | "polish" | "turbo".
+///
+/// Regista PRIMEIRO, persiste depois. Se o novo atalho for invalido ou estiver ocupado, restaura
+/// o conjunto anterior (o registo faz `unregister_all`, logo sem restauro a app ficava sem atalho
+/// nenhum) e NAO grava o atalho partido em disco, senao persistia partido entre arranques. O erro
+/// que sobe traz a combinacao e a mensagem do SO, para a UI poder dizer QUAL falhou e porque, em
+/// vez de um "nao deu" generico.
+#[tauri::command]
+pub fn set_hotkey(app: AppHandle, which: String, hotkey: String) -> Result<(), String> {
     let mut cfg = config::load(&app);
-    let previous = cfg.hotkey.clone();
-    // Regista PRIMEIRO, persiste depois. Se o novo atalho for invalido ou estiver ocupado,
-    // restaura o anterior (o register faz unregister_all, logo sem restauro ficava sem
-    // nenhum) e NAO grava o atalho partido em disco (senao persistia partido entre arranques).
-    crate::register_hotkey(&app, &hotkey).map_err(|e| {
-        let _ = crate::register_hotkey(&app, &previous);
+    let previous = cfg.clone();
+    match which.as_str() {
+        "main" => cfg.hotkey = hotkey,
+        "polish" => cfg.hotkey_polish = hotkey,
+        "turbo" => cfg.hotkey_turbo = hotkey,
+        _ => return Err(format!("invalid hotkey slot: {which}")),
+    }
+    crate::register_hotkeys(&app, &cfg).map_err(|e| {
+        let _ = crate::register_hotkeys(&app, &previous);
         e
     })?;
-    cfg.hotkey = hotkey;
     config::save(&app, &cfg).map_err(|e| e.to_string())
 }
 
@@ -249,6 +357,14 @@ pub fn set_terminal_handling(app: AppHandle, enabled: bool) -> Result<(), String
 pub fn set_project_context(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut cfg = config::load(&app);
     cfg.project_context = enabled;
+    config::save(&app, &cfg).map_err(|e| e.to_string())
+}
+
+/// Liga/desliga o fallback de select-all (refinar o campo em foco quando nada esta selecionado).
+#[tauri::command]
+pub fn set_select_all_fallback(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut cfg = config::load(&app);
+    cfg.select_all_fallback = enabled;
     config::save(&app, &cfg).map_err(|e| e.to_string())
 }
 
@@ -315,16 +431,31 @@ pub async fn validate_key(
     let cfg = config::load(&app);
     let pctx = providers::ProviderCtx {
         gemini_model: &cfg.gemini_model,
-        claude_model: &cfg.claude_model,
         openai_model: &cfg.openai_model,
         openai_base_url: &cfg.openai_base_url,
     };
-    let check = providers::validate(&state.http, p, &key, &pctx).await;
+    let probe = providers::validate(&state.http, p, &key, &pctx).await;
     // Guarda o resultado no cache de saude, para a pre-validacao/o veredicto refletirem ja.
     if let Ok(mut m) = state.key_checks.lock() {
-        m.insert(p, (check, crate::now_ms()));
+        m.insert(p, (probe.check, crate::now_ms()));
     }
-    Ok(check)
+    // A mesma resposta trouxe a listagem de modelos: guarda-a e reconcilia a escolha gravada.
+    crate::models_cache::absorb(&app, &state, p, &probe.models);
+    Ok(probe.check)
+}
+
+/// Listagem de modelos de um provider, para a UI deixar de ter ids escritos a mao. Serve o que
+/// foi descoberto no ultimo probe; sem descoberta (offline, sem chave, endpoint sem `/models`)
+/// serve a lista embutida com `live: false`, para a UI o poder dizer em vez de fingir.
+#[tauri::command]
+pub fn list_models(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    provider: String,
+) -> Result<crate::models_cache::ModelCatalog, String> {
+    let p = parse_provider(&provider)?;
+    let cfg = config::load(&app);
+    Ok(crate::models_cache::catalog(&state, p, &cfg.openai_base_url))
 }
 
 /// Veredicto de saude dos providers, para as settings mostrarem um aviso honesto quando nao ha
@@ -338,7 +469,7 @@ pub fn get_provider_health(
     let cache = state.key_checks.lock();
     let cache_ref = cache.as_ref().ok();
     let mut entries = Vec::new();
-    for p in [Provider::Gemini, Provider::OpenAi, Provider::Claude] {
+    for p in [Provider::Gemini, Provider::OpenAi] {
         let configured = secrets::try_has(p)
             .map_err(|_| "Couldn't read saved keys (credential vault may be locked).".to_string())?;
         entries.push(ember_core::health::ProviderStatus {
@@ -386,8 +517,16 @@ pub fn reset_profile(app: AppHandle) -> Result<SettingsDto, String> {
 
 #[tauri::command]
 pub fn close_splash(app: AppHandle) {
-    if let Some(splash) = app.get_webview_window("splash") {
-        let _ = splash.close();
+    // As DUAS janelas de animacao de entrada, nao so a de instalacao. O arranque normal usa a
+    // `startup_anim` (ver `lib.rs`: `if is_install { "splash" } else { "startup_anim" }`) e este
+    // comando so fechava a `splash`, por isso em todos os arranques que nao eram o primeiro a
+    // janela ficava viva para sempre: ecra inteiro, transparente, sempre-a-frente, e uma
+    // instancia de WebView2 inteira presa por lancamento. Invisivel no fim da animacao (acaba a
+    // opacidade 0) e a deixar passar os cliques, logo ninguem reparava.
+    for label in ["splash", "startup_anim"] {
+        if let Some(w) = app.get_webview_window(label) {
+            let _ = w.close();
+        }
     }
 }
 
@@ -483,7 +622,7 @@ pub fn open_key_console(provider: String) -> Result<(), String> {
         "groq" => "https://console.groq.com/keys",
         "openai" => "https://platform.openai.com/api-keys",
         "openrouter" => "https://openrouter.ai/keys",
-        "claude" => "https://console.anthropic.com/settings/keys",
+        "anthropic" => "https://console.anthropic.com/settings/keys",
         _ => return Err(format!("unknown key console: {provider}")),
     };
     open_in_browser(url)
@@ -521,17 +660,55 @@ pub fn get_diagnostics(app: AppHandle) -> String {
     let log_path = crate::logging::log_file_path(&app)
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "unknown".into());
+    // Atalhos: quais estao configurados e, no Windows, o aviso da elevacao. As duas causas mais
+    // comuns de "a hotkey nao faz nada" sao um conflito com outra app (que ja falha no registo,
+    // com erro visivel) e a janela em foco ser de um processo elevado (que falha em SILENCIO).
+    let elevation = if cfg!(windows) {
+        if crate::foreground::is_elevated() {
+            "elevated (fires over elevated windows too)"
+        } else {
+            "not elevated (the hotkey will NOT fire while an elevated window has focus)"
+        }
+    } else {
+        "n/a"
+    };
+    // Chave orfa do Claude: a app deixou de ter esse provider, mas a credencial pode continuar
+    // no cofre. Nao a apagamos sozinhos (e do utilizador), mas esconder que existe seria pior.
+    let legacy = if secrets::has_legacy_claude_key() {
+        "\nLeftover: an old Claude key is still in your credential vault (unused; remove it there if you want)"
+    } else {
+        ""
+    };
+    let slot = |s: &str| {
+        if s.trim().is_empty() {
+            "(off)".to_string()
+        } else {
+            s.to_string()
+        }
+    };
     format!(
-        "Ember {version}\nOS: {} ({})\nGemini key: {}\nOpenAI key: {}\nClaude key: {}\nMode: {}  Thinking: {} ({})  Debug: {}\nLog: {log_path}",
+        "Ember {version}\nOS: {} ({})\nGemini key: {}\nFallback key: {}\nMode: {}  Thinking: {} ({})  Debug: {}\nFallback endpoint: {}\nHotkeys: main={} polish={} turbo={}\nProcess: {elevation}\nSelect-all fallback: {}{legacy}\nLog: {log_path}",
         std::env::consts::OS,
         std::env::consts::ARCH,
         key_state(Provider::Gemini),
         key_state(Provider::OpenAi),
-        key_state(Provider::Claude),
         mode_str(cfg.mode),
         cfg.thinking_enabled,
         cfg.thinking_level,
         cfg.debug_mode,
+        cfg.openai_base_url,
+        slot(&cfg.hotkey),
+        slot(&cfg.hotkey_polish),
+        slot(&cfg.hotkey_turbo),
+        if !cfg.select_all_fallback {
+            "off".to_string()
+        } else if crate::foreground::select_all_is_safe_here() {
+            format!("on (max {} chars)", cfg.select_all_max_chars)
+        } else {
+            // Estado que o utilizador nao consegue explicar sozinho: o toggle esta ligado nas
+            // settings e mesmo assim nao corre. Diz porque, em vez de o deixar a adivinhar.
+            "on in settings, but inactive on this OS (no terminal detection yet)".to_string()
+        },
     )
 }
 
@@ -561,7 +738,7 @@ pub(crate) fn friendly_error(e: &ember_core::CoreError) -> String {
     }
 }
 
-/// Refina `input` com a chain Gemini->OpenAi->Claude (filtrada pelos configurados). Devolve
+/// Refina `input` com a chain Gemini->fallback (filtrada pelos configurados). Devolve
 /// (texto CRU do modelo, `Prepared`, provider) ou CoreError: o pos-processamento do motor corre
 /// em `flow.rs`, para um output que degrada cair no ramo de restauro do clipboard (nao colar por
 /// cima da seleccao). `on_attempt` recebe (provider, indice, tentativa) antes de cada chamada;
@@ -571,15 +748,17 @@ pub(crate) async fn refine_text(
     state: &AppState,
     input: &str,
     foreground_title: Option<&str>,
+    // O modo deste refine vem do atalho que disparou (ver `flow::RunOpts`), nao de `cfg.mode`:
+    // com atalhos por modo, a config so decide o que faz o atalho principal.
+    mode: RefineMode,
     on_attempt: &(dyn Fn(Provider, usize, u32) + Send + Sync),
     on_delta: &(dyn Fn(&str) + Send + Sync),
 ) -> Result<(String, ember_core::Prepared, String), ember_core::CoreError> {
     let cfg = config::load(app);
     let mut chain: Vec<(Provider, String)> = Vec::new();
     let mut key_store_failed = false;
-    // Ordem de prioridade: Gemini primario, OpenAI-compatible (OpenRouter) fallback principal,
-    // Claude terceira familia opcional.
-    for provider in [Provider::Gemini, Provider::OpenAi, Provider::Claude] {
+    // Ordem de prioridade: Gemini primario (gratuito), depois o slot de fallback.
+    for provider in [Provider::Gemini, Provider::OpenAi] {
         match secrets::try_get(provider) {
             Ok(Some(k)) => chain.push((provider, k)),
             Ok(None) => {}
@@ -613,12 +792,12 @@ pub(crate) async fn refine_text(
     }
     // Motor Ember, fase 1: normaliza o input, mascara codigo/URLs e escapa marcadores. O modelo
     // ve o `masked_input`; o `prepared` volta para o `flow.rs` reconstruir o output.
-    let prepared = ember_core::precondition(input, cfg.mode);
+    let prepared = ember_core::precondition(input, mode);
     let req = build_llm_request(
         &prepared.masked_input,
         &resolved.profile,
         &cfg.gemini_model,
-        cfg.mode,
+        mode,
         cfg.thinking_enabled,
         &cfg.thinking_level,
         project_ctx.as_ref().map(|pc| pc.block.as_str()),
@@ -629,7 +808,6 @@ pub(crate) async fn refine_text(
     };
     let pctx = providers::ProviderCtx {
         gemini_model: &cfg.gemini_model,
-        claude_model: &cfg.claude_model,
         openai_model: &cfg.openai_model,
         openai_base_url: &cfg.openai_base_url,
     };
@@ -653,7 +831,6 @@ mod tests {
     #[test]
     fn parse_provider_accepts_known_rejects_unknown() {
         assert_eq!(parse_provider("gemini").unwrap(), Provider::Gemini);
-        assert_eq!(parse_provider("claude").unwrap(), Provider::Claude);
         assert_eq!(parse_provider("openai").unwrap(), Provider::OpenAi);
         assert!(parse_provider("mistral").is_err());
     }

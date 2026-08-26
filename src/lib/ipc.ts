@@ -1,10 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type ProviderKind = "gemini" | "openai" | "claude";
+/** Os dois slots. O "openai" e o slot de FALLBACK e fala o protocolo OpenAI: serve o Groq, o
+ *  OpenAI, o OpenRouter, a Anthropic, o DeepSeek ou um Ollama local, conforme a Base URL. */
+export type ProviderKind = "gemini" | "openai";
 
 /** Consolas de chave que o Rust sabe abrir (ver `open_key_console`). O provider "openai" e
  *  OpenAI-COMPATIBLE: a consola depende do endpoint escolhido, nao do provider. */
-export type KeyConsole = "gemini" | "groq" | "openai" | "openrouter" | "claude";
+export type KeyConsole = "gemini" | "groq" | "openai" | "openrouter" | "anthropic";
 export type ProfileSource = "claude_md" | "user_edited" | "default";
 export type RefineMode = "adaptive" | "polish" | "turbo";
 export type ThinkingLevel = "minimal" | "low" | "medium" | "high";
@@ -22,16 +24,53 @@ export interface ProviderHealth {
   needsRevalidation: ProviderKind[];
 }
 
+/** Qual dos tres atalhos. O "main" usa o modo escolhido nas settings; os outros fixam o seu. */
+export type HotkeySlot = "main" | "polish" | "turbo";
+
+/** Veredicto sobre uma combinacao ANTES de a gravar. Espelha `ember_core::hotkey`. */
+export type HotkeyVerdict =
+  | { kind: "available" }
+  /** Reservada pelo SO, ou ja tomada por outra aplicacao. `owner` diz por quem. */
+  | { kind: "reserved_by_os"; owner: string }
+  /** Ja atribuida a outro atalho do proprio Ember. */
+  | { kind: "used_by_ember"; slot: HotkeySlot }
+  /** So modificadores, sem tecla principal. */
+  | { kind: "incomplete" }
+  /** Uma tecla sozinha que e precisa para escrever. Um atalho global rouba-a ao sistema todo. */
+  | { kind: "needs_modifier"; key: string };
+
+/** Um modelo que o provider disse servir, ja normalizado pelo Rust (ember_core::models). */
+export interface ModelInfo {
+  id: string;
+  displayName: string;
+  generation: number;
+  freeTier: boolean;
+  preview: boolean;
+}
+
+/** A listagem de modelos de um provider, ja ordenada do melhor default para o pior candidato. */
+export interface ModelCatalog {
+  models: ModelInfo[];
+  /** Epoch ms da descoberta, ou `null` se nunca houve uma com sucesso. */
+  fetchedAtMs: number | null;
+  /** `false` = estamos a servir a lista embutida no binario porque ainda nao houve descoberta
+   *  (sem chave, offline, endpoint sem `/models`). A UI diz isso em vez de fingir frescura. */
+  live: boolean;
+}
+
 /** Estado das definicoes exposto pelo nucleo Rust (sem chaves em claro). */
 export interface EmberSettings {
   geminiModel: string;
-  claudeModel: string;
   openaiModel: string;
+  /** O modelo do Gemini e escolhido pelo Ember (o melhor gratuito) ou fixado a mao? */
+  geminiModelAuto: boolean;
   openaiBaseUrl: string;
   hotkey: string;
+  /** Atalhos que fixam um modo. String vazia = nao registado. */
+  hotkeyPolish: string;
+  hotkeyTurbo: string;
   autostart: boolean;
   hasGeminiKey: boolean;
-  hasClaudeKey: boolean;
   hasOpenAiKey: boolean;
   /** `null` em condições normais; mensagem quando o cofre de credenciais está ilegível. */
   keyStoreError: string | null;
@@ -49,19 +88,25 @@ export interface EmberSettings {
   projectContext: boolean;
   previewBeforePaste: boolean;
   theme: Theme;
+  /** Sem seleccao, seleciona o campo em foco e refina-o todo. */
+  selectAllFallback: boolean;
+  selectAllMaxChars: number;
 }
 
 export const DEFAULT_SETTINGS: EmberSettings = {
   geminiModel: "gemini-2.5-flash",
-  claudeModel: "claude-haiku-4-5",
+  geminiModelAuto: true,
   // Espelham os defaults do Rust (ember_core::providers). O fallback e o Groq: free tier com
   // ~14 000 pedidos/dia, contra os ~50/dia dos modelos gratuitos do OpenRouter.
   openaiModel: "llama-3.3-70b-versatile",
   openaiBaseUrl: "https://api.groq.com/openai/v1",
-  hotkey: "CmdOrCtrl+Shift+Space",
+  // Placeholder ate o getSettings chegar. O atalho real e escolhido pelo Rust no primeiro
+  // arranque, testando candidatos ate encontrar um que o sistema aceite.
+  hotkey: "CmdOrCtrl+Shift+E",
+  hotkeyPolish: "",
+  hotkeyTurbo: "",
   autostart: false,
   hasGeminiKey: false,
-  hasClaudeKey: false,
   hasOpenAiKey: false,
   keyStoreError: null,
   profileText: "",
@@ -78,6 +123,8 @@ export const DEFAULT_SETTINGS: EmberSettings = {
   projectContext: false,
   previewBeforePaste: false,
   theme: "cream",
+  selectAllFallback: true,
+  selectAllMaxChars: 8000,
 };
 
 /** Comandos Tauri das settings. Implementados no nucleo Rust. */
@@ -88,11 +135,27 @@ export const ipc = {
   clearApiKey: (provider: ProviderKind) => invoke<void>("clear_api_key", { provider }),
   validateKey: (provider: ProviderKind) => invoke<KeyCheck>("validate_key", { provider }),
   getProviderHealth: () => invoke<ProviderHealth>("get_provider_health"),
+  /** Fixa um modelo a mao. No Gemini isto desliga o automatico: a partir daqui a escolha e do
+   *  utilizador e a descoberta deixa de lhe mexer. */
   setModel: (provider: ProviderKind, model: string) =>
     invoke<void>("set_model", { provider, model }),
+  /** Devolve o modelo do Gemini ao automatico (o melhor gratuito que o provider anunciar). */
+  setGeminiModelAuto: (enabled: boolean) =>
+    invoke<EmberSettings>("set_gemini_model_auto", { enabled }),
   setOpenAiBaseUrl: (baseUrl: string) =>
     invoke<void>("set_openai_base_url", { baseUrl }),
-  setHotkey: (hotkey: string) => invoke<void>("set_hotkey", { hotkey }),
+  setHotkey: (which: HotkeySlot, hotkey: string) =>
+    invoke<void>("set_hotkey", { which, hotkey }),
+  /** Pergunta se a combinacao pode ser gravada, sem a gravar. Junta a lista de atalhos que o
+   *  SO reserva (a unica defesa no macOS, onde o registo passa e o sistema ganha depois) com um
+   *  teste de registo real (a unica defesa contra outra app qualquer). */
+  checkHotkey: (which: HotkeySlot, hotkey: string) =>
+    invoke<HotkeyVerdict>("check_hotkey", { which, hotkey }),
+  setSelectAllFallback: (enabled: boolean) =>
+    invoke<void>("set_select_all_fallback", { enabled }),
+  /** Modelos que o provider diz servir hoje. Ver `ModelCatalog.live` antes de os apresentar
+   *  como frescos: sem descoberta, isto e a lista embutida no binario. */
+  listModels: (provider: ProviderKind) => invoke<ModelCatalog>("list_models", { provider }),
   setAutostart: (enabled: boolean) => invoke<void>("set_autostart", { enabled }),
   setMode: (mode: RefineMode) => invoke<void>("set_mode", { mode }),
   setTheme: (theme: Theme) => invoke<void>("set_theme", { theme }),

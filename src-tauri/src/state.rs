@@ -2,6 +2,7 @@
 
 use ember_core::health::KeyCheck;
 use ember_core::model::Provider;
+use ember_core::models::ModelInfo;
 use reqwest::Client;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
@@ -16,6 +17,11 @@ pub struct AppState {
     /// arranque (pre-validacao dos fallbacks) e quando o utilizador valida/muda uma chave. O
     /// `ember_core::health::assess_providers` le isto para dizer se ha um fallback provado.
     pub key_checks: Mutex<HashMap<Provider, (KeyCheck, u64)>>,
+    /// Listagem de modelos que cada provider publicou, ja ordenada, com o timestamp ms da
+    /// descoberta. Vem do MESMO pedido que preenche o `key_checks` (ver `providers::Probe`),
+    /// por isso nao custa nem um pedido extra. Vazio = ainda nao houve descoberta; a UI serve
+    /// a lista embutida e diz que nao e viva, em vez de fingir frescura.
+    pub model_lists: Mutex<HashMap<Provider, (Vec<ModelInfo>, u64)>>,
     /// `true` quando o utilizador pediu para sair (tray -> Quit). O handler de
     /// `ExitRequested` so impede a saida quando isto e `false` (fechar janelas != sair).
     pub quitting: AtomicBool,
@@ -48,6 +54,7 @@ impl AppState {
         Self {
             http,
             key_checks: Mutex::new(HashMap::new()),
+            model_lists: Mutex::new(HashMap::new()),
             quitting: AtomicBool::new(false),
             orb_visible: AtomicBool::new(true),
             busy: AtomicBool::new(false),

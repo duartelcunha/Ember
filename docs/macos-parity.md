@@ -13,9 +13,9 @@ or `[target.'cfg(target_os = "macos")'.dependencies]`.
   windows, `bundle.targets` now includes `app` + `dmg` (Tauri builds only the host's targets, so the
   Windows `nsis` build is unchanged), and `bundle.macOS.minimumSystemVersion`.
 
-**Remaining (needs a Mac to compile + test):** the native window-title read for project-context on macOS
-(§2), any window-level tweak if the orb doesn't float over fullscreen apps (§5), CI signing/notarization
-(§7), and the runtime Accessibility prompt (below). These were intentionally not written blind: a native
+**Remaining (needs a Mac to compile + test):** the frontmost-app read, which now gates two features
+instead of one (§2 and §4), any window-level tweak if the orb doesn't float over fullscreen apps (§5),
+CI signing/notarization (§7), and the runtime Accessibility prompt (below). These were intentionally not written blind: a native
 objc compile error would break the whole macOS build, which is worse than the graceful degradation the app
 has today (on macOS, project-context detection returns `None` and refining falls back to the global profile,
 exactly as if no project were detected).
@@ -69,9 +69,30 @@ Keep the sentinel-based capture technique unchanged; only the key + modifier dif
 
 ## 4. Terminal handling
 
-Because mac copy is Cmd+C everywhere, the Windows Ctrl+Shift+C/V terminal special-case largely collapses.
-Gate `is_terminal_foreground()` to `#[cfg(windows)]` (already stubbed to `false` elsewhere) and drive the
-mac copy/paste with Cmd+C/V unconditionally. No mac terminal list needed.
+Because mac copy is Cmd+C everywhere, the Windows Ctrl+Shift+C/V terminal special-case largely collapses,
+so `is_terminal_foreground()` stays `#[cfg(windows)]` and mac copy/paste runs Cmd+C/V unconditionally.
+
+**But mac now needs terminal detection for a second reason, and this is a real gap, not a nicety.**
+The select-all fallback (fire the hotkey with nothing selected, and Ember selects the field you are typing
+in and refines it) must never run in a terminal: `Cmd+A` in Terminal.app or iTerm selects the entire
+scrollback, and pasting over that would be destructive. Windows decides this with `is_terminal_foreground`,
+which on macOS always returns `false` — every terminal would look like an ordinary app.
+
+Until the frontmost-app read in §2 exists, `foreground::select_all_is_safe_here()` returns `cfg!(windows)`,
+so **the fallback is off on macOS**: firing the hotkey with nothing selected shows "Select text first",
+exactly as before the feature existed. Nothing regresses, but the feature is missing there, and the
+Diagnostics panel says so in words rather than leaving the user to wonder why a toggle they switched on
+does nothing.
+
+The second safety net is also Windows-only: a select-all capture always goes through the preview gate, and
+`preview_hook` uses a Windows keyboard hook. So enabling the fallback on macOS means shipping **both** the
+frontmost-app read and a mac preview gate, not just the first one.
+
+To close it: implement `foreground_exe()` per §2, extend `TERMINALS` with the mac binaries
+(`Terminal`, `iTerm2`, `alacritty`, `kitty`, `WezTerm`, `Ghostty`, `warp`) or match on bundle ids, and
+change `select_all_is_safe_here()` to `true`. The pure sequencing in `ember_core::selection` already takes
+`select_all_fallback` as a parameter and already refuses to run it when `terminal` is true, so no logic
+changes there, only the platform gate.
 
 ## 5. Window behavior
 
@@ -110,11 +131,17 @@ or add a small "reset all data" button in Settings that clears them.
 
 ## 9. Verification on the Mac
 
-1. `cargo test --workspace` (the pure tests already pass cross-platform).
+1. `cargo test --workspace` (the pure tests already pass cross-platform; `ember-core` also
+   `cargo check --target aarch64-apple-darwin` clean from a Windows host, though the `ember` shell crate
+   cannot be cross-checked without a C toolchain for the target).
 2. `npm run tauri dev`; grant Accessibility when prompted.
 3. Hotkey -> capture -> refine -> paste in a normal editor AND a terminal; confirm Cmd+C/V is used and the
-   original clipboard is restored.
-4. Confirm the transparent overlay orb and the splash/quit animations render and float correctly.
-5. Enable Project context, focus an IDE/terminal in a repo with a `CLAUDE.md`, refine, and confirm it merges
+   original clipboard is restored. Try each of the three shortcuts (main, Polish, Turbo) and confirm the
+   `CmdOrCtrl` accelerators map to Cmd, not Ctrl.
+4. With the select-all fallback still gated off, fire the hotkey with nothing selected and confirm it says
+   "Select text first" rather than selecting anything. Only after §2 lands should this refine the field,
+   and the first place to test it then is a terminal, where it must still refuse.
+5. Confirm the transparent overlay orb and the splash/quit animations render and float correctly.
+6. Enable Project context, focus an IDE/terminal in a repo with a `CLAUDE.md`, refine, and confirm it merges
    (check the Diagnostics panel / logs for the detected source path).
-6. `npm run tauri build`; sign + notarize; install the dmg and repeat 3-5.
+7. `npm run tauri build`; sign + notarize; install the dmg and repeat 3-6.
