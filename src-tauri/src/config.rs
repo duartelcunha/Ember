@@ -142,6 +142,7 @@ const GROQ_MODELS: [&str; 3] = [
     "openai/gpt-oss-120b",
 ];
 const OPENAI_MODELS: [&str; 3] = ["gpt-4o-mini", "gpt-4.1-mini", "gpt-5-nano"];
+const ANTHROPIC_MODELS: [&str; 2] = ["claude-haiku-4-5", "claude-sonnet-4-6"];
 
 /// O modelo a usar, dado o que esta gravado e o endpoint atual.
 ///
@@ -154,11 +155,24 @@ fn migrate_openai_model(model: &str, base_url: &str, default_model: &str) -> Str
     let is_openrouter = base_url.contains("openrouter.ai");
     let is_groq = base_url.contains("api.groq.com");
     let is_openai = base_url.contains("api.openai.com");
+    let is_anthropic = base_url.contains("api.anthropic.com");
 
-    // Default do endpoint atual. Um endpoint desconhecido (DeepSeek, Ollama...) nao tem lista
-    // nossa: fica com o default global, que e o melhor palpite que temos.
+    // Default do endpoint ATUAL, e nao o default global.
+    //
+    // Isto estava errado e via-se na UI: so o OpenRouter tinha default proprio, e todos os
+    // outros caiam no default global, que e um modelo do Groq. Trocar o servico para OpenAI
+    // deixava `llama-3.3-70b-versatile` gravado contra `api.openai.com`, o que da 404 em todos
+    // os refines. Trocar um modelo do endpoint errado por outro do endpoint errado nao corrigia
+    // nada; so parecia que sim.
+    //
+    // Um endpoint que nao conhecemos (DeepSeek, Ollama) continua a ficar com o default global,
+    // porque ai nao temos mesmo nada melhor para oferecer.
     let endpoint_default = if is_openrouter {
         OPENROUTER_MODELS[0]
+    } else if is_openai {
+        OPENAI_MODELS[0]
+    } else if is_anthropic {
+        ANTHROPIC_MODELS[0]
     } else {
         default_model
     };
@@ -170,7 +184,8 @@ fn migrate_openai_model(model: &str, base_url: &str, default_model: &str) -> Str
     // Pertence a um endpoint que NAO e o atual?
     let belongs_elsewhere = (OPENROUTER_MODELS.contains(&model) && !is_openrouter)
         || (GROQ_MODELS.contains(&model) && !is_groq)
-        || (OPENAI_MODELS.contains(&model) && !is_openai);
+        || (OPENAI_MODELS.contains(&model) && !is_openai)
+        || (ANTHROPIC_MODELS.contains(&model) && !is_anthropic);
     if belongs_elsewhere {
         return endpoint_default.to_string();
     }
@@ -346,6 +361,38 @@ mod tests {
         let mut c = Config::default();
         c.select_all_max_chars = usize::MAX;
         assert_eq!(c.sanitize().select_all_max_chars, SELECT_ALL_MAX_CHARS.1);
+    }
+
+    #[test]
+    fn switching_service_gives_you_a_model_that_exists_there() {
+        // Regressao vista na UI: Service = OpenAI, Base URL = api.openai.com, e o modelo ainda
+        // `llama-3.3-70b-versatile`, que e do Groq. Todos os refines dariam 404. A causa era o
+        // default do endpoint cair no default GLOBAL (um modelo do Groq) para tudo o que nao
+        // fosse OpenRouter, portanto a "correcao" trocava um id errado por outro id errado.
+        let d = Config::default();
+
+        let mut openai = Config::default();
+        openai.openai_base_url = "https://api.openai.com/v1".into();
+        openai.openai_model = "llama-3.3-70b-versatile".into();
+        let openai = openai.sanitize();
+        assert_eq!(openai.openai_model, "gpt-4o-mini");
+        assert_ne!(openai.openai_model, d.openai_model);
+
+        let mut anthropic = Config::default();
+        anthropic.openai_base_url = "https://api.anthropic.com/v1".into();
+        anthropic.openai_model = "gpt-4o-mini".into();
+        assert_eq!(anthropic.sanitize().openai_model, "claude-haiku-4-5");
+
+        // E o caminho de volta: um modelo do OpenAI com o Groq configurado leva um do Groq.
+        let mut groq = Config::default();
+        groq.openai_model = "gpt-4o-mini".into();
+        assert_eq!(groq.sanitize().openai_model, d.openai_model);
+
+        // Endpoint desconhecido: nao ha lista nossa, e o modelo escrito a mao fica intacto.
+        let mut ollama = Config::default();
+        ollama.openai_base_url = "http://localhost:11434/v1".into();
+        ollama.openai_model = "qwen2.5:7b".into();
+        assert_eq!(ollama.sanitize().openai_model, "qwen2.5:7b");
     }
 
     #[test]

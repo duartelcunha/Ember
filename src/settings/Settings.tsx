@@ -438,7 +438,10 @@ function ProviderConfig({
       await onCommitBaseUrl(next.baseUrl);
       await ipc.setModel("openai", next.models[0]);
       toast.success(`Fallback set to ${next.label.split(" (")[0]}.`);
-      onKeyChanged?.(); // refaz a saude: a chave guardada e de OUTRO servico
+      // Refaz o estado DEPOIS do setModel. O `onCommitBaseUrl` ja refez, mas nessa altura o
+      // modelo ainda era o do servico anterior, por isso a UI continuava a mostrar um modelo
+      // que ja nao estava em disco: Service = OpenAI com um modelo do Groq por baixo.
+      onKeyChanged?.();
     } catch {
       toast.error("Couldn't switch the service.");
     }
@@ -1018,6 +1021,7 @@ export function Settings() {
                   catalog={catalogs.openai}
                   baseUrl={s.openaiBaseUrl}
                   onKeyChanged={() => {
+                    ipc.getSettings().then(setS).catch(() => {});
                     refreshHealth();
                     refreshCatalogs();
                   }}
