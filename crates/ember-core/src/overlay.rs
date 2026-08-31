@@ -15,6 +15,9 @@ pub enum FlowOutcome {
     ClipboardBusy,
     /// Nao havia seleccao (o poll esgotou sem o clipboard mudar).
     NoSelectionFound,
+    /// A seleccao nao tem nada que se refine (curta de mais e sem estrutura). NAO houve chamada
+    /// ao modelo: e um desfecho de POUPANCA, nao um erro.
+    NothingToRefine,
     /// O fallback de select-all trouxe texto a mais para ser um campo: o foco nao estava numa
     /// caixa de texto e o Ctrl+A agarrou o documento todo. Nada foi colado.
     SelectAllTooBig,
@@ -80,6 +83,13 @@ pub fn feedback_for(outcome: FlowOutcome) -> OverlayFeedback {
         },
         // "hint" e nao "error": nada falhou, e o utilizador que precisa de clicar na caixa ou
         // selecionar o trecho. Fica mais tempo visivel porque a mensagem e mais longa.
+        FlowOutcome::NothingToRefine => OverlayFeedback {
+            phase: "hint",
+            message: Some("Nothing to refine there".into()),
+            provider: None,
+            // Curto: nao ha nada para ler alem do facto de nao ter havido trabalho.
+            hide_after_ms: 1200,
+        },
         FlowOutcome::SelectAllTooBig => OverlayFeedback {
             phase: "hint",
             message: Some("Click into a text field, or select the text you want".into()),
@@ -133,6 +143,15 @@ pub fn feedback_for(outcome: FlowOutcome) -> OverlayFeedback {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn nothing_to_refine_is_a_hint_and_names_no_provider() {
+        // E poupanca, nao erro: hint (neutro), sem provider, e sai do ecra depressa.
+        let f = super::feedback_for(super::FlowOutcome::NothingToRefine);
+        assert_eq!(f.phase, "hint");
+        assert!(f.provider.is_none());
+        assert!(f.hide_after_ms <= 1400);
+    }
+
     use super::*;
 
     #[test]
