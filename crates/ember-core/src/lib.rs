@@ -5,6 +5,7 @@
 //! construcao do prompt, mapping de wire-format) vive aqui e testa-se de forma
 //! deterministica com `cargo test -p ember-core`.
 
+pub mod codex;
 pub mod engine;
 pub mod error;
 pub mod health;
@@ -15,6 +16,7 @@ pub mod modifiers;
 pub mod overlay;
 pub mod profile_path;
 pub mod project;
+pub mod projects;
 pub mod prompt;
 pub mod providers;
 pub mod retry;

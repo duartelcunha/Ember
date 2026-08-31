@@ -23,9 +23,19 @@ pub struct SettingsDto {
     hotkey: String,
     hotkey_polish: String,
     hotkey_turbo: String,
+    hotkey_picker: String,
     autostart: bool,
     has_gemini_key: bool,
     has_openai_key: bool,
+    /// Como o slot de fallback se autentica: `"api_key"` ou `"chat_gpt"`.
+    openai_auth: &'static str,
+    /// Qual provider e tentado primeiro: `"gemini"` ou `"openai"`.
+    primary_provider: Provider,
+    /// Ha uma sessao ChatGPT gravada. Independente do `openai_auth`: quem faz login e depois volta
+    /// a um servico por chave nao perde a sessao, e a UI deve continuar a oferecer o sign out.
+    chatgpt_signed_in: bool,
+    /// A conta ligada, quando o token a diz. `None` nao quer dizer que nao ha sessao.
+    chatgpt_account: Option<String>,
     /// `Some(msg)` quando nao foi possivel ler o cofre de credenciais (bloqueado/partido). A UI
     /// mostra um banner persistente. Honra a regra de nao degradar em silencio: em vez de mentir
     /// "sem chave", diz que nao conseguiu verificar.
@@ -41,9 +51,25 @@ pub struct SettingsDto {
     capture_step_ms: u64,
     paste_settle_ms: u64,
     debug_mode: bool,
+    save_prompts: bool,
     project_context: bool,
     preview_before_paste: bool,
     theme: String,
+    projects: Vec<ember_core::projects::Project>,
+    active_project: Option<String>,
+    /// A paleta e a lista de icones vao daqui para a UI em vez de serem reescritas em TS. Sao a
+    /// mesma verdade nos dois lados, e duplica-las era garantir que um dia divergiam.
+    accents: Vec<AccentDto>,
+    icons: Vec<&'static str>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AccentDto {
+    pub raw: &'static str,
+    pub mid: &'static str,
+    pub glow: &'static str,
+    pub label: &'static str,
 }
 
 fn source_str(s: ProfileSource) -> &'static str {
@@ -87,6 +113,7 @@ fn build_dto(app: &AppHandle, cfg: &config::Config) -> SettingsDto {
             (false, false, Some("credential vault unreadable".to_string()))
         }
     };
+    let session = secrets::get_oauth().unwrap_or(None);
     SettingsDto {
         gemini_model: cfg.gemini_model.clone(),
         openai_model: cfg.openai_model.clone(),
@@ -95,9 +122,19 @@ fn build_dto(app: &AppHandle, cfg: &config::Config) -> SettingsDto {
         hotkey: cfg.hotkey.clone(),
         hotkey_polish: cfg.hotkey_polish.clone(),
         hotkey_turbo: cfg.hotkey_turbo.clone(),
+        hotkey_picker: cfg.hotkey_picker.clone(),
         autostart: cfg.autostart,
         has_gemini_key: has_g,
         has_openai_key: has_o,
+        openai_auth: match cfg.openai_auth {
+            config::OpenAiAuth::ApiKey => "api_key",
+            config::OpenAiAuth::ChatGpt => "chat_gpt",
+        },
+        primary_provider: cfg.primary_provider,
+        // Uma falha do cofre aqui nao pode rebentar as settings inteiras: fica "sem sessao", e o
+        // `key_store_error` acima ja e o canal honesto para o cofre ilegivel.
+        chatgpt_signed_in: session.is_some(),
+        chatgpt_account: session.and_then(|s| s.account_id),
         key_store_error,
         profile_text: resolved.profile.text,
         profile_source: source_str(resolved.profile.source),
@@ -110,9 +147,17 @@ fn build_dto(app: &AppHandle, cfg: &config::Config) -> SettingsDto {
         capture_step_ms: cfg.capture_step_ms,
         paste_settle_ms: cfg.paste_settle_ms,
         debug_mode: cfg.debug_mode,
+        save_prompts: cfg.save_prompts,
         project_context: cfg.project_context,
         preview_before_paste: cfg.preview_before_paste,
         theme: cfg.theme.clone(),
+        projects: cfg.projects.clone(),
+        active_project: cfg.active_project.clone(),
+        accents: ember_core::projects::ACCENTS
+            .iter()
+            .map(|a| AccentDto { raw: a.raw, mid: a.mid, glow: a.glow, label: a.label })
+            .collect(),
+        icons: ember_core::projects::ICONS.to_vec(),
     }
 }
 
@@ -182,7 +227,12 @@ pub fn set_gemini_model_auto(
     // Aplica JA a partir da listagem em cache, para o dropdown mudar no mesmo instante em vez de
     // so no proximo probe. Sem listagem, fica o que estava e o proximo probe resolve.
     if enabled {
-        let catalog = crate::models_cache::catalog(&state, Provider::Gemini, &cfg.openai_base_url);
+        let catalog = crate::models_cache::catalog(
+            &state,
+            Provider::Gemini,
+            &cfg.openai_base_url,
+            cfg.openai_auth,
+        );
         if catalog.live {
             if let Some(best) = ember_core::models::pick_default(Provider::Gemini, &catalog.models) {
                 cfg.gemini_model = best;
@@ -222,6 +272,7 @@ fn other_slots(cfg: &config::Config, editing: &str) -> Vec<(String, String)> {
         ("main", &cfg.hotkey),
         ("polish", &cfg.hotkey_polish),
         ("turbo", &cfg.hotkey_turbo),
+        ("picker", &cfg.hotkey_picker),
     ]
     .into_iter()
     .filter(|(slot, _)| *slot != editing)
@@ -243,17 +294,27 @@ pub fn check_hotkey(
     hotkey: String,
 ) -> Result<ember_core::hotkey::HotkeyVerdict, String> {
     use ember_core::hotkey::{self, HotkeyVerdict};
-    if !matches!(which.as_str(), "main" | "polish" | "turbo") {
+    if !matches!(which.as_str(), "main" | "polish" | "turbo" | "picker") {
         return Err(format!("invalid hotkey slot: {which}"));
     }
     let cfg = config::load(&app);
     let os = crate::current_os();
+
+    // O picker tem uma regra so dele: a tecla principal nao pode ser uma das que ele proprio
+    // consome. Vem ANTES do atalho de saida rapida abaixo, porque um `Shift+Up` ja gravado tem
+    // de continuar a ser recusado quando ele o volta a submeter.
+    if which == "picker" {
+        if let Some(key) = hotkey::picker_key_clash(&hotkey) {
+            return Ok(HotkeyVerdict::ClashesWithPicker { key });
+        }
+    }
 
     // Regravar a MESMA combinacao no mesmo slot passa sem tocar em nada: ela ja esta registada
     // por nos, e o teste de registo iria falhar com "already registered" e mentir ao utilizador.
     let current = match which.as_str() {
         "main" => &cfg.hotkey,
         "polish" => &cfg.hotkey_polish,
+        "picker" => &cfg.hotkey_picker,
         _ => &cfg.hotkey_turbo,
     };
     if hotkey::same_hotkey(&hotkey, current, os) {
@@ -294,6 +355,16 @@ pub fn set_hotkey(app: AppHandle, which: String, hotkey: String) -> Result<(), S
         "main" => cfg.hotkey = hotkey,
         "polish" => cfg.hotkey_polish = hotkey,
         "turbo" => cfg.hotkey_turbo = hotkey,
+        "picker" => {
+            // Mesma regra do `check_hotkey`, aplicada aqui outra vez: este comando e a porta
+            // que grava de verdade, e uma validacao que so vive na UI nao e validacao.
+            if let Some(key) = ember_core::hotkey::picker_key_clash(&hotkey) {
+                return Err(format!(
+                    "the project picker needs {key} to navigate; pick a combination without it"
+                ));
+            }
+            cfg.hotkey_picker = hotkey;
+        }
         _ => return Err(format!("invalid hotkey slot: {which}")),
     }
     crate::register_hotkeys(&app, &cfg).map_err(|e| {
@@ -420,6 +491,17 @@ pub async fn validate_key(
     provider: String,
 ) -> Result<ember_core::health::KeyCheck, String> {
     let p = parse_provider(&provider)?;
+    let cfg_auth = config::load(&app).openai_auth;
+    // Em modo subscricao nao ha chave para validar: o que se prova e que a sessao ainda serve.
+    if p == Provider::OpenAi && cfg_auth == config::OpenAiAuth::ChatGpt {
+        let probe = crate::oauth::probe(state.inner()).await;
+        if let Ok(mut m) = state.key_checks.lock() {
+            m.insert(p, (probe.check, crate::now_ms()));
+        }
+        // O mesmo probe trouxe (talvez) a listagem: absorve-a, como no caminho das chaves.
+        crate::models_cache::absorb(&app, &state, p, &probe.models);
+        return Ok(probe.check);
+    }
     // Bug A: ler pelo try_get, nao pelo get engolidor. Um cofre bloqueado devolve Err -> a UI
     // mostra o erro (toast), em vez de tratar silenciosamente como "chave invalida".
     let key = secrets::try_get(p).map_err(|_| {
@@ -430,8 +512,6 @@ pub async fn validate_key(
     };
     let cfg = config::load(&app);
     let pctx = providers::ProviderCtx {
-        gemini_model: &cfg.gemini_model,
-        openai_model: &cfg.openai_model,
         openai_base_url: &cfg.openai_base_url,
     };
     let probe = providers::validate(&state.http, p, &key, &pctx).await;
@@ -455,7 +535,130 @@ pub fn list_models(
 ) -> Result<crate::models_cache::ModelCatalog, String> {
     let p = parse_provider(&provider)?;
     let cfg = config::load(&app);
-    Ok(crate::models_cache::catalog(&state, p, &cfg.openai_base_url))
+    Ok(crate::models_cache::catalog(
+        &state,
+        p,
+        &cfg.openai_base_url,
+        cfg.openai_auth,
+    ))
+}
+
+// ---------------------------------------------------------------------------------------
+// Sessao ChatGPT (modo subscricao do slot de fallback)
+// ---------------------------------------------------------------------------------------
+
+/// Abre o browser, faz o login com a conta ChatGPT e grava a sessao. Devolve a conta ligada
+/// quando o token a diz, para a UI mostrar QUAL e em vez de um "signed in" anonimo.
+#[tauri::command]
+pub async fn chatgpt_login(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<SettingsDto, String> {
+    crate::oauth::login(state.inner()).await?;
+    // A sessao nova invalida qualquer veredicto anterior sobre este slot.
+    if let Ok(mut m) = state.key_checks.lock() {
+        m.remove(&Provider::OpenAi);
+    }
+    let mut cfg = config::load(&app);
+    // Fazer login E escolher este modo: obrigar a duas accoes separadas so daria um estado em que
+    // ele fez login e continua a ver erros de chave.
+    cfg.openai_auth = config::OpenAiAuth::ChatGpt;
+    if cfg.openai_model.trim().is_empty()
+        || !ember_core::codex::CODEX_MODELS.contains(&cfg.openai_model.as_str())
+    {
+        cfg.openai_model = ember_core::codex::DEFAULT_CODEX_MODEL.to_string();
+    }
+    config::save(&app, &cfg).map_err(|e| e.to_string())?;
+    crate::models_cache::forget(&state, Provider::OpenAi);
+    Ok(build_dto(&app, &cfg))
+}
+
+/// Termina a sessao e apaga os tokens do cofre. Ao contrario da chave orfa do Claude, isto
+/// apaga-se sem hesitar: e exatamente o que o utilizador pediu ao carregar em sign out.
+#[tauri::command]
+pub async fn chatgpt_logout(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<SettingsDto, String> {
+    crate::secrets::clear_oauth()
+        .map_err(|_| "Couldn't clear the session from the credential vault.".to_string())?;
+    // O token em memoria tambem, senao a app continuava a refinar com uma sessao de que o
+    // utilizador acabou de sair, ate ele expirar por si.
+    *state.oauth_access.lock().await = None;
+    let mut cfg = config::load(&app);
+    cfg.openai_auth = config::OpenAiAuth::ApiKey;
+    // Volta a um modelo que exista no endpoint por chave, mas so se o que esta la for da
+    // subscricao: um id escrito a mao para o endpoint por chave nao se apaga a troco de nada.
+    if ember_core::codex::CODEX_MODELS.contains(&cfg.openai_model.as_str()) {
+        cfg.openai_model = String::new();
+    }
+    config::save(&app, &cfg).map_err(|e| e.to_string())?;
+    let cfg = config::load(&app);
+    if let Ok(mut m) = state.key_checks.lock() {
+        m.remove(&Provider::OpenAi);
+    }
+    crate::models_cache::forget(&state, Provider::OpenAi);
+    Ok(build_dto(&app, &cfg))
+}
+
+/// Troca qual dos dois providers e tentado primeiro.
+///
+/// Nao mexe em chaves nem em modelos: os dois slots continuam exatamente como estavam, so muda a
+/// ordem por que sao tentados. E por isso que trocar e reversivel a custo zero, e e essa a razao
+/// de ser um botao e nao um assistente.
+#[tauri::command]
+pub fn set_primary_provider(app: AppHandle, provider: String) -> Result<SettingsDto, String> {
+    let p = parse_provider(&provider)?;
+    let mut cfg = config::load(&app);
+    if cfg.primary_provider == p {
+        return Ok(build_dto(&app, &cfg));
+    }
+    cfg.primary_provider = p;
+    config::save(&app, &cfg).map_err(|e| e.to_string())?;
+    // Nada a invalidar: as chaves, os probes e as listagens pertencem aos PROVIDERS e nao a
+    // ordem por que sao tentados, portanto continuam todos validos depois da troca.
+    log::info!("provider primario passa a {p:?}");
+    Ok(build_dto(&app, &cfg))
+}
+
+/// Escolhe como o slot de fallback se autentica, sem passar pelo login. Serve os dois sentidos:
+/// voltar a uma chave de API sem perder a sessao gravada, e voltar a subscricao depois disso.
+#[tauri::command]
+pub fn set_openai_auth(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    mode: String,
+) -> Result<SettingsDto, String> {
+    let mut cfg = config::load(&app);
+    cfg.openai_auth = match mode.as_str() {
+        "api_key" => config::OpenAiAuth::ApiKey,
+        "chat_gpt" => config::OpenAiAuth::ChatGpt,
+        other => return Err(format!("unknown auth mode: {other}")),
+    };
+    // O modelo esta colado ao modo (os `gpt-5.x` so existem na subscricao, e os do Groq/OpenAI so
+    // existem por chave), mas so se apaga o que NAO serve no modo novo. Apagar sempre destruia um
+    // id escrito a mao a cada ida e volta entre modos, que e a mesma classe de bug que o sanitize
+    // do `gemini-3.5-flash` tinha e que acabou de sair daqui.
+    let belongs_to_subscription =
+        ember_core::codex::CODEX_MODELS.contains(&cfg.openai_model.as_str());
+    let wrong_side = match cfg.openai_auth {
+        config::OpenAiAuth::ChatGpt => !belongs_to_subscription,
+        config::OpenAiAuth::ApiKey => belongs_to_subscription,
+    };
+    if wrong_side {
+        cfg.openai_model = String::new();
+    }
+    let cfg = {
+        config::save(&app, &cfg).map_err(|e| e.to_string())?;
+        config::load(&app)
+    };
+    // A listagem e o veredicto anteriores sao do OUTRO backend: servi-los agora seria mostrar
+    // modelos que este nao tem. Mesma higiene que uma mudanca de base URL.
+    crate::models_cache::forget(&state, Provider::OpenAi);
+    if let Ok(mut m) = state.key_checks.lock() {
+        m.remove(&Provider::OpenAi);
+    }
+    Ok(build_dto(&app, &cfg))
 }
 
 /// Veredicto de saude dos providers, para as settings mostrarem um aviso honesto quando nao ha
@@ -464,14 +667,22 @@ pub fn list_models(
 /// Devolve `Err` se o cofre estiver ilegivel (Bug A): a saude e genuinamente desconhecida.
 #[tauri::command]
 pub fn get_provider_health(
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<ember_core::health::Readiness, String> {
+    let auth = config::load(&app).openai_auth;
     let cache = state.key_checks.lock();
     let cache_ref = cache.as_ref().ok();
     let mut entries = Vec::new();
     for p in [Provider::Gemini, Provider::OpenAi] {
-        let configured = secrets::try_has(p)
-            .map_err(|_| "Couldn't read saved keys (credential vault may be locked).".to_string())?;
+        // "Configurado" em modo subscricao quer dizer que ha sessao ChatGPT, e nao que ha chave:
+        // sem isto, quem faz login continuava a ver o aviso de "so tens um provider".
+        let configured = if p == Provider::OpenAi && auth == config::OpenAiAuth::ChatGpt {
+            secrets::has_oauth()
+        } else {
+            secrets::try_has(p)
+        }
+        .map_err(|_| "Couldn't read saved keys (credential vault may be locked).".to_string())?;
         entries.push(ember_core::health::ProviderStatus {
             provider: p,
             configured,
@@ -543,6 +754,147 @@ pub fn finalize_quit(app: AppHandle) {
 
 /// Liga/desliga o modo debug. Persiste e aplica ja: abre ou fecha as devtools da janela de
 /// settings (se estiver aberta), para o efeito ser imediato sem reabrir.
+// ---------------------------------------------------------------------------------------
+// Projetos
+// ---------------------------------------------------------------------------------------
+
+/// Cria ou atualiza um projeto. Id vazio = e novo, e o id nasce aqui.
+///
+/// O id e gerado no Rust e nao no lado do JS de proposito: e ele que liga o projeto ativo ao
+/// registo, e um id que a UI pudesse escolher acabaria colidido ou derivado do nome (e mudar o
+/// nome desligaria o projeto).
+#[tauri::command]
+pub fn save_project(
+    app: AppHandle,
+    mut project: ember_core::projects::Project,
+) -> Result<SettingsDto, String> {
+    let mut cfg = config::load(&app);
+    if project.id.trim().is_empty() {
+        project.id = new_project_id();
+    }
+    if project.name.trim().is_empty() {
+        return Err("give the project a name first".into());
+    }
+    match cfg.projects.iter_mut().find(|p| p.id == project.id) {
+        Some(existente) => *existente = project,
+        None => {
+            if cfg.projects.len() >= ember_core::projects::MAX_PROJECTS {
+                return Err(format!(
+                    "you can have at most {} projects",
+                    ember_core::projects::MAX_PROJECTS
+                ));
+            }
+            cfg.projects.push(project);
+        }
+    }
+    save_and_reload(&app, cfg)
+}
+
+/// Apaga um projeto. Se era o ativo, o `sanitize` do load limpa o id orfao sozinho, por isso nao
+/// ha aqui um segundo sitio a decidir a mesma coisa.
+#[tauri::command]
+pub fn delete_project(app: AppHandle, id: String) -> Result<SettingsDto, String> {
+    let mut cfg = config::load(&app);
+    cfg.projects.retain(|p| p.id != id);
+    save_and_reload(&app, cfg)
+}
+
+/// Escolhe o projeto ativo. `None` volta a nao ter nenhum (e ai vale a detecao pela janela).
+#[tauri::command]
+pub fn set_active_project(app: AppHandle, id: Option<String>) -> Result<SettingsDto, String> {
+    let mut cfg = config::load(&app);
+    cfg.active_project = id.filter(|i| !i.trim().is_empty());
+    let escolhido = cfg.active_project.clone();
+    let dto = save_and_reload(&app, cfg)?;
+    log::info!("projeto ativo: {}", escolhido.as_deref().unwrap_or("nenhum"));
+    Ok(dto)
+}
+
+/// Le a pasta e diz que ficheiro serviria, SEM enviar nada para lado nenhum.
+///
+/// Existe como comando separado do `distill_project` de proposito: a pessoa tem de conseguir ver
+/// o que seria enviado (que ficheiro, quantas linhas, e porque e que aquele ganhou aos outros)
+/// ANTES de um repo de cliente sair da maquina dela.
+#[tauri::command]
+pub fn scan_project_folder(path: String) -> Result<crate::projects::Scan, String> {
+    let p = std::path::Path::new(&path);
+    if !p.is_dir() {
+        return Err("that isn't a folder".into());
+    }
+    Ok(crate::projects::scan(p))
+}
+
+/// Le o ficheiro escolhido e devolve um brief. NAO grava nada: o brief volta para a textarea como
+/// RASCUNHO, e so entra na config quando a pessoa carregar em Save.
+///
+/// E essa a defesa de verdade contra um CLAUDE.md envenenado. As molduras e a validacao sao
+/// profundidade; o humano a ler antes de gravar e o que impede o problema.
+#[tauri::command]
+pub async fn distill_project(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<String, String> {
+    let p = std::path::PathBuf::from(&path);
+    crate::projects::distill(&app, state.inner(), &p)
+        .await
+        .map(|(brief, _)| brief)
+        .map_err(|e| e.message())
+}
+
+/// Recalcula a cor do orb a partir do projeto ativo e guarda-a no estado.
+///
+/// Chamada no arranque e sempre que a lista ou o projeto ativo mudam. Um sitio so a decidir isto:
+/// se cada comando calculasse a sua, um deles acabaria por esquecer e o orb ficava com a cor do
+/// projeto anterior sem ninguem perceber porque.
+pub(crate) fn refresh_orb_accent(state: &AppState, cfg: &config::Config) {
+    let ativo = ember_core::projects::active(&cfg.projects, cfg.active_project.as_deref());
+    let cor = ativo.map(|p| {
+        let a = ember_core::projects::accent(p.accent);
+        [a.raw.to_string(), a.mid.to_string(), a.glow.to_string()]
+    });
+    if let Ok(mut slot) = state.orb_accent.lock() {
+        *slot = cor;
+    }
+    if let Ok(mut slot) = state.orb_project.lock() {
+        *slot = ativo.map(|p| p.name.clone());
+    }
+}
+
+/// Grava e volta a LER do disco antes de devolver o estado.
+///
+/// A releitura nao e cerimonia: o `sanitize` corre no load e pode ter mexido (descartar um id
+/// duplicado, cortar um brief, limpar um ativo orfao). Devolver o que se gravou em vez do que
+/// ficou daria uma UI a mostrar algo que o disco nao tem.
+fn save_and_reload(app: &AppHandle, cfg: config::Config) -> Result<SettingsDto, String> {
+    config::save(app, &cfg).map_err(|e| e.to_string())?;
+    let fresca = config::load(app);
+    refresh_orb_accent(&app.state::<AppState>(), &fresca);
+    Ok(build_dto(app, &fresca))
+}
+
+/// Id opaco e aleatorio. Nao deriva do nome nem do caminho: mudar o nome de um projeto, ou mover
+/// a pasta, nao pode desligar o que esta ativo.
+fn new_project_id() -> String {
+    let mut b = [0u8; 8];
+    if getrandom::getrandom(&mut b).is_err() {
+        // Sem CSPRNG nao ha id unico garantido, mas isto nao e seguranca: e uma etiqueta. O
+        // relogio chega, e o `sanitize` descarta duplicados se algum dia colidir.
+        return format!("p{}", crate::now_ms());
+    }
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+/// Liga/desliga o registo de prompts. Ao DESLIGAR nao apaga o que ja esta gravado: apagar
+/// ficheiros do utilizador sem ele pedir e a decisao errada por omissao, e o ficheiro esta no log
+/// dir, a um clique do botao que ja abre essa pasta.
+#[tauri::command]
+pub fn set_save_prompts(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut cfg = config::load(&app);
+    cfg.save_prompts = enabled;
+    config::save(&app, &cfg).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn set_debug_mode(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut cfg = config::load(&app);
@@ -563,15 +915,37 @@ pub fn read_recent_logs(app: AppHandle, lines: usize) -> String {
 /// discreto no About e para nao espalhar a string.
 const REPO_URL: &str = "https://github.com/duartelcunha/ember";
 
-/// Abre um URL no browser do SO. PRIVADO de proposito: so e chamado com constantes deste
-/// ficheiro, nunca com uma string vinda do frontend. Passar um URL arbitrario do webview para um
-/// `start`/`open` do SO seria uma superficie de ataque (o `start` do Windows aceita caminhos e
-/// protocolos, nao so http).
-fn open_in_browser(url: &str) -> Result<(), String> {
+/// Abre um URL no browser do SO. Interno ao crate de proposito: so e chamado com URLs que NOS
+/// construimos (as constantes deste ficheiro e o URL de autorizacao do `oauth.rs`, feito de
+/// constantes mais valores que geramos), nunca com uma string vinda do frontend. Passar um URL
+/// arbitrario do webview para um `start`/`open` do SO seria uma superficie de ataque (o `start`
+/// do Windows aceita caminhos e protocolos, nao so http).
+pub(crate) fn open_in_browser(url: &str) -> Result<(), String> {
+    // Windows: o `start` corre DENTRO do cmd, e no cmd o `&` separa comandos. Sem aspas a volta
+    // do URL, tudo a partir do primeiro `&` deixava de ser URL e passava a ser interpretado como
+    // comandos, portanto o browser recebia so o primeiro parametro da query.
+    //
+    // Isto passou despercebido durante muito tempo porque os URLs daqui (consolas de chave, o
+    // repo) nao tem query string nenhuma. Apareceu com o login da conta ChatGPT, cujo URL tem
+    // nove parametros: chegava `...authorize?response_type=code` e a OpenAI respondia
+    // `missing_required_parameter`, um erro que aponta para o pedido e nao para quem o partiu.
+    //
+    // `raw_arg` (em vez de `args`) e o que permite pôr as aspas: o escaping normal do Rust nao
+    // considera o `&` um caracter que obrigue a citar, porque para um programa qualquer nao e.
     #[cfg(target_os = "windows")]
-    let result = std::process::Command::new("cmd")
-        .args(["/C", "start", "", url])
-        .spawn();
+    let result = {
+        use std::os::windows::process::CommandExt;
+        // Um URL nosso nunca tem aspas (vai tudo percent-encoded), mas se tivesse, fechava as
+        // nossas e o resto virava linha de comandos. Recusar e mais barato do que escapar.
+        if url.contains('"') {
+            return Err("refusing to open a URL containing a quote".into());
+        }
+        // O primeiro par de aspas vazio e o TITULO da janela, nao o alvo: sem ele, o `start`
+        // trataria o URL entre aspas como titulo e nao abria nada.
+        std::process::Command::new("cmd")
+            .raw_arg(format!("/C start \"\" \"{url}\""))
+            .spawn()
+    };
     #[cfg(target_os = "macos")]
     let result = std::process::Command::new("open").arg(url).spawn();
     #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
@@ -716,11 +1090,133 @@ pub fn get_diagnostics(app: AppHandle) -> String {
 // Refine helper (chamado pelo loop nativo em flow.rs)
 // ---------------------------------------------------------------------------------------
 
+/// Quantos modelos alternativos da mesma familia entram na cadeia atras do escolhido.
+///
+/// Um, e nao tres: cada passo extra custa ate `max_retries_per_step + 1` pedidos e o respetivo
+/// backoff ANTES de se chegar a familia de fallback, e o Ember refina no momento (ninguem espera
+/// meio minuto por um paragrafo). Um alternativo chega para o caso que motivou isto (o modelo
+/// mais recente cheio enquanto o da geracao anterior esta livre) sem transformar uma falha rapida
+/// numa espera longa. Subir isto exige medir primeiro quanto tempo custa de verdade.
+const MAX_MODEL_ALTERNATES: usize = 1;
+
+/// Constroi a cadeia de tentativa: que providers, com que credencial, com que modelos e por que
+/// ordem. Extraida do `refine_text` para a destilacao de um projeto poder usar EXATAMENTE a mesma
+/// (ordem escolhida nas settings, sessao ChatGPT renovada, triagem honesta de quem falhou e
+/// porque). Uma segunda copia disto ia divergir, e a parte que divergia era a que custou a
+/// acertar.
+pub(crate) async fn build_chain(
+    // `app` nao e usado hoje (a config vem ja carregada), mas fica na assinatura porque a
+    // destilacao e o refine partilham esta funcao e o `_` marca-o sem o esconder de vez.
+    _app: &AppHandle,
+    state: &AppState,
+    cfg: &config::Config,
+) -> Result<Vec<providers::ChainStep>, ember_core::CoreError> {
+    let mut chain: Vec<providers::ChainStep> = Vec::new();
+    let mut key_store_failed = false;
+    let mut chatgpt_unusable: Option<ember_core::CoreError> = None;
+    // A ordem e a que o utilizador escolheu nas settings (default: Gemini primeiro, por ser
+    // gratuito). Quem esta primeiro leva o pedido; o outro so entra quando este falha.
+    for provider in cfg.provider_order() {
+        // Modo subscricao: a credencial nao e uma chave, e um token da sessao ChatGPT, resolvido
+        // (e renovado se preciso) UMA vez por refine em vez de uma vez por tentativa.
+        let subscription = provider == Provider::OpenAi
+            && cfg.openai_auth == crate::config::OpenAiAuth::ChatGpt;
+        let credential = if subscription {
+            match crate::oauth::access_token(state).await {
+                Ok((access_token, account_id)) => providers::Credential::ChatGpt {
+                    access_token,
+                    account_id,
+                },
+                // Sessao acabada ou sem rede: este provider fica de fora desta cadeia, mas o
+                // Gemini continua a poder servir. Nao rebenta o refine, so degrada com rasto.
+                //
+                // O motivo fica guardado. Se a cadeia acabar vazia, dizer "sem chave configurada"
+                // seria mentira duas vezes: ele configurou o fallback, e o problema e a sessao ter
+                // expirado. Sem isto, a app abria as settings a dizer-lhe para pôr uma chave que
+                // ele nunca vai pôr, em vez de lhe dizer para voltar a fazer login.
+                Err(e) => {
+                    log::warn!("sessao ChatGPT indisponivel nesta cadeia: {e:?}");
+                    chatgpt_unusable = Some(e);
+                    continue;
+                }
+            }
+        } else {
+            match secrets::try_get(provider) {
+                Ok(Some(k)) => providers::Credential::Key(k),
+                Ok(None) => continue,
+                // Falha do cofre: nao retirar o provider em silencio. Se ficarmos sem nenhum,
+                // reportamos KeyStore (honesto) em vez de "sem providers".
+                Err(_) => {
+                    key_store_failed = true;
+                    continue;
+                }
+            }
+        };
+        let chosen = match provider {
+            Provider::Gemini => cfg.gemini_model.clone(),
+            Provider::OpenAi => cfg.openai_model.clone(),
+        };
+        // Um passo por MODELO, nao por provider: o escolhido primeiro e, atras dele, alternativos
+        // gratuitos da mesma familia tirados da listagem viva. Sem isto, um unico modelo cheio
+        // (o `gemini-3.7-flash` devolvia 503 "high demand" em serie, por ser o mais recente e o
+        // mais concorrido do free tier) dava a familia inteira por perdida, com a chave boa e
+        // mais quinze modelos disponiveis na mesma conta.
+        let mut models = vec![chosen.clone()];
+        // SO no Gemini, e nao no slot de fallback. Duas razoes, ambas concretas: no OpenRouter
+        // isto empilhava-se em cima do failover que ja mandamos DENTRO do pedido (o campo
+        // `models`, que ja tenta varios upstreams por chamada), e o segundo lugar da ordenacao
+        // num catalogo de centenas de modelos pode ser um modelo de CODIGO, que e mau para prosa
+        // (ja aconteceu com o `qwen3-coder:free`). O Gemini nao tem nem uma coisa nem outra: o
+        // catalogo e pequeno, e todo de modelos generalistas.
+        if provider == Provider::Gemini {
+            let catalog =
+                crate::models_cache::catalog(state, provider, &cfg.openai_base_url, cfg.openai_auth);
+            models.extend(ember_core::models::alternates(
+                provider,
+                &chosen,
+                &catalog.models,
+                MAX_MODEL_ALTERNATES,
+            ));
+        } else if subscription && chosen != ember_core::codex::DEFAULT_CODEX_MODEL {
+            // Rede para um modelo que a OpenAI retirou entretanto. Ali nao ha listagem garantida
+            // de onde saber isso a tempo, portanto o 404 do refine e que ensina: `ModelNotFound`
+            // manda a cadeia para o passo seguinte, e o passo seguinte e um modelo que sabemos
+            // existir hoje. Custa zero quando o escolhido funciona (nunca chega a ser tentado) e
+            // e o que impede um id morto de transformar todos os refines em erro.
+            //
+            // Sem risco de gastar dinheiro que ele nao pediu, ao contrario do slot por chave:
+            // aqui os modelos vem todos do mesmo plano ja pago.
+            models.push(ember_core::codex::DEFAULT_CODEX_MODEL.to_string());
+        }
+        for model in models {
+            chain.push(providers::ChainStep {
+                provider,
+                credential: credential.clone(),
+                model,
+            });
+        }
+    }
+    if chain.is_empty() {
+        return Err(if key_store_failed {
+            ember_core::CoreError::KeyStore
+        } else if let Some(e) = chatgpt_unusable {
+            // O fallback ESTA configurado; o que falhou foi a sessao. Propaga a razao real
+            // (Auth -> "o login expirou", transitorio -> "sem rede") em vez de "sem chave".
+            e
+        } else {
+            ember_core::CoreError::NoProvidersConfigured
+        });
+    }
+    Ok(chain)
+}
+
 pub(crate) fn friendly_error(e: &ember_core::CoreError) -> String {
     use ember_core::CoreError::*;
     match e {
         NoProvidersConfigured => "No API key set. Opening settings…".into(),
-        Auth => "Invalid API key. Check settings.".into(),
+        // Cobre os dois modos do slot de fallback: uma chave recusada e uma sessao ChatGPT que
+        // expirou ou foi revogada dao o mesmo erro, e a accao util e a mesma (ir as settings).
+        Auth => "Invalid API key, or your ChatGPT sign-in expired. Check settings.".into(),
         // Acontece de verdade: os providers descontinuam modelos (a Google matou o
         // `gemini-2.5-flash-lite`). O utilizador tem de saber que o problema e o MODELO, nao a
         // chave nem a rede, senao anda a trocar chaves boas as cegas (aconteceu).
@@ -755,40 +1251,43 @@ pub(crate) async fn refine_text(
     on_delta: &(dyn Fn(&str) + Send + Sync),
 ) -> Result<(String, ember_core::Prepared, String), ember_core::CoreError> {
     let cfg = config::load(app);
-    let mut chain: Vec<(Provider, String)> = Vec::new();
-    let mut key_store_failed = false;
-    // Ordem de prioridade: Gemini primario (gratuito), depois o slot de fallback.
-    for provider in [Provider::Gemini, Provider::OpenAi] {
-        match secrets::try_get(provider) {
-            Ok(Some(k)) => chain.push((provider, k)),
-            Ok(None) => {}
-            // Falha do cofre: nao retirar o provider em silencio. Se ficarmos sem nenhum,
-            // reportamos KeyStore (honesto) em vez de "sem providers".
-            Err(_) => key_store_failed = true,
-        }
-    }
-    if chain.is_empty() {
-        return Err(if key_store_failed {
-            ember_core::CoreError::KeyStore
-        } else {
-            ember_core::CoreError::NoProvidersConfigured
-        });
-    }
+    let chain = build_chain(app, state, &cfg).await?;
 
     let resolved = profile::resolve(app, cfg.profile_override.as_deref(), cfg.ignore_claude_md);
     // Contexto de projeto (best-effort, so quando ligado): junta o CLAUDE.md/AGENTS.md do projeto
     // em foco ao perfil global. Qualquer falha -> None -> segue so com o global (comportamento
     // de sempre). O `foreground_title` so vem preenchido quando `config.project_context` esta on.
-    let project_ctx = foreground_title.and_then(|t| {
-        let home = app.path().home_dir().ok();
-        crate::project::resolve(t, home.as_deref())
-    });
-    match &project_ctx {
-        Some(pc) => log::info!("project context: merged {}", pc.source_path),
-        None if foreground_title.is_some() => {
+    // Precedencia: o projeto que o utilizador escolheu A MAO ganha sempre a detecao pela janela.
+    // Ele disse em que projeto esta; adivinhar por cima disso seria ignora-lo. A detecao continua
+    // a servir para quando nao ha nenhum escolhido.
+    //
+    // O brief passa pelo MESMO `frame_project` do caminho automatico, e nao por um atalho: e dai
+    // que vem a moldura que diz ao modelo para tratar aquilo como convencoes e nunca como ordens.
+    let active = ember_core::projects::active(&cfg.projects, cfg.active_project.as_deref());
+    let project_ctx = match active {
+        Some(p) => ember_core::project::frame_project(&p.brief).map(|block| {
+            crate::project::ProjectContext {
+                block,
+                source_path: format!("projeto \"{}\"", p.name),
+            }
+        }),
+        None => foreground_title.and_then(|t| {
+            let home = app.path().home_dir().ok();
+            crate::project::resolve(t, home.as_deref())
+        }),
+    };
+    match (&project_ctx, active) {
+        // Dizer sempre QUAL dos dois ganhou: com as duas coisas ligadas e sem esta linha, ninguem
+        // consegue explicar porque e que o prompt saiu como saiu.
+        (Some(pc), Some(_)) => log::info!("project context: {} (brief)", pc.source_path),
+        (Some(pc), None) => log::info!("project context: window title -> {}", pc.source_path),
+        (None, Some(p)) => {
+            log::info!("project context: projeto \"{}\" ativo mas com brief vazio", p.name)
+        }
+        (None, None) if foreground_title.is_some() => {
             log::debug!("project context: enabled, none detected for the foreground window")
         }
-        None => {}
+        (None, None) => {}
     }
     // Motor Ember, fase 1: normaliza o input, mascara codigo/URLs e escapa marcadores. O modelo
     // ve o `masked_input`; o `prepared` volta para o `flow.rs` reconstruir o output.
@@ -803,16 +1302,36 @@ pub(crate) async fn refine_text(
         project_ctx.as_ref().map(|pc| pc.block.as_str()),
     );
     let rcfg = RetryConfig {
-        provider_count: chain.len(),
+        step_count: chain.len(),
+        // A maquina precisa de saber a familia de cada passo para distinguir "tenta outro modelo"
+        // de "tenta outro provider": uma chave recusada nao se resolve trocando de modelo.
+        step_providers: chain.iter().map(|s| s.provider).collect(),
         ..RetryConfig::default()
     };
     let pctx = providers::ProviderCtx {
-        gemini_model: &cfg.gemini_model,
-        openai_model: &cfg.openai_model,
         openai_base_url: &cfg.openai_base_url,
     };
+    let started = std::time::Instant::now();
     let resp = providers::refine(&state.http, &rcfg, &chain, &req, &pctx, on_attempt, on_delta)
         .await?;
+    // Registo opt-in do que foi mesmo enviado e do que voltou. Depois do `?` de proposito: so se
+    // guarda o que chegou a ser uma resposta. Um refine que falhou ja deixa rasto no log normal,
+    // e o que aqui interessa estudar e o par prompt/resposta, nao a ausencia dele.
+    if cfg.save_prompts {
+        crate::prompt_log::append(
+            app,
+            &crate::prompt_log::Record {
+                mode: mode_str(mode),
+                provider: resp.provider.display_name(),
+                model: &resp.model,
+                ms: started.elapsed().as_millis(),
+                system: &req.system,
+                input: &req.user,
+                output: &resp.text,
+                project: project_ctx.as_ref().map(|pc| pc.source_path.as_str()),
+            },
+        );
+    }
     Ok((resp.text, prepared, resp.provider.display_name().to_string()))
 }
 

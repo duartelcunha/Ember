@@ -1,9 +1,26 @@
 //! Definicoes nao-secretas persistidas em disco (config.json no app config dir).
 //! As chaves de API NAO vivem aqui: ficam no Windows Credential Manager (ver secrets.rs).
 
-use ember_core::model::RefineMode;
+use ember_core::model::{Provider, RefineMode};
 use ember_core::providers::{DEFAULT_GEMINI_MODEL, DEFAULT_OPENAI_BASE_URL, DEFAULT_OPENAI_MODEL};
 use serde::{Deserialize, Serialize};
+
+/// Como o slot de fallback se autentica.
+///
+/// Nao e um provider novo: e a MESMA familia OpenAI-compativel com outra credencial. Por isso vive
+/// aqui como um campo e nao como uma variante do `Provider`, que e um contrato IPC pinado por
+/// testes e atravessaria o codigo todo por causa de uma escolha que ocupa a mesma linha da UI que
+/// o Groq ou o OpenRouter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenAiAuth {
+    /// Chave de API BYOK (o que sempre houve).
+    #[default]
+    ApiKey,
+    /// Login com a conta ChatGPT: os refines saem do plano que o utilizador ja paga. Caminho NAO
+    /// oficial (ver `ember_core::codex`), e a UI diz isso antes de ele escolher.
+    ChatGpt,
+}
 use std::fs;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
@@ -25,6 +42,14 @@ pub struct Config {
     pub gemini_model_auto: bool,
     /// Base URL do provider OpenAI-compatible. Default: OpenRouter. Serve DeepSeek/Groq/Ollama.
     pub openai_base_url: String,
+    /// Como o slot de fallback se autentica: chave de API (default) ou a subscricao ChatGPT.
+    /// Uma config gravada antes disto existir nao tem o campo e cai no default, que e o
+    /// comportamento de sempre.
+    pub openai_auth: OpenAiAuth,
+    /// Qual dos dois providers e tentado PRIMEIRO. Default Gemini, que e gratuito e portanto a
+    /// escolha certa para quem nunca pensou no assunto. Quem ja paga uma subscricao prefere
+    /// gasta-la em vez de esperar por um free tier: so muda a ordem, os dois slots ficam iguais.
+    pub primary_provider: Provider,
     /// Atalho principal: dispara o refine no `mode` escolhido nas settings.
     pub hotkey: String,
     /// Atalhos que fixam um modo, para escolher no momento em que se dispara em vez de ter de
@@ -37,6 +62,8 @@ pub struct Config {
     /// nem pediu. Quem os quer poe a combinacao que sabe estar livre, nas settings.
     pub hotkey_polish: String,
     pub hotkey_turbo: String,
+    /// Atalho do picker de projetos. Vazio = nao registado, pelas mesmas razoes dos de modo.
+    pub hotkey_picker: String,
     pub autostart: bool,
     pub mode: RefineMode,
     /// Raciocinio alargado do Gemini (default on). Mais qualidade, um pouco mais lento.
@@ -56,6 +83,10 @@ pub struct Config {
     pub capture_step_ms: u64,
     /// Tempo de espera apos o paste antes de restaurar o clipboard original, em ms.
     pub paste_settle_ms: u64,
+    /// Grava num ficheiro o que foi enviado ao modelo e o que ele respondeu, para se poder
+    /// melhorar o prompting com casos reais. Default OFF, e por privacidade: ao contrario do log
+    /// normal, isto leva o TEXTO do utilizador para disco. Ver `prompt_log`.
+    pub save_prompts: bool,
     /// Modo debug: abre as devtools nas settings e mostra o painel de diagnostico. O ficheiro
     /// de log capta sempre; isto controla a superficie visivel ao utilizador. Default off.
     pub debug_mode: bool,
@@ -77,6 +108,11 @@ pub struct Config {
     /// Teto de chars de uma captura vinda do select-all. Acima disto assumimos que o foco nao
     /// estava num campo e que o Ctrl+A agarrou a pagina toda, e abortamos sem colar.
     pub select_all_max_chars: usize,
+    /// Projetos registados pelo utilizador. Cada um traz um brief que entra no prompt quando esse
+    /// projeto esta ativo. Vazio por defeito; uma config anterior a isto nem tem o campo.
+    pub projects: Vec<ember_core::projects::Project>,
+    /// O id do projeto ativo. `None` = nenhum, e ai vale a detecao pela janela (se ligada).
+    pub active_project: Option<String>,
 }
 
 /// Limites do timing de captura. Fonte unica: `commands::set_capture_timing` e a
@@ -95,9 +131,12 @@ impl Default for Config {
             openai_model: DEFAULT_OPENAI_MODEL.to_string(),
             gemini_model_auto: true,
             openai_base_url: DEFAULT_OPENAI_BASE_URL.to_string(),
+            openai_auth: OpenAiAuth::ApiKey,
+            primary_provider: Provider::Gemini,
             hotkey: "CmdOrCtrl+Shift+Space".to_string(),
             hotkey_polish: String::new(),
             hotkey_turbo: String::new(),
+            hotkey_picker: String::new(),
             autostart: false,
             mode: RefineMode::Adaptive,
             thinking_enabled: true,
@@ -108,12 +147,15 @@ impl Default for Config {
             capture_polls: 30,
             capture_step_ms: 10,
             paste_settle_ms: 90,
+            save_prompts: false,
             debug_mode: false,
             project_context: false,
             preview_before_paste: false,
             theme: "cream".to_string(),
             select_all_fallback: true,
             select_all_max_chars: 8_000,
+            projects: Vec::new(),
+            active_project: None,
         }
     }
 }
@@ -193,14 +235,28 @@ fn migrate_openai_model(model: &str, base_url: &str, default_model: &str) -> Str
 }
 
 impl Config {
+    /// Os dois providers pela ordem em que sao tentados. Fonte unica desta ordem: a cadeia do
+    /// refine, a pre-validacao e a UI leem daqui, para nao poderem discordar entre si sobre qual
+    /// e o primario.
+    pub fn provider_order(&self) -> [Provider; 2] {
+        match self.primary_provider {
+            Provider::Gemini => [Provider::Gemini, Provider::OpenAi],
+            Provider::OpenAi => [Provider::OpenAi, Provider::Gemini],
+        }
+    }
+
     /// Normaliza valores fora de gama ou vazios (config editada a mao, ou de uma versao
     /// anterior). Campos criticos vazios voltam ao default; o timing e clampado as gamas
     /// aceites pela UI, para um `capture_step_ms: 0` (busy-loop) nunca chegar ao runtime.
     fn sanitize(mut self) -> Self {
         let d = Config::default();
-        // Migracao: `gemini-3.5-flash` foi um default fantasma (modelo inexistente) de uma
-        // versao anterior; reescreve-o para o default valido para nao ir parar ao pedido.
-        if self.gemini_model.trim().is_empty() || self.gemini_model == "gemini-3.5-flash" {
+        // So o vazio volta ao default. Aqui esteve uma migracao que reescrevia `gemini-3.5-flash`
+        // (um default fantasma de uma versao antiga, quando o id nao existia) e essa migracao
+        // passou a fazer o contrario do que devia: a Google lancou mesmo o `gemini-3.5-flash`, e
+        // desde entao quem o escolhia na UI via a escolha ser desfeita em silencio no arranque
+        // seguinte, sem erro nenhum. Quem decide se um modelo existe e a listagem do provider
+        // (`models_cache::reconcile_saved`), nunca um id escrito a mao aqui, que envelhece sozinho.
+        if self.gemini_model.trim().is_empty() {
             self.gemini_model = d.gemini_model;
         }
         // Base URL vazia -> default; barra final removida (nao duplicar no caminho do endpoint).
@@ -212,11 +268,30 @@ impl Config {
             base.to_string()
         };
 
-        self.openai_model = migrate_openai_model(
-            self.openai_model.trim(),
-            &self.openai_base_url,
-            &d.openai_model,
-        );
+        // A migracao por endpoint so faz sentido com chave de API. Na subscricao ChatGPT o base
+        // URL nao e usado (o backend e outro) e os modelos sao os `gpt-5.x` que so esse backend
+        // serve: deixar a migracao correr seria trocar o modelo por um do `api.openai.com` que
+        // ali nao existe.
+        self.openai_model = match self.openai_auth {
+            OpenAiAuth::ChatGpt => {
+                let m = self.openai_model.trim();
+                // Vazio, ou um id que a OpenAI ja retirou do login ChatGPT: leva o default. O
+                // segundo caso e a unica lista de modelos mortos que resta no projeto, e so
+                // existe porque este backend nao publica listagem nenhuma de onde a derivar
+                // (ver `codex::CODEX_RETIRED_MODELS`). Um id desconhecido nosso NAO se toca: pode
+                // ser um modelo novo, ou um que o utilizador escreveu a mao em "Custom...".
+                if m.is_empty() || ember_core::codex::CODEX_RETIRED_MODELS.contains(&m) {
+                    ember_core::codex::DEFAULT_CODEX_MODEL.to_string()
+                } else {
+                    m.to_string()
+                }
+            }
+            OpenAiAuth::ApiKey => migrate_openai_model(
+                self.openai_model.trim(),
+                &self.openai_base_url,
+                &d.openai_model,
+            ),
+        };
         // So o atalho PRINCIPAL volta ao default quando vazio: sem ele a app ficava inutil e em
         // silencio. Os de modo sao opcionais, e vazio ali quer mesmo dizer "nao registes".
         if self.hotkey.trim().is_empty() {
@@ -224,11 +299,31 @@ impl Config {
         }
         self.hotkey_polish = self.hotkey_polish.trim().to_string();
         self.hotkey_turbo = self.hotkey_turbo.trim().to_string();
+        self.hotkey_picker = self.hotkey_picker.trim().to_string();
+        // Um atalho de picker gravado antes desta regra existir (o `Shift+Up` da primeira
+        // utilizacao) fica limpo no load. Deixa-lo em disco era manter uma combinacao que abre a
+        // lista e a fecha a seguir, e o utilizador nao tinha como perceber porque.
+        if let Some(key) = ember_core::hotkey::picker_key_clash(&self.hotkey_picker) {
+            log::warn!(
+                "config: atalho do picker descartado ({}): usa {key}, que a lista precisa para navegar",
+                self.hotkey_picker
+            );
+            self.hotkey_picker.clear();
+        }
         if self.thinking_level.trim().is_empty() {
             self.thinking_level = d.thinking_level;
         }
         if self.theme != "dark" && self.theme != "cream" {
             self.theme = d.theme;
+        }
+        // Projetos primeiro: o `active_project` so pode ser validado contra a lista ja limpa,
+        // senao um id de um projeto que o sanitize acabou de descartar sobrevivia a apontar para
+        // nada, e o refine ficava a procurar um brief que nunca mais existe.
+        self.projects = ember_core::projects::sanitize_projects(std::mem::take(&mut self.projects));
+        if let Some(id) = self.active_project.as_deref() {
+            if !self.projects.iter().any(|p| p.id == id) {
+                self.active_project = None;
+            }
         }
         self.capture_polls = self.capture_polls.clamp(CAPTURE_POLLS.0, CAPTURE_POLLS.1);
         self.capture_step_ms = self
@@ -421,6 +516,135 @@ mod tests {
         let mut mine = Config::default();
         mine.openai_model = "mistralai/mistral-small:free".into();
         assert_eq!(mine.sanitize().openai_model, "mistralai/mistral-small:free");
+    }
+
+    #[test]
+    fn sanitize_no_longer_undoes_a_gemini_model_the_user_picked() {
+        // Regressao real, com rasto no log do utilizador: havia aqui uma migracao que reescrevia
+        // `gemini-3.5-flash` para o default, porque esse id tinha sido um default fantasma antes
+        // de existir. Entretanto a Google lancou-o a serio. A migracao ficou a apagar uma escolha
+        // legitima a cada arranque, sem erro e sem aviso: o utilizador escolhia o modelo, a UI
+        // confirmava, e no relancamento seguinte estava outro la.
+        let mut c = Config::default();
+        c.gemini_model = "gemini-3.5-flash".into();
+        assert_eq!(c.sanitize().gemini_model, "gemini-3.5-flash");
+
+        // Um id que nem sequer conhecemos tambem passa: quem o corrige e a listagem do provider
+        // (models_cache), com um facto, e nao um palpite escrito a mao aqui.
+        let mut novo = Config::default();
+        novo.gemini_model = "gemini-4.0-flash".into();
+        assert_eq!(novo.sanitize().gemini_model, "gemini-4.0-flash");
+
+        // Vazio continua a voltar ao default: sem modelo nenhum nao havia pedido para fazer.
+        let mut vazio = Config::default();
+        vazio.gemini_model = "   ".into();
+        assert_eq!(vazio.sanitize().gemini_model, Config::default().gemini_model);
+    }
+
+    #[test]
+    fn subscription_mode_keeps_its_own_models_and_is_off_by_default() {
+        // O default nao muda para quem ja usa a app: chave de API, como sempre.
+        assert_eq!(Config::default().openai_auth, OpenAiAuth::ApiKey);
+
+        // Em modo subscricao o base URL nao e usado (o backend e outro) e os `gpt-5.x` so
+        // existem la. Deixar a migracao por endpoint correr trocava-os por um modelo do
+        // `api.openai.com`, que naquele backend da erro.
+        let mut c = Config::default();
+        c.openai_auth = OpenAiAuth::ChatGpt;
+        c.openai_model = "gpt-5.6-terra".into();
+        c.openai_base_url = "https://api.openai.com/v1".into();
+        assert_eq!(c.sanitize().openai_model, "gpt-5.6-terra");
+
+        // Um modelo que a OpenAI JA retirou do login ChatGPT leva o default. `gpt-5.2` foi o
+        // default com que este modo nasceu, portanto quem fez login nesses dias tem-no gravado e
+        // apanharia erro em todos os refines sem perceber que a culpa era do modelo.
+        let mut morto = Config::default();
+        morto.openai_auth = OpenAiAuth::ChatGpt;
+        morto.openai_model = "gpt-5.2".into();
+        assert_eq!(
+            morto.sanitize().openai_model,
+            ember_core::codex::DEFAULT_CODEX_MODEL
+        );
+
+        // Um id que nao conhecemos NAO se toca: pode ser um modelo novo, ou um escrito a mao em
+        // "Custom...". A lista de retirados e curta e explicita, nunca um "tudo o que nao conheco".
+        let mut custom = Config::default();
+        custom.openai_auth = OpenAiAuth::ChatGpt;
+        custom.openai_model = "gpt-9.9-experimental".into();
+        assert_eq!(custom.sanitize().openai_model, "gpt-9.9-experimental");
+
+        // Vazio leva o default do proprio backend, e nao o do slot de chave.
+        let mut vazio = Config::default();
+        vazio.openai_auth = OpenAiAuth::ChatGpt;
+        vazio.openai_model = "  ".into();
+        assert_eq!(
+            vazio.sanitize().openai_model,
+            ember_core::codex::DEFAULT_CODEX_MODEL
+        );
+    }
+
+    #[test]
+    fn the_provider_order_follows_the_choice_and_defaults_to_the_free_one() {
+        // Default: Gemini primeiro, porque e gratuito e e a escolha certa para quem nunca pensou
+        // no assunto. Uma config antiga nao tem o campo e cai aqui.
+        let d = Config::default();
+        assert_eq!(d.primary_provider, Provider::Gemini);
+        assert_eq!(d.provider_order(), [Provider::Gemini, Provider::OpenAi]);
+
+        let mut c = Config::default();
+        c.primary_provider = Provider::OpenAi;
+        assert_eq!(c.provider_order(), [Provider::OpenAi, Provider::Gemini]);
+
+        let antigo = r#"{ "gemini_model": "gemini-2.5-flash" }"#;
+        let velho: Config = serde_json::from_str(antigo).expect("desserializa");
+        assert_eq!(velho.primary_provider, Provider::Gemini);
+    }
+
+    #[test]
+    fn a_config_from_before_subscription_mode_existed_still_uses_api_keys() {
+        // O campo em falta tem de cair em `ApiKey`. Se caisse em `ChatGpt`, toda a gente que ja
+        // tem a app instalada acordava com o fallback a apontar para uma sessao que nunca fez.
+        let antigo = r#"{ "gemini_model": "gemini-2.5-flash", "openai_model": "gpt-4o-mini" }"#;
+        let c: Config = serde_json::from_str(antigo).expect("config antiga desserializa");
+        assert_eq!(c.openai_auth, OpenAiAuth::ApiKey);
+        // E o id IPC e estavel: a UI compara com estas strings.
+        assert_eq!(
+            serde_json::to_string(&OpenAiAuth::ChatGpt).unwrap(),
+            "\"chat_gpt\""
+        );
+        assert_eq!(
+            serde_json::to_string(&OpenAiAuth::ApiKey).unwrap(),
+            "\"api_key\""
+        );
+    }
+
+    #[test]
+    fn a_config_from_before_projects_existed_loads_with_none() {
+        let antigo = r#"{ "gemini_model": "gemini-2.5-flash", "hotkey": "CmdOrCtrl+Shift+E" }"#;
+        let c: Config = serde_json::from_str(antigo).expect("config antiga desserializa");
+        assert!(c.projects.is_empty());
+        assert_eq!(c.active_project, None);
+    }
+
+    #[test]
+    fn an_active_project_that_names_nothing_is_cleared_on_load() {
+        // Sem isto, apagar um projeto deixava o id ativo a apontar para nada e o refine ficava a
+        // procurar um brief que nunca mais existe, sem ninguem perceber porque.
+        let mut c = Config::default();
+        c.active_project = Some("fantasma".into());
+        assert_eq!(c.clone().sanitize().active_project, None);
+
+        // E com o projeto la, mantem-se.
+        c.projects = vec![ember_core::projects::Project {
+            id: "fantasma".into(),
+            name: "Existe".into(),
+            accent: 0,
+            icon: "sparkle".into(),
+            brief: "Escreve curto.".into(),
+            folder: None,
+            source_path: None,
+        }];
+        assert_eq!(c.sanitize().active_project.as_deref(), Some("fantasma"));
     }
 
     #[test]

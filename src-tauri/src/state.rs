@@ -29,6 +29,14 @@ pub struct AppState {
     /// pilula (success/error/hint). O orb e muito mais pequeno do que a janela fixa que
     /// o contem, por isso o seguimento do cursor precisa de saber qual conteudo clampar.
     pub orb_visible: AtomicBool,
+    /// O overlay deve andar atras do cursor? Verdade enquanto ha trabalho a decorrer (o orb) e
+    /// enquanto o preview espera resposta, e falso nas pilulas de resultado.
+    ///
+    /// E uma flag separada do `orb_visible` porque as duas perguntas sao diferentes: aquela diz
+    /// COMO clampar (a caixa pequena do orb ou a janela toda), esta diz SE seguir. Enquanto foram
+    /// a mesma, a pilula do preview ficava colada ao sitio onde o cursor estava quando o refine
+    /// acabou, e quem entretanto mexeu o rato ficava com uma pergunta esquecida a meio do ecra.
+    pub follow_cursor: AtomicBool,
     /// `true` enquanto um ciclo de refinamento decorre (do hotkey ate esconder o orb).
     /// Uma segunda tecla enquanto isto e `true` cancela o ciclo em curso (ver `cancel`).
     pub busy: AtomicBool,
@@ -37,6 +45,43 @@ pub struct AppState {
     pub cancel: AtomicBool,
     /// Acorda o `select!` do refine quando um cancelamento e pedido a meio da chamada HTTP.
     pub cancel_notify: Notify,
+    /// O access token da sessao ChatGPT, em memoria, e o mutex que serializa a sua renovacao.
+    ///
+    /// Duas coisas no mesmo sitio porque sao a mesma seccao critica:
+    /// - **serializar**: a OpenAI RODA o refresh token a cada renovacao, portanto duas renovacoes
+    ///   ao mesmo tempo (um refine e um probe das settings) faziam a segunda gravar um token que a
+    ///   primeira ja tinha invalidado, e a sessao morria sozinha;
+    /// - **em memoria**: o access token nao cabe numa credencial do Credential Manager do Windows
+    ///   (medido, nao teorico). Sem cache, cada refine comecava por uma renovacao, ou seja um
+    ///   pedido extra e uma rotacao de token a mais, so para chegar ao mesmo sitio. Guarda-lo aqui
+    ///   e alias o mais correto: expira em horas e nao faz falta nenhuma sobreviver ao fecho da app.
+    pub oauth_access: tokio::sync::Mutex<Option<CachedAccess>>,
+    /// Os tres tons do projeto ativo, para o orb tomar a cor dele. `None` = sem projeto, e o orb
+    /// fica como sempre foi.
+    ///
+    /// Vive aqui e nao e lido da config a cada emissao de propósito: o `flow::emit` corre varias
+    /// vezes por refine (uma por tentativa) e ler o ficheiro de config nesse caminho era pagar
+    /// disco por uma coisa que so muda quando o utilizador troca de projeto.
+    pub orb_accent: Mutex<Option<[String; 3]>>,
+    /// O nome do projeto ativo. A cor diz que ha um projeto; o nome diz QUAL. Sem ele, quem tem
+    /// varios projetos de cores parecidas fica a adivinhar, e adivinhar era o problema.
+    pub orb_project: Mutex<Option<String>>,
+    /// O picker de projetos esta aberto? Guarda de reentrancia + sinal para o atalho de refine.
+    pub picker_open: AtomicBool,
+    /// Quando o picker abriu. Serve para distinguir a SEGUNDA pressao do atalho (que fecha) do
+    /// auto-repeat da primeira, que o Windows entrega enquanto a combinacao esta premida e que
+    /// fechava a lista no mesmo instante em que ela abria.
+    pub picker_opened_at: Mutex<Option<std::time::Instant>>,
+    /// Pedido de fecho do picker (segunda pressao do atalho dele, ou um refine a arrancar).
+    pub picker_cancel: AtomicBool,
+}
+
+/// O que uma renovacao devolve e vale a pena guardar ate expirar.
+#[derive(Debug, Clone)]
+pub struct CachedAccess {
+    pub token: String,
+    pub account_id: Option<String>,
+    pub expires_at_ms: u64,
 }
 
 impl AppState {
@@ -57,9 +102,16 @@ impl AppState {
             model_lists: Mutex::new(HashMap::new()),
             quitting: AtomicBool::new(false),
             orb_visible: AtomicBool::new(true),
+            follow_cursor: AtomicBool::new(true),
             busy: AtomicBool::new(false),
             cancel: AtomicBool::new(false),
             cancel_notify: Notify::new(),
+            oauth_access: tokio::sync::Mutex::new(None),
+            orb_accent: Mutex::new(None),
+            orb_project: Mutex::new(None),
+            picker_open: AtomicBool::new(false),
+            picker_opened_at: Mutex::new(None),
+            picker_cancel: AtomicBool::new(false),
         }
     }
 }
