@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/duartelcunha/Ember/compare/v0.9.0...v0.9.1) (2026-08-31)
+
+
+### Bug Fixes
+
+* keyboard hooks that let go of a key too early, and a saving that was too eager ([3b24b48](https://github.com/duartelcunha/Ember/commit/3b24b48351e4d8c0a54a4504d2127761d31c1d06))
+
 ## [0.9.0](https://github.com/duartelcunha/Ember/compare/v0.8.0...v0.9.0) (2026-08-31)
 
 
