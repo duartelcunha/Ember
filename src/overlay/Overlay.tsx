@@ -40,7 +40,21 @@ export function Overlay() {
         >
           {status}
         </div>
-        <div className="flex h-screen items-center justify-start p-2" aria-hidden="true">
+        <div
+          className="flex h-screen items-center justify-start p-2"
+          aria-hidden="true"
+          // Redefine as três paragens do gradiente aqui em cima: tudo o que pinta o orb lê estas
+          // variáveis, portanto a cor do projeto entra sem cada peça saber que ela existe.
+          style={
+            s.accent
+              ? ({
+                  "--color-ember-raw": s.accent[0],
+                  "--color-accent": s.accent[1],
+                  "--color-ember-glow": s.accent[2],
+                } as React.CSSProperties)
+              : undefined
+          }
+        >
           <AnimatePresence mode="popLayout">
             {s.phase === "refining" && (
               // Orb + legenda opcional: o nucleo emite "Trying <provider>..."/"Retrying..."
@@ -49,12 +63,35 @@ export function Overlay() {
               // overlay so clampa a caixa minuscula do orb ao ecra nesta fase (nao a
               // legenda), por isso o texto tem de caber SEMPRE dentro da janela fixa.
               <div key="orb" className="flex items-center gap-2">
-                <Orb />
+                {/* A faísca cresce quando há mensagem, que é exatamente quando o núcleo está
+                    a repetir ou a mudar de provider: o ponteiro diz "isto está a custar" antes
+                    de a legenda ao lado ser lida. */}
+                <Orb variant={s.message ? "retry" : "work"} />
+                {/* O projeto ativo aparece SEMPRE que existe, e não só quando há mensagem: é a
+                    resposta a "com que contexto é que este refine está a ser feito", e essa
+                    pergunta faz-se em todos os refines, não só nos que fazem retry. A cor
+                    diz que há um projeto; esta etiqueta diz qual. */}
+                {s.project && (
+                  <m.span
+                    className="ember-bubble max-w-[120px] overflow-hidden text-ellipsis whitespace-nowrap px-2 py-1 text-xs font-semibold"
+                    style={{
+                      borderRadius: 10,
+                      willChange: "opacity",
+                      color: "var(--color-accent)",
+                    }}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+                  >
+                    {s.project}
+                  </m.span>
+                )}
                 {s.message && (
                   <m.span
                     // .ember-bubble tem backdrop-filter: so opacidade anima (sem translate),
                     // senao o fundo desfocado re-amostrava a cada frame do movimento.
-                    className="ember-bubble max-w-[190px] overflow-hidden text-ellipsis whitespace-nowrap px-2 py-1 text-xs text-fg"
+                    className="ember-bubble max-w-[170px] overflow-hidden text-ellipsis whitespace-nowrap px-2 py-1 text-xs text-fg"
                     style={{ borderRadius: 10, willChange: "opacity" }}
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}

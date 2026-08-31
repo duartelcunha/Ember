@@ -1,121 +1,108 @@
 import { m } from "motion/react";
-import { useOrbMotion } from "./useOrbMotion";
 
 /**
- * O "orb" de refine: A MARCA em movimento. E sempre a estrela de 4 pontas do logo (reconhecivel),
- * preenchida com o mesmo gradiente diagonal do logo, terracota BRUTA no canto inferior-esquerdo,
- * a afinar-se para AMBAR polido no superior-direito. O "refine" e um brilho que VARRE a diagonal,
- * do canto bruto ao polido, em loop: le-se como a estrela a ser continuamente lapidada/refinada.
- * Um glow subtil respira por baixo. Roda devagar e reage ao cursor (inclina + estica).
+ * A faísca: o indicador de "a trabalhar" do Ember, a orbitar o PRÓPRIO cursor.
  *
- * Tudo compositor-only (opacity + transform); o sweep e um <rect> com mask da estrela a
- * transl-dar na diagonal, sem animar filtros nem paths (o preset leve do overlay chega).
+ * A estrela saiu do overlay por decisão de design (2026-08-30): durante o refine o que a pessoa
+ * está a olhar é o ponto onde vai aterrar o texto, e a marca inteira ali era peso. Fica uma
+ * brasa a orbitar o ponteiro, com um rasto curto, nas cores do projeto ativo. A janela é
+ * posicionada pelo Rust de forma a que o CENTRO deste componente caia exatamente no cursor
+ * (ver `orb_target` em lib.rs, que usa metade do `SPARK_SIZE` daqui); o seguimento é rígido,
+ * sem suavização, porque a vida visual vem da órbita e o arrasto punha o centro a nadar.
+ *
+ * Camadas: um rotor (rotate infinito) com a cabeça da faísca e dois fantasmas atrás no mesmo
+ * círculo, mais um brilho mínimo no centro. Tudo compositor-only (transform/opacity); zero
+ * backdrop-filter, zero layout por frame.
  */
 
-// A estrela de 4 pontas da marca, viewBox 64, centrada em 32,32.
-const STAR = "M32 4 C 34 27 37 30 60 32 C 37 34 34 37 32 60 C 30 37 27 34 4 32 C 27 30 30 27 32 4 Z";
+/** Lado do quadrado da faísca, em px lógicos. ESPELHADO em `SPARK_SIZE` (lib.rs), que o usa
+ *  para centrar a órbita no meio visual da seta do cursor. Muda um, muda o outro.
+ *
+ *  O raio da órbita é `SPARK_SIZE / 2 - DOT_INSET` = 17px, escolhido para o anel envolver a
+ *  seta inteira (~12x19 lógicos) e não só a pontinha dela. */
+const SPARK_SIZE = 40;
+/** Distância do centro do ponto ao topo da caixa. Define o raio junto com o SPARK_SIZE. */
+const DOT_INSET = 3;
 
-const SIZE = 28;
+/** Um ponto no rotor: `angle` é o atraso angular em relação à cabeça (0 = cabeça). */
+function Dot({ angle, size, opacity }: { angle: number; size: number; opacity: number }) {
+  return (
+    <div className="absolute inset-0" style={{ transform: `rotate(${angle}deg)` }}>
+      <div
+        className="absolute left-1/2 top-0"
+        style={{
+          width: size,
+          height: size,
+          marginLeft: -size / 2,
+          marginTop: -size / 2 + DOT_INSET,
+          borderRadius: "9999px",
+          background: "var(--color-ember-glow)",
+          opacity,
+          boxShadow:
+            angle === 0
+              ? "0 0 6px 2px color-mix(in srgb, var(--color-accent) 65%, transparent)"
+              : undefined,
+        }}
+      />
+    </div>
+  );
+}
 
-export function Orb() {
-  const { tilt, stretchX, stretchY } = useOrbMotion();
+/** Em que ponto do trabalho estamos. Sai do que o núcleo já diz, e não de um estado inventado:
+ *  sem mensagem é o caminho normal; com mensagem, o núcleo está a fazer retry ou a passar para
+ *  o provider de reserva (`flow.rs` emite "Trying/Retrying <provider>..."), ou seja, isto vai
+ *  demorar mais do que o normal. */
+export type OrbVariant = "work" | "retry";
+
+/** Escala do rotor por estado. Cresce quando o refine tropeça: a espera passa a ser visível no
+ *  próprio ponteiro, antes de a pessoa ler a legenda ao lado. */
+const VARIANT = {
+  work: { scale: 1, spin: 1.3 },
+  retry: { scale: 1.32, spin: 1.9 },
+} as const;
+
+export function Orb({ variant = "work" }: { variant?: OrbVariant }) {
+  const v = VARIANT[variant];
   return (
     <m.div
-      className="relative grid place-items-center"
-      style={{ width: SIZE, height: SIZE }}
-      initial={{ opacity: 0, scale: 0.5 }}
+      className="relative"
+      style={{ width: SPARK_SIZE, height: SPARK_SIZE, willChange: "opacity, transform" }}
+      initial={{ opacity: 0, scale: 0.4 }}
       animate={{ opacity: 1, scale: 1 }}
-      exit={{ opacity: 0, scale: 0.5 }}
-      transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+      // A saída é o primeiro tempo do morph para a pilula: a faísca COLAPSA para o centro
+      // (scale down rápido) e a pilula acende logo a seguir a partir do mesmo sítio (ver a
+      // entrada em Pill.tsx). Sem layoutId, de propósito: se qualquer metade falhar, cada
+      // uma degrada para um fade curto, nunca para uma posição esquisita.
+      exit={{ opacity: 0, scale: 0.15, transition: { duration: 0.13, ease: "easeIn" } }}
+      transition={{ duration: 0.18, ease: "easeOut" }}
     >
-      {/* Halo de separacao escuro, POR BAIXO de tudo. Da contraste em fundos claros ou
-          atarefados (recorta o mark do fundo) e fica quase invisivel em fundos escuros. Estatico
-          e compositor-only (opacidade so), sem backdrop-filter (que re-amostrava o fundo a cada
-          frame do seguimento a 120fps e engasgava). Mantem o toque minimalista: so o suficiente
-          para o mark nunca desaparecer. */}
+      {/* Brilho mínimo no centro: dá "lareira" ao ponteiro sem o tapar. Estático. */}
       <div
         className="absolute"
         style={{
-          inset: -5,
+          inset: 13,
           borderRadius: "9999px",
           background:
-            "radial-gradient(circle, rgba(10,8,6,0.5) 0%, rgba(10,8,6,0.22) 45%, rgba(10,8,6,0) 70%)",
-          willChange: "opacity",
+            "radial-gradient(circle, color-mix(in srgb, var(--color-accent) 32%, transparent) 0%, transparent 70%)",
         }}
       />
-
-      {/* Glow radial quente subtil (contido para nao ser cortado pela borda da janela). */}
-      <m.div
-        className="absolute"
-        style={{
-          inset: -4,
-          borderRadius: "9999px",
-          background:
-            "radial-gradient(circle, rgba(253,140,60,0.5) 0%, rgba(253,140,60,0) 72%)",
-          filter: "blur(0.5px)",
-          willChange: "opacity, transform",
-        }}
-        animate={{ opacity: [0.22, 0.5, 0.22], scale: [0.92, 1.04, 0.92] }}
-        transition={{ repeat: Infinity, duration: 2.6, ease: [0.4, 0, 0.6, 1] }}
-      />
-
-      {/* Reacao ao cursor: inclina + estica na direcao do movimento (springs). */}
+      {/* O rotor: cabeça + dois fantasmas atrás no círculo formam o rasto.
+          A mudança de tamanho entre estados é `scale` NESTA camada e nunca no tamanho da caixa:
+          a caixa é o que o Rust usa para centrar a órbita no ponteiro (`SPARK_SIZE` em lib.rs),
+          portanto mexer-lhe descentrava a órbita. Escalar a partir do centro mantém o ponto fixo
+          e o crescimento lê-se como o mesmo objeto a inchar, não como outro a aparecer. */}
       <m.div
         className="absolute inset-0"
-        style={{ rotate: tilt, scaleX: stretchX, scaleY: stretchY, willChange: "transform" }}
+        style={{ willChange: "transform", transformOrigin: "center" }}
+        animate={{ rotate: 360, scale: v.scale }}
+        transition={{
+          rotate: { repeat: Infinity, duration: v.spin, ease: "linear" },
+          scale: { type: "spring", stiffness: 260, damping: 24 },
+        }}
       >
-        {/* Rotacao lenta continua, para a marca nunca parecer estatica. */}
-        <m.div
-          className="absolute inset-0"
-          style={{ willChange: "transform" }}
-          animate={{ rotate: 360 }}
-          transition={{ repeat: Infinity, duration: 16, ease: "linear" }}
-        >
-          <svg viewBox="0 0 64 64" className="absolute inset-0 h-full w-full">
-            <defs>
-              {/* Gradiente diagonal do logo: terracota bruta (baixo-esq) -> ambar polido (cima-dir). */}
-              <linearGradient id="ember-diag" x1="0.1" y1="0.9" x2="0.9" y2="0.1">
-                <stop offset="0%" stopColor="var(--color-ember-raw)" />
-                <stop offset="55%" stopColor="var(--color-accent)" />
-                <stop offset="100%" stopColor="var(--color-ember-glow)" />
-              </linearGradient>
-              {/* Mask com a forma da estrela: tudo o que desenharmos so aparece dentro dela. */}
-              <mask id="ember-star">
-                <path d={STAR} fill="#fff" />
-              </mask>
-            </defs>
-
-            {/* Base: a estrela da marca com o gradiente bruto->polido. */}
-            <path d={STAR} fill="url(#ember-diag)" />
-
-            {/* Sweep de refino: uma banda de luz que varre a diagonal (do canto bruto ao polido),
-                recortada pela forma da estrela. Da a leitura de "a ser refinada" em loop. Move-se
-                por `translateX` (transform, compositor-safe), nao pelo atributo `x` (que o preset
-                leve do overlay pode nao animar). A rotacao -45deg faz o varrimento diagonal. */}
-            <g mask="url(#ember-star)">
-              <m.rect
-                x={0}
-                y={-16}
-                width={22}
-                height={96}
-                fill="rgba(255,240,210,0.9)"
-                style={{
-                  transformBox: "view-box",
-                  transformOrigin: "32px 32px",
-                  willChange: "transform",
-                }}
-                initial={{ rotate: -45, x: -60 }}
-                animate={{ x: [-60, 74] }}
-                transition={{
-                  repeat: Infinity,
-                  duration: 2.2,
-                  ease: [0.5, 0, 0.5, 1],
-                  repeatDelay: 0.6,
-                }}
-              />
-            </g>
-          </svg>
-        </m.div>
+        <Dot angle={0} size={4.5} opacity={1} />
+        <Dot angle={-24} size={3.5} opacity={0.45} />
+        <Dot angle={-46} size={2.5} opacity={0.2} />
       </m.div>
     </m.div>
   );

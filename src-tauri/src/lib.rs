@@ -7,9 +7,13 @@ mod flow;
 mod foreground;
 mod logging;
 mod models_cache;
+mod oauth;
+mod picker;
 mod preview_hook;
+mod prompt_log;
 mod profile;
 mod project;
+mod projects;
 mod providers;
 mod secrets;
 mod selection;
@@ -25,25 +29,78 @@ use tauri_plugin_autostart::MacosLauncher;
 use ember_core::model::RefineMode;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
-/// Offset do orb em relacao ao cursor (centro do orb ~ cursor + isto), em px fisicos.
-/// X positivo = mais a direita, Y positivo = mais para baixo.
-const ORB_OFFSET_X: i32 = 24;
-const ORB_OFFSET_Y: i32 = 4;
+/// Lado do quadrado da faisca, em px logicos. ESPELHADO em `SPARK_SIZE` (Orb.tsx); muda um,
+/// muda o outro, senao a orbita descentra-se do ponteiro.
+const SPARK_SIZE: f64 = 40.0;
+/// Caixa a garantir visivel: a faisca mais a folga do estado de retry, onde o rotor cresce
+/// ~32% (ver `VARIANT` em Orb.tsx).
+const SPARK_CLAMP: f64 = 56.0;
+/// Centro visual do ponteiro em relacao ao hotspot, em px logicos. Uma seta padrao do Windows
+/// ocupa ~12x19 para baixo e para a direita do hotspot; o meio do corpo dela cai aqui.
+const POINTER_CENTER: (f64, f64) = (6.0, 9.0);
 
-/// Tamanho do conteudo visivel do orb (o pontinho + alguma folga), usado para clampar
-/// ao monitor. A janela do overlay e fixa em 300x140 (para caber a pilula de erro), mas
-/// o orb e so um pontinho de 13px centrado la dentro: clampar a janela toda fazia o orb
-/// afastar-se muito do cursor perto das bordas do ecra.
-const ORB_CONTENT_SIZE: (i32, i32) = (20, 20);
+/// Caixa da PILULA dentro da janela, em px logicos: o desvio lateral (espelhado no `ml-[34px]`
+/// do Pill.tsx, la `ml-10`) e um tamanho generoso que cobre a frase mais longa ("Enter to apply · Esc to
+/// keep original"). Serve para clampar pela pilula VISIVEL em vez de pela janela inteira.
+const PILL_MARGIN_X: f64 = 40.0;
+const PILL_BOX: (f64, f64) = (300.0, 40.0);
+
+/// Onde esta o conteudo visivel dentro da janela, e que tamanho tem, para a fase atual. Tudo em
+/// px fisicos.
+///
+/// Existe porque havia DUAS maneiras de clampar (caixa pequena para o orb, janela inteira para
+/// a pilula) e a mudanca de fase saltava de uma para a outra: ao aprovar o preview, a janela
+/// que estava colocada pela caixa do orb era subitamente contida pela regra da janela inteira e
+/// a pilula saltava de sitio. Agora ha uma regra so, e o que muda entre fases e apenas o
+/// tamanho da caixa.
+fn content_box(is_orb: bool, wh: i32, pad: i32, scale: f64) -> (i32, i32, i32, i32) {
+    let px = |v: f64| (v * scale).round() as i32;
+    if is_orb {
+        // A caixa clampada e MAIOR que a faisca (SPARK_CLAMP vs SPARK_SIZE) porque o rotor
+        // cresce no estado de retry: sem esta folga, junto a borda do ecra a orbita inchada
+        // saia por fora do que garantimos visivel. O `dx` recua metade da folga para o CENTRO
+        // da caixa continuar a ser o mesmo ponto, que e o que ancora a orbita no ponteiro.
+        let side = px(SPARK_CLAMP);
+        let folga = (px(SPARK_CLAMP) - px(SPARK_SIZE)) / 2;
+        (pad - folga, (wh - side) / 2, side, side)
+    } else {
+        let (bw, bh) = PILL_BOX;
+        let (bw, bh) = (px(bw), px(bh));
+        (pad + px(PILL_MARGIN_X), (wh - bh) / 2, bw, bh)
+    }
+}
+
+/// Clampa a janela ao monitor mantendo a CAIXA VISIVEL dentro do ecra (a janela pode ficar
+/// pendurada de fora; ninguem a ve, e transparente e ignora cliques). Fonte unica para o
+/// seguimento e para a saida do ciclo, que e onde a divergencia dava o salto.
+fn clamp_visible(
+    w: &WebviewWindow,
+    is_orb: bool,
+    win_x: i32,
+    win_y: i32,
+    cursor: (i32, i32),
+) -> (i32, i32) {
+    let wh = match w.outer_size() {
+        Ok(s) => s.height as i32,
+        Err(_) => OVERLAY_FALLBACK_SIZE.1,
+    };
+    let scale = w.scale_factor().unwrap_or(1.0);
+    let pad = (8.0 * scale).round() as i32;
+    let (dx, dy, cw, ch) = content_box(is_orb, wh, pad, scale);
+    let (ax, ay, aw, ah) = monitor_at_point(w, cursor.0, cursor.1);
+    ember_core::selection::clamp_window_for_content(win_x, win_y, dx, dy, cw, ch, ax, ay, aw, ah)
+}
 
 /// Tamanho da janela do overlay, espelhando a declaracao em `tauri.conf.json` (label
 /// "overlay"). So usado como fallback se `w.outer_size()` falhar (raro); nomeado para nao
 /// ter o mesmo par de numeros duplicado sem explicacao em dois ficheiros.
-const OVERLAY_FALLBACK_SIZE: (i32, i32) = (300, 140);
+/// Espelha `width`/`height` da janela `overlay` no tauri.conf.json. So e usado quando o SO nao
+/// consegue dizer o tamanho real; divergir daria um clamping errado junto as bordas do ecra.
+const OVERLAY_FALLBACK_SIZE: (i32, i32) = (520, 140);
 
 /// Obtem (ou cria) uma janela declarada com `create:false`. NAO a mostra (o caller decide
 /// posicao/foco antes de `show`, para o orb nao piscar na posicao errada).
-fn get_or_create_window(app: &AppHandle, label: &str) -> Option<WebviewWindow> {
+pub(crate) fn get_or_create_window(app: &AppHandle, label: &str) -> Option<WebviewWindow> {
     if let Some(w) = app.get_webview_window(label) {
         return Some(w);
     }
@@ -91,7 +148,7 @@ fn monitor_work_area(w: &WebviewWindow) -> (i32, i32, i32, i32) {
 /// de `monitor_work_area`, nao depende de onde a janela esta agora, por isso o orb
 /// consegue atravessar para outro ecra em vez de ficar preso na borda do monitor de
 /// origem quando o cursor muda de ecra a meio do seguimento.
-fn monitor_at_point(w: &WebviewWindow, px: i32, py: i32) -> (i32, i32, i32, i32) {
+pub(crate) fn monitor_at_point(w: &WebviewWindow, px: i32, py: i32) -> (i32, i32, i32, i32) {
     let monitors: Vec<(i32, i32, i32, i32)> = w
         .available_monitors()
         .map(|ms| {
@@ -115,42 +172,38 @@ fn monitor_at_point(w: &WebviewWindow, px: i32, py: i32) -> (i32, i32, i32, i32)
 /// por cima do rato em vez de aparecer ao lado como o orb.
 fn orb_target(app: &AppHandle, w: &WebviewWindow) -> Option<(i32, i32)> {
     let c = app.cursor_position().ok()?;
-    let (ww, wh) = match w.outer_size() {
+    let (_, wh) = match w.outer_size() {
         Ok(s) => (s.width as i32, s.height as i32),
         Err(_) => OVERLAY_FALLBACK_SIZE,
     };
-    let pad = (8.0 * w.scale_factor().unwrap_or(1.0)).round() as i32;
-    let anchor_x = c.x as i32 + ORB_OFFSET_X;
-    let anchor_y = c.y as i32 + ORB_OFFSET_Y;
-    let win_x = anchor_x - pad;
-    let win_y = anchor_y - wh / 2;
-    let (ax, ay, aw, ah) = monitor_at_point(w, c.x as i32, c.y as i32);
+    let scale = w.scale_factor().unwrap_or(1.0);
+    let pad = (8.0 * scale).round() as i32;
     let is_orb = app
         .state::<state::AppState>()
         .orb_visible
         .load(Ordering::SeqCst);
-    if is_orb {
-        // Orb: minusculo dentro de uma janela grande. Clampa so a caixa visivel ao ecra,
-        // senao perto das bordas a janela era contida e o orb afastava-se do cursor.
-        let (cw, ch) = ORB_CONTENT_SIZE;
-        Some(ember_core::selection::clamp_window_for_content(
-            win_x,
-            win_y,
-            pad,
-            (wh - ch) / 2,
-            cw,
-            ch,
-            ax,
-            ay,
-            aw,
-            ah,
-        ))
-    } else {
-        // Pilula: ocupa a janela quase toda, basta manter a janela dentro do ecra.
-        Some(ember_core::selection::clamp_pos(
-            win_x, win_y, ww, wh, ax, ay, aw, ah,
-        ))
-    }
+    // UMA ancora para as duas fases: o centro visual do ponteiro. Antes havia duas (faisca
+    // centrada no cursor, pilulas ao lado) e elas discordavam, porque a janela NAO se
+    // reposiciona quando a fase muda (mexe-la ai dava o salto visivel que se via ao carregar
+    // em Esc). A pilula herdava entao o centro da faisca e nascia por cima do cursor. Agora a
+    // janela fica onde esta e e o CSS da pilula que a afasta para o lado (ver Pill.tsx), o que
+    // tambem mantem o morph coerente: a faisca colapsa no ponteiro e a pilula abre a direita.
+    //
+    // O centro NAO e o cursor em si: o `cursor_position` devolve o hotspot, que numa seta e a
+    // pontinha de cima-esquerda. `POINTER_CENTER` empurra-o para o meio do corpo da seta
+    // (~12x19 logicos a 100%), senao o anel abracava so a ponta.
+    let (dx, dy) = POINTER_CENTER;
+    let anchor_x = c.x as i32 + ((dx - SPARK_SIZE / 2.0) * scale).round() as i32;
+    let anchor_y = c.y as i32 + (dy * scale).round() as i32;
+    let win_x = anchor_x - pad;
+    let win_y = anchor_y - wh / 2;
+    Some(clamp_visible(
+        w,
+        is_orb,
+        win_x,
+        win_y,
+        (c.x as i32, c.y as i32),
+    ))
 }
 
 /// Posiciona o orb junto ao cursor (snap), mostra-o sem foco e arranca o loop de seguimento.
@@ -161,9 +214,11 @@ pub(crate) fn show_orb_at_cursor(app: &AppHandle) {
     // Cada hotkey novo comeca sempre pelo orb: marca ja aqui (sincrono), antes do loop de
     // seguimento arrancar, para o primeiro frame nao usar a caixa de conteudo da pilula
     // que possa ter ficado de um ciclo anterior.
-    app.state::<state::AppState>()
-        .orb_visible
-        .store(true, Ordering::SeqCst);
+    {
+        let st = app.state::<state::AppState>();
+        st.orb_visible.store(true, Ordering::SeqCst);
+        st.follow_cursor.store(true, Ordering::SeqCst);
+    }
     let _ = w.set_always_on_top(true);
     // Transparente sobre outras apps: nunca intercetar cliques.
     let _ = w.set_ignore_cursor_events(true);
@@ -190,9 +245,11 @@ async fn orb_follow_loop(app: AppHandle) {
     let mut tick = tokio::time::interval(std::time::Duration::from_secs_f64(1.0 / 120.0));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-    // Constante de tempo da suavizacao: cobre ~63% da distancia ao alvo a cada SMOOTH_TAU s.
-    // Mais baixo = mais colado ao cursor; mais alto = mais fluido/preguicoso.
-    const SMOOTH_TAU: f64 = 0.05;
+    // Constante de tempo da suavizacao da PILULA do preview (a faisca segue rigida, ver
+    // abaixo): cobre ~63% da distancia ao alvo a cada tau segundos. A pilula tem texto para
+    // ler; desliza atras do cursor e assenta assim que ele para. Era 0.22 e ficava atras de
+    // mais; 0.12 chega ao cursor num terco do tempo sem perseguir aos saltos.
+    const PILL_TAU: f64 = 0.12;
     let mut current: Option<(f64, f64)> = None;
     let mut last = tokio::time::Instant::now();
 
@@ -201,61 +258,108 @@ async fn orb_follow_loop(app: AppHandle) {
     // que aguenta os 120fps emitimos a cada frame; se comeca a atrasar, baixamos para 60 e depois
     // 30fps (menos IPC), medido pelo tempo REAL de frame suavizado. So o ritmo de emissao muda;
     // o seguimento da janela mantem-se sempre a 120fps.
-    let mut smoothed_dt = 1.0 / 120.0;
-    let mut emit_accum = 0.0f64;
+
+    // A janela ja foi vista visivel alguma vez neste ciclo?
+    //
+    // Isto existe por causa de uma corrida REAL, e nao por cautela. O `show()` e chamado da
+    // thread do atalho global, e o Tauri despacha-o para a thread principal: quando este ciclo
+    // corre a primeira volta, a janela pode ainda nao estar visivel. A versao anterior fazia
+    // `break` nesse caso, e o resultado era o pior possivel: o seguimento morria ANTES do
+    // primeiro frame e a pilula ficava parada no sitio onde nasceu, para o resto do ciclo.
+    // Enquanto nunca foi visivel, esperamos; so depois de a ter visto e que "invisivel" quer
+    // mesmo dizer "acabou".
+    let mut seen_visible = false;
+    // Teto para essa espera: se a janela nunca aparecer (falha a mostrar), nao ficamos com um
+    // ciclo a 120fps para sempre.
+    let started = tokio::time::Instant::now();
+    const SHOW_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
 
     loop {
-        if !matches!(w.is_visible(), Ok(true)) {
-            break;
+        match w.is_visible() {
+            Ok(true) => seen_visible = true,
+            _ if seen_visible => break,
+            _ if started.elapsed() > SHOW_GRACE => {
+                log::warn!("overlay: nunca ficou visivel em {SHOW_GRACE:?}; seguimento desiste");
+                break;
+            }
+            _ => {
+                // Ainda a aparecer. Salta o frame sem desistir do ciclo.
+                tick.tick().await;
+                continue;
+            }
         }
-        // O seguimento e do ORB. Assim que a fase deixa de ser "refining" (a pilula do preview
-        // ou do resultado toma o lugar), congela: uma pilula que persegue o rato e impossivel de
-        // ler, e junto as bordas do ecra dava saltos (o clamping muda de "so a caixa do orb"
-        // para "a janela toda"). Reposiciona uma ultima vez com o clamping da pilula, para ela
-        // ficar inteira dentro do ecra, e sai do loop.
+        // O seguimento acaba quando o ciclo acaba: nas pilulas de RESULTADO, que sao passageiras
+        // e nada pedem. A do PREVIEW continua a seguir, porque essa espera uma resposta e tem de
+        // estar onde a pessoa esta a olhar.
+        //
+        // Ao sair NAO se salta para o cursor. Antes fazia-se, e dava um salto visivel: a janela
+        // vinha atras do rato com suavizacao (fica sempre um pouco atras), e o reposicionamento
+        // final apagava essa distancia de uma vez. Carregar em Esc no preview via-se como a
+        // pilula a mudar de sitio no instante em que respondia. Agora fica onde estava e so se
+        // garante que cabe no ecra, que era a unica razao para haver reposicionamento aqui.
         if !app
             .state::<state::AppState>()
-            .orb_visible
+            .follow_cursor
             .load(Ordering::SeqCst)
         {
-            if let Some((x, y)) = orb_target(&app, &w) {
-                let _ = w.set_position(PhysicalPosition::new(x, y));
+            match current {
+                Some((cx, cy)) => {
+                    // MESMA regra de clamp do seguimento (`clamp_visible`), e nao a da janela
+                    // inteira. Eram duas: a posicao vinha calculada pela caixa visivel e a
+                    // saida continha a janela toda, portanto ao aprovar o preview a pilula
+                    // saltava de sitio no instante em que se carregava em Enter.
+                    let is_orb = app
+                        .state::<state::AppState>()
+                        .orb_visible
+                        .load(Ordering::SeqCst);
+                    let (nx, ny) = clamp_visible(
+                        &w,
+                        is_orb,
+                        cx.round() as i32,
+                        cy.round() as i32,
+                        (cx.round() as i32, cy.round() as i32),
+                    );
+                    let _ = w.set_position(PhysicalPosition::new(nx, ny));
+                }
+                // Nunca chegou a haver posicao suavizada (saiu no primeiro frame): ai o alvo do
+                // cursor e a unica referencia que existe.
+                None => {
+                    if let Some((x, y)) = orb_target(&app, &w) {
+                        let _ = w.set_position(PhysicalPosition::new(x, y));
+                    }
+                }
             }
             break;
         }
         let now = tokio::time::Instant::now();
         let dt = (now - last).as_secs_f64();
         last = now;
-        // EMA do tempo de frame: sinal de saude da maquina (dt cresce quando nao aguenta 120fps).
-        smoothed_dt = smoothed_dt * 0.9 + dt * 0.1;
         if let Some((tx, ty)) = orb_target(&app, &w) {
             let (tx, ty) = (tx as f64, ty as f64);
-            let mut pull = (0.0, 0.0);
             let (nx, ny) = match current {
                 // Primeiro frame: snap ao alvo (sem arrasto a partir do canto).
                 None => (tx, ty),
                 Some((cx, cy)) => {
-                    pull = (tx - cx, ty - cy); // quanto o cursor esta a frente da estrela agora
-                    let alpha = 1.0 - (-dt / SMOOTH_TAU).exp();
-                    (cx + (tx - cx) * alpha, cy + (ty - cy) * alpha)
+                    if app
+                        .state::<state::AppState>()
+                        .orb_visible
+                        .load(Ordering::SeqCst)
+                    {
+                        // FAISCA: colada ao cursor, sem suavizacao. O arrasto deslocava o
+                        // centro da orbita e a faisca parecia nadar atras do rato; a vida
+                        // visual vem da propria orbita, o seguimento so tem de estar certo.
+                        (tx, ty)
+                    } else {
+                        let alpha = 1.0 - (-dt / PILL_TAU).exp();
+                        (cx + (tx - cx) * alpha, cy + (ty - cy) * alpha)
+                    }
                 }
             };
             let _ = w.set_position(PhysicalPosition::new(nx.round() as i32, ny.round() as i32));
             current = Some((nx, ny));
 
-            // Emissao adaptativa da velocidade. Periodo escolhido pela saude da maquina.
-            let emit_period = if smoothed_dt < 1.4 / 120.0 {
-                1.0 / 120.0 // aguenta bem -> 120fps
-            } else if smoothed_dt < 1.4 / 60.0 {
-                1.0 / 60.0 // a atrasar -> 60fps
-            } else {
-                1.0 / 30.0 // lenta -> 30fps
-            };
-            emit_accum += dt;
-            if emit_accum >= emit_period {
-                emit_accum = 0.0;
-                let _ = w.emit("ember://orb-motion", serde_json::json!({ "vx": pull.0, "vy": pull.1 }));
-            }
+            // (A emissao ember://orb-motion morreu com a estrela: o tilt era o unico
+            // consumidor do vetor de puxao, e a faisca segue rigida. Menos um IPC por frame.)
         }
         tick.tick().await;
     }
@@ -286,10 +390,14 @@ pub(crate) fn apply_window_theme(app: &AppHandle) {
 }
 
 pub(crate) fn show_settings(app: &AppHandle) {
-    // A janela ja existia? So nas REABERTURAS emitimos settings-opened (para o React re-animar
-    // o fade-in via remount). Na 1a criacao NAO emitimos: o React acabou de montar e ja anima a
-    // entrada sozinho; um emit aqui fazia um segundo remount (o conteudo aparecia, desaparecia e
-    // voltava). O emit tambem chegaria antes de o webview ter listener, portanto seria inutil.
+    // A janela ja existia? So nesse caso emitimos settings-opened, que faz o React re-animar a
+    // entrada (remount por `openKey`) E recarregar o estado do Rust. Se a estamos a criar agora,
+    // NAO emitimos: o React acabou de montar, ja anima sozinho e ja foi buscar os dados; um emit
+    // aqui dava um segundo remount (o conteudo aparecia, desaparecia e voltava) e chegaria antes
+    // de o webview ter listener.
+    //
+    // Com o pre-aquecimento no arranque, o caminho normal e este: a janela existe, esta escondida
+    // e ja hidratada, portanto abrir e mostrar + recarregar.
     let existed = app.get_webview_window("settings").is_some();
     if let Some(w) = get_or_create_window(app, "settings") {
         let _ = w.center();
@@ -321,12 +429,28 @@ async fn prevalidate_providers(app: AppHandle) {
     use ember_core::model::Provider;
     let state = app.state::<state::AppState>();
     let cfg = config::load(&app);
+    // A cor do projeto ativo tem de estar pronta antes do primeiro refine, senao o primeiro orb
+    // do arranque sairia sem ela e so os seguintes e que tomavam a cor.
+    commands::refresh_orb_accent(&state, &cfg);
     let pctx = providers::ProviderCtx {
-        gemini_model: &cfg.gemini_model,
-        openai_model: &cfg.openai_model,
         openai_base_url: &cfg.openai_base_url,
     };
-    for provider in [Provider::Gemini, Provider::OpenAi] {
+    for provider in cfg.provider_order() {
+        // Modo subscricao: nao ha chave para provar, prova-se a sessao. Renovar o token aqui e o
+        // que faz com que o primeiro refine do dia nao pague a espera da renovacao.
+        if provider == Provider::OpenAi && cfg.openai_auth == config::OpenAiAuth::ChatGpt {
+            let probe = oauth::probe(&state).await;
+            if let Ok(mut m) = state.key_checks.lock() {
+                m.insert(provider, (probe.check, now_ms()));
+            }
+            log::info!(
+                "prevalidate {provider:?} (sessao ChatGPT): {:?} ({} modelos)",
+                probe.check,
+                probe.models.len()
+            );
+            models_cache::absorb(&app, &state, provider, &probe.models);
+            continue;
+        }
         // Bug A: ler pelo try_get. Um cofre bloqueado (Err) nao rebenta o arranque: loga e salta.
         // O caminho do refine vai, a seu tempo, reportar KeyStore honestamente quando for preciso.
         match secrets::try_get(provider) {
@@ -382,21 +506,30 @@ pub(crate) fn apply_devtools(app: &AppHandle, enabled: bool) {
 ///
 /// Um atalho de modo VAZIO nao e um erro: quer dizer "nao registes este". Quem so quer um
 /// atalho fica com um, sem arriscar conflitos com outras apps por causa de dois que nao usa.
+/// O que um atalho global dispara. Nasceu quando o picker chegou: um `Option<RefineMode>` ja nao
+/// chegava, porque abrir o picker nao e um modo de refinar.
+#[derive(Clone, Copy)]
+pub(crate) enum HotkeyAction {
+    /// Refina. `None` = usa o modo das settings, lido a cada disparo.
+    Refine(Option<RefineMode>),
+    /// Abre o picker de projetos ao cursor.
+    Picker,
+}
+
 pub(crate) fn register_hotkeys(app: &AppHandle, cfg: &config::Config) -> Result<(), String> {
     let gs = app.global_shortcut();
     let _ = gs.unregister_all();
-    let wanted: [(&str, Option<RefineMode>); 3] = [
-        // `None` = "usa o modo das settings", lido a cada disparo para o dropdown ter efeito
-        // imediato sem re-registar atalhos.
-        (cfg.hotkey.as_str(), None),
-        (cfg.hotkey_polish.as_str(), Some(RefineMode::Polish)),
-        (cfg.hotkey_turbo.as_str(), Some(RefineMode::Turbo)),
+    let wanted: [(&str, HotkeyAction); 4] = [
+        (cfg.hotkey.as_str(), HotkeyAction::Refine(None)),
+        (cfg.hotkey_polish.as_str(), HotkeyAction::Refine(Some(RefineMode::Polish))),
+        (cfg.hotkey_turbo.as_str(), HotkeyAction::Refine(Some(RefineMode::Turbo))),
+        (cfg.hotkey_picker.as_str(), HotkeyAction::Picker),
     ];
-    for (combo, mode) in wanted {
+    for (combo, action) in wanted {
         if combo.trim().is_empty() {
             continue;
         }
-        if let Err(e) = register_one(app, combo, mode) {
+        if let Err(e) = register_one(app, combo, action) {
             let _ = gs.unregister_all();
             return Err(format!("{combo}: {e}"));
         }
@@ -458,11 +591,31 @@ pub(crate) fn probe_hotkey_free(app: &AppHandle, accel: &str) -> bool {
 fn register_one(
     app: &AppHandle,
     hotkey: &str,
-    forced_mode: Option<RefineMode>,
+    action: HotkeyAction,
 ) -> Result<(), String> {
     let gs = app.global_shortcut();
     gs.on_shortcut(hotkey, move |app, _shortcut, event| {
         if event.state == ShortcutState::Pressed {
+            // O picker tem um caminho proprio, muito mais curto que o do refine: sem captura,
+            // sem clipboard, sem orb. As guardas (busy, reentrancia) vivem dentro dele.
+            if matches!(action, HotkeyAction::Picker) {
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    picker::open_picker(app).await;
+                });
+                return;
+            }
+            let HotkeyAction::Refine(forced_mode) = action else {
+                return;
+            };
+            // Um refine a arrancar fecha o picker se ele estiver aberto: dois hooks LL vivos a
+            // consumir Enter e o perigo real, e o refine tem prioridade (e o trabalho a serio).
+            {
+                let st = app.state::<state::AppState>();
+                if st.picker_open.load(Ordering::SeqCst) {
+                    st.picker_cancel.store(true, Ordering::SeqCst);
+                }
+            }
             // Guarda de reentrancia. Se ja houver um refine a decorrer, esta segunda tecla
             // CANCELA-o (em vez de arrancar um segundo fluxo, que corromperia o clipboard).
             let st = app.state::<state::AppState>();
@@ -595,6 +748,10 @@ pub fn run() {
             commands::clear_api_key,
             commands::validate_key,
             commands::list_models,
+            commands::chatgpt_login,
+            commands::chatgpt_logout,
+            commands::set_openai_auth,
+            commands::set_primary_provider,
             commands::check_hotkey,
             commands::set_gemini_model_auto,
             commands::set_select_all_fallback,
@@ -605,6 +762,12 @@ pub fn run() {
             commands::close_splash,
             commands::finalize_quit,
             commands::set_debug_mode,
+            commands::set_save_prompts,
+            commands::save_project,
+            commands::delete_project,
+            commands::set_active_project,
+            commands::scan_project_folder,
+            commands::distill_project,
             commands::read_recent_logs,
             commands::reveal_log_dir,
             commands::open_repo,
@@ -655,6 +818,27 @@ pub fn run() {
             // Pre-cria a janela overlay (escondida) para o listener do orb estar pronto
             // antes do primeiro hotkey (senao o evento "refining" perde-se).
             let _ = get_or_create_window(&handle, "overlay");
+            // O picker tambem: sem pre-criacao, o primeiro `ember://picker` disparava antes de o
+            // webview ter listener e a primeira abertura mostrava uma caixa vazia.
+            let _ = get_or_create_window(&handle, "picker");
+            // As settings tambem, mas DEPOIS do arranque estar despachado: e a janela mais
+            // pesada (920x640, o bundle inteiro do React) e criar-la so no clique fazia pagar
+            // ali tudo de uma vez, arrancar o webview, carregar o bundle, montar e ir buscar as
+            // definicoes, com a janela ja visivel a meio disso. Aquecida, abrir passa a ser um
+            // `show()`. O atraso deixa o arranque da app respirar primeiro; quem clica na tray
+            // nos primeiros dois segundos cai no caminho antigo (cria na hora), que continua a
+            // funcionar. Nota: a janela nasce escondida (`visible: false` na config), por isso
+            // isto nao pisca nada no ecra.
+            {
+                let h = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    if h.get_webview_window("settings").is_none() {
+                        let _ = get_or_create_window(&h, "settings");
+                        log::info!("settings: janela pre-aquecida");
+                    }
+                });
+            }
             // Pre-valida os fallbacks em background (nao bloqueia o arranque).
             tauri::async_runtime::spawn(prevalidate_providers(handle.clone()));
             let mut cfg = config::load(&handle);
