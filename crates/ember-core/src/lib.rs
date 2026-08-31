@@ -22,7 +22,7 @@ pub mod providers;
 pub mod retry;
 pub mod selection;
 
-pub use engine::{postprocess, precondition, DegradeReason, EngineResult, Prepared};
+pub use engine::{postprocess, precondition, DegradeReason, EngineResult, Prepared, is_worth_refining};
 pub use error::{CoreError, OutcomeClass};
 pub use health::{assess_providers, KeyCheck, ProviderStatus, Readiness, SystemHealth};
 pub use hotkey::{evaluate as evaluate_hotkey, HotkeyVerdict, Os};

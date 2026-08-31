@@ -65,6 +65,37 @@ pub enum EngineResult {
 /// escapa marcadores. A ordem importa: mascarar ANTES de escapar protege o conteudo de codigo
 /// (que vira token) de ser tocado pelo escape, e um `[/EMBER_INPUT]` dentro de codigo nunca
 /// chega ao modelo (vai mascarado).
+/// Teto de caracteres abaixo do qual uma seleccao curta e olhada com desconfianca. Acima disto
+/// ha sempre frase que chegue para valer a pena refinar.
+const TRIVIAL_MAX_CHARS: usize = 20;
+/// Palavras maximas de uma seleccao trivial. Duas ("tester aasdd") nao tem estrutura para
+/// melhorar; a partir de tres ja pode haver uma frase curta a serio.
+const TRIVIAL_MAX_WORDS: usize = 2;
+
+/// Vale a pena gastar uma chamada ao modelo com este texto?
+///
+/// Existe por causa de um caso real: refinar "tester aasdd" custou 3,8 segundos e uma chamada
+/// para devolver exatamente a mesma coisa. Pagar para descobrir que nao havia nada a melhorar e
+/// desperdicio, e desperdicio que o utilizador ve.
+///
+/// A regra e DELIBERADAMENTE conservadora, porque o erro caro e o falso positivo: saltar um
+/// refine que a pessoa queria e pior do que gastar uma chamada a mais. So salta o que e curto E
+/// tem pouquissimas palavras E nao tem sinal nenhum de frase.
+pub fn is_worth_refining(text: &str) -> bool {
+    let t = text.trim();
+    if t.is_empty() {
+        return false;
+    }
+    if t.chars().count() > TRIVIAL_MAX_CHARS {
+        return true;
+    }
+    // Pontuacao e sinal de que ha frase, mesmo curta ("nao, obrigado").
+    if t.chars().any(|c| matches!(c, '.' | '!' | '?' | ',' | ';' | ':')) {
+        return true;
+    }
+    t.split_whitespace().count() > TRIVIAL_MAX_WORDS
+}
+
 pub fn precondition(raw_selection: &str, mode: RefineMode) -> Prepared {
     let (normalized, eol) = normalize::normalize_input(raw_selection);
     let spans = mask::scan_spans(&normalized);
@@ -197,5 +228,31 @@ mod golds {
             EngineResult::Paste(s) => assert!(s.contains("```py") && s.contains("print(1)")),
             other => panic!("esperava Paste, veio {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod preflight {
+    use super::is_worth_refining;
+
+    #[test]
+    fn a_selection_with_nothing_to_improve_never_reaches_the_model() {
+        // O caso que motivou isto: duas palavras sem estrutura, 3,8s e uma chamada para
+        // devolver o mesmo texto.
+        assert!(!is_worth_refining("tester aasdd"));
+        assert!(!is_worth_refining("asdf"));
+        assert!(!is_worth_refining("   "));
+        assert!(!is_worth_refining("hello world"));
+    }
+
+    #[test]
+    fn anything_that_could_be_a_real_sentence_is_refined() {
+        // O falso positivo e o erro caro: saltar um refine que a pessoa queria e pior do que
+        // gastar uma chamada a mais. Tres palavras passam, por curtas que sejam.
+        assert!(is_worth_refining("fix this bug"));
+        assert!(is_worth_refining("ok."));
+        assert!(is_worth_refining("we ship monday"));
+        assert!(is_worth_refining("preciso que vas ao linear ver os issues"));
+        assert!(is_worth_refining("nao, obrigado"));
     }
 }

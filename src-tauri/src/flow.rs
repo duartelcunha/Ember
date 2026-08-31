@@ -265,6 +265,21 @@ pub async fn run(app: AppHandle, opts: RunOpts) {
         return;
     };
 
+    // Nada que se refine: devolve o ecra sem gastar uma chamada. Vem ANTES de tudo o resto (do
+    // orb, do clipboard, do modelo) porque o objetivo e nao pagar nada por isto; refinar
+    // "tester aasdd" custava ~4s e uma chamada para devolver o mesmo texto.
+    if !ember_core::is_worth_refining(&selected) {
+        log::info!(
+            "preflight: seleccao sem nada a refinar ({} chars); sem chamada ao modelo",
+            selected.chars().count()
+        );
+        let s = saved.clone();
+        let _ = tauri::async_runtime::spawn_blocking(move || blocking_restore(s, image, terminal))
+            .await;
+        finish(&app, FlowOutcome::NothingToRefine).await;
+        return;
+    }
+
     // Guarda do fallback: o texto veio de um Ctrl+A nosso, nao de uma escolha do utilizador. Se
     // o foco nao estava num campo editavel, esse Ctrl+A seleciona o DOCUMENTO todo e o que temos
     // em maos e uma pagina inteira. Colar por cima disso destruia-a; abortamos e dizemos porque.
