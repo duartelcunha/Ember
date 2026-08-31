@@ -81,12 +81,25 @@ const TRIVIAL_MAX_WORDS: usize = 2;
 /// A regra e DELIBERADAMENTE conservadora, porque o erro caro e o falso positivo: saltar um
 /// refine que a pessoa queria e pior do que gastar uma chamada a mais. So salta o que e curto E
 /// tem pouquissimas palavras E nao tem sinal nenhum de frase.
-pub fn is_worth_refining(text: &str) -> bool {
+pub fn is_worth_refining(text: &str, mode: RefineMode) -> bool {
+    // O modo Turbo existe para PEGAR num fragmento e o expandir (ver `output_budget`, que lhe da
+    // um teto proprio precisamente para entradas curtas). Saltar "ship monday" em Turbo era
+    // desligar o atalho exatamente no caso para que ele foi feito.
+    if mode == RefineMode::Turbo {
+        return true;
+    }
     let t = text.trim();
     if t.is_empty() {
         return false;
     }
     if t.chars().count() > TRIVIAL_MAX_CHARS {
+        return true;
+    }
+    // Fora do ASCII nao se decide nada. A contagem de palavras assenta em espacos, e o japones,
+    // o chines e o tailandes escrevem frases inteiras sem nenhum: uma frase de quinze
+    // caracteres contava como UMA palavra e era descartada em silencio. Como o erro caro aqui e
+    // saltar um refine que a pessoa queria, tudo o que nao seja ASCII simples passa.
+    if !t.is_ascii() {
         return true;
     }
     // Pontuacao e sinal de que ha frase, mesmo curta ("nao, obrigado").
@@ -235,24 +248,44 @@ mod golds {
 mod preflight {
     use super::is_worth_refining;
 
+    use crate::model::RefineMode;
+
+    #[test]
+    fn a_sentence_without_spaces_is_never_silently_skipped() {
+        // Japones, chines e tailandes escrevem sem espacos: a contagem de palavras dava 1 e a
+        // frase inteira era descartada. Fora do ASCII nao se decide nada.
+        assert!(is_worth_refining("明日の会議は中止になりました。", RefineMode::Polish));
+        assert!(is_worth_refining("我们明天开会", RefineMode::Polish));
+        assert!(is_worth_refining("ola mundo", RefineMode::Polish) == false);
+        assert!(is_worth_refining("olá mundo", RefineMode::Polish));
+    }
+
+    #[test]
+    fn turbo_never_skips_because_expanding_fragments_is_its_job() {
+        // O Turbo existe para pegar num fragmento e o expandir; saltar aqui desligava o atalho
+        // no unico caso que ele serve.
+        assert!(is_worth_refining("ship monday", RefineMode::Turbo));
+        assert!(is_worth_refining("asdf", RefineMode::Turbo));
+    }
+
     #[test]
     fn a_selection_with_nothing_to_improve_never_reaches_the_model() {
         // O caso que motivou isto: duas palavras sem estrutura, 3,8s e uma chamada para
         // devolver o mesmo texto.
-        assert!(!is_worth_refining("tester aasdd"));
-        assert!(!is_worth_refining("asdf"));
-        assert!(!is_worth_refining("   "));
-        assert!(!is_worth_refining("hello world"));
+        assert!(!is_worth_refining("tester aasdd", RefineMode::Polish));
+        assert!(!is_worth_refining("asdf", RefineMode::Polish));
+        assert!(!is_worth_refining("   ", RefineMode::Polish));
+        assert!(!is_worth_refining("hello world", RefineMode::Polish));
     }
 
     #[test]
     fn anything_that_could_be_a_real_sentence_is_refined() {
         // O falso positivo e o erro caro: saltar um refine que a pessoa queria e pior do que
         // gastar uma chamada a mais. Tres palavras passam, por curtas que sejam.
-        assert!(is_worth_refining("fix this bug"));
-        assert!(is_worth_refining("ok."));
-        assert!(is_worth_refining("we ship monday"));
-        assert!(is_worth_refining("preciso que vas ao linear ver os issues"));
-        assert!(is_worth_refining("nao, obrigado"));
+        assert!(is_worth_refining("fix this bug", RefineMode::Polish));
+        assert!(is_worth_refining("ok.", RefineMode::Polish));
+        assert!(is_worth_refining("we ship monday", RefineMode::Polish));
+        assert!(is_worth_refining("preciso que vas ao linear ver os issues", RefineMode::Polish));
+        assert!(is_worth_refining("nao, obrigado", RefineMode::Polish));
     }
 }

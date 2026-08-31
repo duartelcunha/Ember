@@ -35,15 +35,23 @@ const SPARK_SIZE: f64 = 40.0;
 /// Caixa a garantir visivel: a faisca mais a folga do estado de retry, onde o rotor cresce
 /// ~32% (ver `VARIANT` em Orb.tsx).
 const SPARK_CLAMP: f64 = 56.0;
+/// Largura reservada a direita da faisca para a etiqueta do projeto (max 120) e a legenda de
+/// retry (max 170), com as folgas entre elas.
+const ORB_LABELS_W: f64 = 310.0;
 /// Centro visual do ponteiro em relacao ao hotspot, em px logicos. Uma seta padrao do Windows
 /// ocupa ~12x19 para baixo e para a direita do hotspot; o meio do corpo dela cai aqui.
 const POINTER_CENTER: (f64, f64) = (6.0, 9.0);
 
-/// Caixa da PILULA dentro da janela, em px logicos: o desvio lateral (espelhado no `ml-[34px]`
-/// do Pill.tsx, la `ml-10`) e um tamanho generoso que cobre a frase mais longa ("Enter to apply · Esc to
-/// keep original"). Serve para clampar pela pilula VISIVEL em vez de pela janela inteira.
+/// Caixa da PILULA dentro da janela, em px logicos. `PILL_MARGIN_X` e o desvio lateral,
+/// espelhado no `ml-10` do Pill.tsx (Tailwind: 40px); muda um, muda o outro.
+///
+/// `PILL_BOX` e a area que garantimos visivel ao clampar, e tem de cobrir a mensagem mais
+/// LONGA, nao a tipica: "Clipboard holds files Ember can't preserve. Copy your text first."
+/// tem 65 caracteres, e um erro de provider pode ser maior ainda. Com os 300 de antes, essas
+/// eram cortadas pela borda direita do ecra, que e precisamente quando ha algo importante a
+/// dizer. 460 cobre-as com folga, e nao custa nada: a janela ja e maior do que isso.
 const PILL_MARGIN_X: f64 = 40.0;
-const PILL_BOX: (f64, f64) = (300.0, 40.0);
+const PILL_BOX: (f64, f64) = (460.0, 44.0);
 
 /// Onde esta o conteudo visivel dentro da janela, e que tamanho tem, para a fase atual. Tudo em
 /// px fisicos.
@@ -62,7 +70,11 @@ fn content_box(is_orb: bool, wh: i32, pad: i32, scale: f64) -> (i32, i32, i32, i
         // da caixa continuar a ser o mesmo ponto, que e o que ancora a orbita no ponteiro.
         let side = px(SPARK_CLAMP);
         let folga = (px(SPARK_CLAMP) - px(SPARK_SIZE)) / 2;
-        (pad - folga, (wh - side) / 2, side, side)
+        // A largura leva tambem a etiqueta do projeto e a legenda de retry, que vivem A DIREITA
+        // da faisca (ver Overlay.tsx). Clampar so pela faisca punha-as a comecar exatamente na
+        // borda do ecra, invisiveis, e a etiqueta do projeto e a resposta a "com que contexto e
+        // que este refine esta a ser feito".
+        (pad - folga, (wh - side) / 2, side + px(ORB_LABELS_W), side)
     } else {
         let (bw, bh) = PILL_BOX;
         let (bw, bh) = (px(bw), px(bh));

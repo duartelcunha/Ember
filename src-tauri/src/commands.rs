@@ -350,7 +350,7 @@ pub fn check_hotkey(
     }
 }
 
-/// Grava os tres atalhos de uma vez. `which` = "main" | "polish" | "turbo".
+/// Grava um dos atalhos. `which` = "main" | "polish" | "turbo" | "picker".
 ///
 /// Regista PRIMEIRO, persiste depois. Se o novo atalho for invalido ou estiver ocupado, restaura
 /// o conjunto anterior (o registo faz `unregister_all`, logo sem restauro a app ficava sem atalho
@@ -361,20 +361,34 @@ pub fn check_hotkey(
 pub fn set_hotkey(app: AppHandle, which: String, hotkey: String) -> Result<(), String> {
     let mut cfg = config::load(&app);
     let previous = cfg.clone();
-    match which.as_str() {
-        "main" => cfg.hotkey = hotkey,
-        "polish" => cfg.hotkey_polish = hotkey,
-        "turbo" => cfg.hotkey_turbo = hotkey,
-        "picker" => {
-            // Mesma regra do `check_hotkey`, aplicada aqui outra vez: este comando e a porta
-            // que grava de verdade, e uma validacao que so vive na UI nao e validacao.
+    // A POLITICA corre aqui, e nao so no `check_hotkey`, porque este comando e a porta que grava
+    // de verdade e uma validacao que so vive na UI nao e validacao. O `check` pode falhar (fora
+    // do Tauri, ou um erro de IPC) e a UI grava na mesma nesse caso; sem esta rede, um `Enter`
+    // sozinho podia ficar gravado e roubar a tecla ao sistema inteiro. Limpar (string vazia) e
+    // sempre legal: quer dizer "nao registes nada neste slot".
+    if !hotkey.trim().is_empty() {
+        if which == "picker" {
             if let Some(key) = ember_core::hotkey::picker_key_clash(&hotkey) {
                 return Err(format!(
                     "the project picker needs {key} to navigate; pick a combination without it"
                 ));
             }
-            cfg.hotkey_picker = hotkey;
         }
+        let outros = other_slots(&cfg, &which);
+        let refs: Vec<(&str, &str)> = outros
+            .iter()
+            .map(|(s, a)| (s.as_str(), a.as_str()))
+            .collect();
+        match ember_core::hotkey::evaluate(&hotkey, crate::current_os(), &refs) {
+            ember_core::hotkey::HotkeyVerdict::Available => {}
+            outro => return Err(format!("{hotkey} can't be used: {outro:?}")),
+        }
+    }
+    match which.as_str() {
+        "main" => cfg.hotkey = hotkey,
+        "polish" => cfg.hotkey_polish = hotkey,
+        "turbo" => cfg.hotkey_turbo = hotkey,
+        "picker" => cfg.hotkey_picker = hotkey,
         _ => return Err(format!("invalid hotkey slot: {which}")),
     }
     crate::register_hotkeys(&app, &cfg).map_err(|e| {
