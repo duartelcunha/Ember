@@ -36,8 +36,15 @@ export const SelectContent = React.forwardRef<
       ref={ref}
       position={position}
       className={cn(
-        "z-50 overflow-hidden rounded-md border border-[color:var(--border-default)] bg-surface-2 text-fg shadow-[var(--shadow-pop)]",
-        position === "popper" && "min-w-[var(--radix-select-trigger-width)]",
+        // O teto de altura e o que faz a lista ter scroll. Sem ele, o Radix deixa o menu crescer
+        // ate onde precisar, e como o Content e `overflow-hidden` os botoes de scroll aqui abaixo
+        // nunca chegam a engatar: com uma listagem viva (16 modelos do Gemini, centenas do
+        // OpenRouter) a lista passava a borda do ecra e os ultimos modelos ficavam inalcancaveis.
+        // `max-h-96` e a rede para quem passe `position="item-aligned"`, onde a variavel do Radix
+        // nao existe e o `min()` inteiro se anularia.
+        "z-50 max-h-96 overflow-hidden rounded-md border border-[color:var(--border-default)] bg-surface-2 text-fg shadow-[var(--shadow-pop)]",
+        position === "popper" &&
+          "max-h-[min(24rem,var(--radix-select-content-available-height))] min-w-[var(--radix-select-trigger-width)]",
         className,
       )}
       {...props}
@@ -45,7 +52,14 @@ export const SelectContent = React.forwardRef<
       <SelectPrimitive.ScrollUpButton className="flex items-center justify-center py-1">
         <CaretUp size={12} />
       </SelectPrimitive.ScrollUpButton>
-      <SelectPrimitive.Viewport className="p-1">{children}</SelectPrimitive.Viewport>
+      {/* O scroll em si e do Radix: ele poe `overflow: hidden auto` inline no viewport, e uma
+          classe nossa de overflow nunca lhe ganharia. O que faltava era so o teto de altura la em
+          cima, sem o qual nunca ha nada por onde rolar. */}
+      <SelectPrimitive.Viewport
+        className={cn("p-1", position === "popper" && "w-full")}
+      >
+        {children}
+      </SelectPrimitive.Viewport>
       <SelectPrimitive.ScrollDownButton className="flex items-center justify-center py-1">
         <CaretDown size={12} />
       </SelectPrimitive.ScrollDownButton>

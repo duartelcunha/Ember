@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { ipc, type HotkeySlot, type HotkeyVerdict } from "@/lib/ipc";
 
 /** O webview corre o mesmo JS nas duas plataformas, mas a tecla `Meta` nao e a mesma coisa:
@@ -90,6 +91,8 @@ function refusal(accel: string, v: HotkeyVerdict): string | null {
       return "Hold your modifiers and press a key.";
     case "needs_modifier":
       return `${accel} on its own would take that key from every app. Add Ctrl, Alt or Shift.`;
+    case "clashes_with_picker":
+      return `The project picker uses ${v.key} to navigate, so ${accel} would close the list instead of moving in it. Pick a combination without it.`;
   }
 }
 
@@ -109,7 +112,10 @@ export function HotkeyCapture({
   value: string;
   /** Qual dos tres atalhos, para o check saber com o que comparar. */
   slot: HotkeySlot;
-  onCommit: (accel: string) => Promise<void>;
+  /** Grava e devolve `null` em sucesso ou a mensagem de erro. A mensagem volta para o MESMO
+   *  alerta inline do pre-check: um canal de erro so, em vez de "inline para recusas, toast
+   *  para falhas de registo", que deixava a caixa a mostrar o valor antigo como se nada fosse. */
+  onCommit: (accel: string) => Promise<string | null>;
   /** Atalhos opcionais (os de modo) podem ficar vazios, e vazio quer dizer "nao registes". */
   clearable?: boolean;
   ariaLabel?: string;
@@ -118,7 +124,6 @@ export function HotkeyCapture({
   const [preview, setPreview] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
-  const boxRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!capturing) return;
@@ -135,26 +140,40 @@ export function HotkeyCapture({
       if (!accel) {
         // So modificadores ainda: mostra o preview ao vivo ("CmdOrCtrl+Shift+...").
         const mods = modifiersOf(e);
+        setError(null);
         setPreview(mods.length ? mods.join("+") + "+…" : "…");
         return;
       }
       // Combinacao completa. Pergunta ao nucleo se pode ser gravada ANTES de a gravar.
+      setError(null);
       setPreview(accel);
       setChecking(true);
+      // Gravacao com o erro de volta AQUI: se o registo real falhar (outra app apanhou a
+      // combinacao entre o check e o set), a captura reabre com a mensagem, em vez de um toast
+      // passageiro e a caixa a fingir que nada aconteceu.
+      const commit = () =>
+        onCommit(accel).then((msg) => {
+          if (msg) {
+            setError(msg);
+            setPreview(accel);
+            setCapturing(true);
+          }
+        });
       ipc
         .checkHotkey(slot, accel)
         .then((verdict) => {
           const msg = refusal(accel, verdict);
           if (msg) {
-            // Recusada: fica em captura, a vermelho, a espera de outra combinacao.
+            // Recusada: fica em captura, a vermelho, a espera de outra combinacao. O combo
+            // rejeitado FICA visivel (riscado): apaga-lo deixava o erro a falar de uma
+            // combinacao que ja nao se via em lado nenhum.
             setError(msg);
-            setPreview(null);
             return;
           }
           setCapturing(false);
           setPreview(null);
           setError(null);
-          return onCommit(accel);
+          return commit();
         })
         .catch(() => {
           // Fora do Tauri, ou o check em si falhou. Nao bloqueia a gravacao por causa de uma
@@ -162,7 +181,7 @@ export function HotkeyCapture({
           setCapturing(false);
           setPreview(null);
           setError(null);
-          return onCommit(accel);
+          return commit();
         })
         .finally(() => setChecking(false));
     };
@@ -182,23 +201,57 @@ export function HotkeyCapture({
       ? "border-[color:var(--border-accent)] bg-surface-1 text-fg-muted"
       : "border-[color:var(--border-subtle)] bg-surface-2 text-fg";
 
+  // Sair da captura sem gravar limpa TUDO: sem isto o Cancel deixava o erro vermelho da
+  // tentativa anterior preso na caixa, sem captura ativa que o explicasse.
+  const cancelCapture = () => {
+    setCapturing(false);
+    setPreview(null);
+    setError(null);
+  };
+
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center gap-2">
         <div
-          ref={boxRef}
+          role="button"
+          tabIndex={0}
           aria-label={ariaLabel}
           aria-invalid={error ? true : undefined}
-          className={`flex h-9 flex-1 items-center rounded-sm border px-3 font-mono text-sm ${boxClass}`}
+          onClick={() => {
+            if (!capturing) startCapture();
+          }}
+          onKeyDown={(e) => {
+            if (!capturing && (e.key === "Enter" || e.key === " ")) {
+              e.preventDefault();
+              startCapture();
+            }
+          }}
+          className={`flex h-9 flex-1 cursor-pointer items-center gap-2 rounded-sm border px-3 font-mono text-sm ${boxClass}`}
         >
-          {capturing
-            ? checking
-              ? `${preview ?? ""} checking…`
-              : (preview ?? "Press your shortcut…")
-            : value || "Not set"}
+          {capturing ? (
+            <>
+              {preview ? (
+                <span className={error ? "text-fg-muted line-through" : undefined}>
+                  {preview}
+                </span>
+              ) : (
+                <span className="text-fg-muted">Press your shortcut…</span>
+              )}
+              {checking && (
+                <span className="flex items-center gap-1.5 font-sans text-xs text-fg-muted">
+                  <Spinner size={12} /> checking…
+                </span>
+              )}
+              {!checking && !preview && (
+                <span className="ml-auto font-sans text-xs text-fg-muted">Esc cancels</span>
+              )}
+            </>
+          ) : (
+            value || "Not set"
+          )}
         </div>
         {capturing ? (
-          <Button variant="ghost" onClick={() => setCapturing(false)}>
+          <Button variant="ghost" onClick={cancelCapture}>
             Cancel
           </Button>
         ) : (
@@ -207,7 +260,7 @@ export function HotkeyCapture({
               Set shortcut
             </Button>
             {clearable && value && (
-              <Button variant="ghost" onClick={() => onCommit("")}>
+              <Button variant="ghost" onClick={() => void onCommit("")}>
                 Clear
               </Button>
             )}

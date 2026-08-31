@@ -1,11 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { motion, MotionConfig } from "motion/react";
 import { toast } from "sonner";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   ArrowSquareOut,
+  ArrowUp,
   Atom,
+  Cube,
   GearSix,
   GithubLogo,
   Keyboard,
@@ -23,9 +25,9 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BrandIcon } from "@/components/BrandIcon";
-import { Logo } from "@/components/Logo";
 import { TitleBar } from "@/components/TitleBar";
 import { HotkeyCapture } from "./HotkeyCapture";
+import { ProjectsTab } from "./ProjectsTab";
 import { UpdateChecker } from "./UpdateChecker";
 import {
   DEFAULT_SETTINGS,
@@ -33,6 +35,7 @@ import {
   type EmberSettings,
   type ProviderHealth,
   type KeyConsole,
+  type OpenAiAuth,
   type ProviderKind,
   type RefineMode,
   type Theme,
@@ -51,6 +54,10 @@ import {
 // esgota.
 const GEMINI_PRESETS = ["gemini-2.5-flash", "gemini-3.1-flash-lite", "gemini-3.5-flash"];
 const CUSTOM = "__custom__";
+
+/** Movimento da troca de primário: rápido e sem baloiço, porque a animação está a explicar uma
+ *  reordenação e não a chamar a atenção para si própria. */
+const SWAP_SPRING = { type: "spring" as const, stiffness: 460, damping: 38 };
 
 /** O aviso do macOS so faz sentido no macOS; no Windows seria ruido sobre um problema que la
  *  nao existe (o RegisterHotKey do Windows recusa mesmo os conflitos). */
@@ -105,6 +112,13 @@ const OPENAI_ENDPOINTS = [
 ] as const;
 
 type EndpointId = (typeof OPENAI_ENDPOINTS)[number]["id"];
+
+/**
+ * Valor da dropdown de serviço para o modo subscrição. Não está em `OPENAI_ENDPOINTS` porque não
+ * tem Base URL nenhuma: fala com outro backend, e escolhê-lo não muda um endereço, muda a forma
+ * de autenticar.
+ */
+const CHATGPT = "chatgpt-subscription";
 
 /** Que endpoint conhecido corresponde a esta Base URL? `undefined` = custom (DeepSeek, Ollama...). */
 function endpointFor(baseUrl: string | undefined) {
@@ -351,6 +365,12 @@ function ProviderConfig({
   baseUrl,
   onCommitBaseUrl,
   onKeyChanged,
+  auth,
+  signedIn,
+  account,
+  onSettings,
+  isPrimary,
+  onMakePrimary,
 }: {
   kind: ProviderKind;
   title: string;
@@ -366,11 +386,21 @@ function ProviderConfig({
   onCommitBaseUrl?: (url: string) => Promise<void>;
   /** Chamado apos gravar/remover chave, para o parent refazer a saude (Bug C). */
   onKeyChanged?: () => void;
+  /** Só o slot de fallback: como se autentica hoje. */
+  auth?: OpenAiAuth;
+  signedIn?: boolean;
+  account?: string | null;
+  /** Recebe as settings devolvidas por um comando que as altera, para o parent as adotar. */
+  onSettings?: (s: EmberSettings) => void;
+  /** Este é o provider tentado primeiro? O outro é o fallback. */
+  isPrimary?: boolean;
+  onMakePrimary?: () => void;
 }) {
   const [key, setKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(hasKey);
   const [urlDraft, setUrlDraft] = useState(baseUrl ?? "");
+  const subscription = auth === "chat_gpt";
 
   useEffect(() => setUrlDraft(baseUrl ?? ""), [baseUrl]);
 
@@ -431,10 +461,55 @@ function ProviderConfig({
   // MODELO tem de mudar juntos. Um id do OpenRouter mandado ao Groq da 404; deixar o modelo do
   // servico antigo era garantir um erro no proximo refine.
   const endpoint = endpointFor(baseUrl);
-  const switchEndpoint = async (id: EndpointId) => {
+
+  const signIn = async () => {
+    setBusy(true);
+    try {
+      // Só resolve depois do browser: o toast de sucesso é sobre a sessão gravada, e não sobre
+      // ter aberto uma página. Prometer antes de saber seria mentir-lhe.
+      onSettings?.(await ipc.chatgptLogin());
+      toast.success("Signed in with your ChatGPT account.");
+      onKeyChanged?.();
+    } catch (e) {
+      // A mensagem vem do Rust já legível (login cancelado, portas ocupadas, OpenAI recusou).
+      toast.error(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const signOut = async () => {
+    setBusy(true);
+    try {
+      onSettings?.(await ipc.chatgptLogout());
+      toast.success("Signed out. The fallback is back to using an API key.");
+      onKeyChanged?.();
+    } catch {
+      toast.error("Couldn't sign out.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const switchEndpoint = async (id: EndpointId | typeof CHATGPT) => {
+    if (id === CHATGPT) {
+      setBusy(true);
+      try {
+        onSettings?.(await ipc.setOpenAiAuth("chat_gpt"));
+        onKeyChanged?.();
+      } catch {
+        toast.error("Couldn't switch to the subscription.");
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     const next = OPENAI_ENDPOINTS.find((e) => e.id === id);
     if (!next || !onCommitBaseUrl) return;
     try {
+      // Sair do modo subscrição antes de mexer no endpoint: os `gpt-5.x` não existem em endpoint
+      // nenhum destes, e mudar só a Base URL deixava o slot a falar com o backend errado.
+      if (subscription) onSettings?.(await ipc.setOpenAiAuth("api_key"));
       await onCommitBaseUrl(next.baseUrl);
       await ipc.setModel("openai", next.models[0]);
       toast.success(`Fallback set to ${next.label.split(" (")[0]}.`);
@@ -451,54 +526,116 @@ function ProviderConfig({
   // OpenRouter nao serve o Groq. Num endpoint custom (DeepSeek, Ollama) nao ha botao: nao
   // sabemos onde e, e mandar o utilizador ao sitio errado e pior do que nao o mandar a lado nenhum.
   const keyConsole: KeyConsole | undefined =
-    kind === "openai" ? endpoint?.id : (kind as KeyConsole);
+    kind === "openai" ? (subscription ? undefined : endpoint?.id) : (kind as KeyConsole);
 
   return (
     <Section
       title={title}
       hint={subtitle}
-      action={keyConsole ? <GetKeyButton console={keyConsole} /> : undefined}
+      action={
+        (onMakePrimary && !isPrimary) || keyConsole ? (
+          <div className="flex items-center gap-2">
+            {onMakePrimary && !isPrimary && (
+              // De volta para dentro do cartao. Estava numa coluna a direita, fora dele, e essa
+              // coluna tirava 47px de largura AOS CARTOES DESTE SEPARADOR, que ficavam mais
+              // estreitos do que os de todos os outros e do que a propria pilula de navegacao.
+              // Ter os cartoes todos com a mesma largura ganha a ter a seta na margem.
+              <button
+                type="button"
+                onClick={onMakePrimary}
+                aria-label="Try this one first"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-[color:var(--border-subtle)] text-fg-muted transition-colors hover:border-[color:var(--border-accent)] hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--border-accent)]"
+              >
+                <ArrowUp size={15} weight="bold" />
+              </button>
+            )}
+            {keyConsole && <GetKeyButton console={keyConsole} />}
+          </div>
+        ) : undefined
+      }
     >
       {kind === "openai" && onCommitBaseUrl && (
         <div className="flex flex-col gap-2">
           <Label htmlFor="openai-endpoint">Service</Label>
-          <Select value={endpoint?.id ?? CUSTOM} onValueChange={(v) => switchEndpoint(v as EndpointId)}>
+          <Select
+            value={subscription ? CHATGPT : (endpoint?.id ?? CUSTOM)}
+            onValueChange={(v) => switchEndpoint(v as EndpointId | typeof CHATGPT)}
+          >
             <SelectTrigger id="openai-endpoint">
               <SelectValue placeholder="Custom endpoint" />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value={CHATGPT}>ChatGPT subscription (no API key)</SelectItem>
               {OPENAI_ENDPOINTS.map((e) => (
                 <SelectItem key={e.id} value={e.id}>
                   {e.label}
                 </SelectItem>
               ))}
-              {!endpoint && <SelectItem value={CUSTOM}>Custom (set the Base URL below)</SelectItem>}
+              {!endpoint && !subscription && (
+                <SelectItem value={CUSTOM}>Custom (set the Base URL below)</SelectItem>
+              )}
             </SelectContent>
           </Select>
-          {endpoint && <p className="text-xs text-fg-muted">{endpoint.note}</p>}
-        </div>
-      )}
-      <div className="flex flex-col gap-2">
-        <Label htmlFor={`${kind}-key`}>API key</Label>
-        <div className="flex gap-2">
-          <Input
-            id={`${kind}-key`}
-            type="password"
-            value={key}
-            onChange={(e) => setKey(e.target.value)}
-            placeholder={saved ? "•••••••• (saved)" : "paste your key"}
-          />
-          <Button variant="primary" onClick={saveKey} disabled={busy || !key.trim()}>
-            Save
-          </Button>
-          {saved && (
-            <Button variant="ghost" onClick={removeKey} disabled={busy}>
-              Remove
-            </Button>
+          {subscription ? (
+            // A ressalva vem ANTES de ele depender disto, e não depois de deixar de funcionar.
+            <p className="text-xs text-fg-muted">
+              Refines come out of the ChatGPT plan you already pay for. Unofficial: it uses the
+              same route as the Codex CLI and OpenAI can turn it off without notice. If that
+              happens, pick any service above; those keep working.
+            </p>
+          ) : (
+            endpoint && <p className="text-xs text-fg-muted">{endpoint.note}</p>
           )}
         </div>
-      </div>
-      {baseUrl !== undefined && onCommitBaseUrl && (
+      )}
+      {subscription ? (
+        <div className="flex flex-col gap-2">
+          <Label>ChatGPT account</Label>
+          <div className="flex items-center gap-2">
+            {signedIn ? (
+              <>
+                <p className="flex-1 text-sm text-fg-muted">
+                  Signed in{account ? ` (account ${account})` : ""}.
+                </p>
+                <Button variant="ghost" onClick={signOut} disabled={busy}>
+                  Sign out
+                </Button>
+              </>
+            ) : (
+              <>
+                <p className="flex-1 text-sm text-fg-muted">
+                  Opens your browser to sign in. No key to paste.
+                </p>
+                <Button variant="primary" onClick={signIn} disabled={busy}>
+                  {busy ? "Waiting for the browser…" : "Sign in with ChatGPT"}
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          <Label htmlFor={`${kind}-key`}>API key</Label>
+          <div className="flex gap-2">
+            <Input
+              id={`${kind}-key`}
+              type="password"
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+              placeholder={saved ? "•••••••• (saved)" : "paste your key"}
+            />
+            <Button variant="primary" onClick={saveKey} disabled={busy || !key.trim()}>
+              Save
+            </Button>
+            {saved && (
+              <Button variant="ghost" onClick={removeKey} disabled={busy}>
+                Remove
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+      {!subscription && baseUrl !== undefined && onCommitBaseUrl && (
         <div className="flex flex-col gap-2">
           <Label htmlFor={`${kind}-base-url`}>Base URL</Label>
           <Input
@@ -644,19 +781,35 @@ function ProviderHealthNotice({
 }
 
 /** Diagnostico e modo debug: toggle, leitor de logs recentes, abrir a pasta, copiar report. */
-function DiagnosticsSection({ debugMode }: { debugMode: boolean }) {
+function DiagnosticsSection({
+  debugMode,
+  savePrompts,
+}: {
+  debugMode: boolean;
+  savePrompts: boolean;
+}) {
   const [on, setOn] = useState(debugMode);
+  const [saving, setSaving] = useState(savePrompts);
   const [logs, setLogs] = useState("");
   const [loadingLogs, setLoadingLogs] = useState(false);
 
   // debugMode chega do getSettings assincrono; ressincroniza como os outros toggles.
   useEffect(() => setOn(debugMode), [debugMode]);
+  useEffect(() => setSaving(savePrompts), [savePrompts]);
 
   const toggle = (v: boolean) => {
     setOn(v);
     ipc.setDebugMode(v).catch(() => {
       setOn(!v);
       toast.error("Couldn't change debug mode.");
+    });
+  };
+
+  const togglePrompts = (v: boolean) => {
+    setSaving(v);
+    ipc.setSavePrompts(v).catch(() => {
+      setSaving(!v);
+      toast.error("Couldn't change prompt saving.");
     });
   };
 
@@ -688,6 +841,23 @@ function DiagnosticsSection({ debugMode }: { debugMode: boolean }) {
       <div className="flex items-center justify-between">
         <Label htmlFor="debug-mode">Debug mode</Label>
         <Switch id="debug-mode" checked={on} onCheckedChange={toggle} />
+      </div>
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <Label htmlFor="save-prompts">Save prompts to a file</Label>
+          <p className="mt-1 text-xs text-fg-muted">
+            Writes what was sent to the model and what came back to{" "}
+            <span className="font-mono">prompts.jsonl</span>, next to the logs. Off by default:
+            unlike the log, this file contains the text you refined. Open the log folder below to
+            read or delete it.
+          </p>
+        </div>
+        <Switch
+          id="save-prompts"
+          checked={saving}
+          onCheckedChange={togglePrompts}
+          className="mt-1 shrink-0"
+        />
       </div>
       <div className="flex flex-wrap gap-2">
         <Button variant="ghost" size="sm" onClick={refreshLogs} disabled={loadingLogs}>
@@ -757,20 +927,43 @@ export function Settings() {
    *  combinacao e invalida ou se ja esta ocupada por outra app), em vez de um erro generico
    *  que deixava o utilizador sem saber o que tentar a seguir. O Rust ja restaurou o conjunto
    *  anterior, por isso a app nunca fica sem atalho por causa de uma tentativa falhada. */
-  const commitHotkey = async (which: HotkeySlot, accel: string) => {
+  const commitHotkey = async (
+    which: HotkeySlot,
+    accel: string,
+  ): Promise<string | null> => {
     try {
       await ipc.setHotkey(which, accel);
       const res = await ipc.getSettings();
       setS(res);
       setHotkey(res.hotkey);
       toast.success(accel ? `Shortcut set to ${accel}.` : "Shortcut cleared.");
+      return null;
     } catch (e) {
-      toast.error(`Couldn't apply that shortcut. ${String(e)}`);
+      // A mensagem volta para o alerta inline da HotkeyCapture (um canal de erro so); o toast
+      // fica reservado ao sucesso. Um erro passageiro num canto nao ensina o que tentar a seguir.
+      return `Couldn't apply that shortcut. ${String(e)}`;
     }
   };
   /** Ids a oferecer no select: a listagem viva quando existe, senao a lista embutida. Junta
    *  sempre o modelo GRAVADO, mesmo que nao esteja na listagem, para uma escolha antiga nao
    *  aparecer como "Custom..." so porque o provider parou de a anunciar. */
+  /** Põe este provider à frente na ordem de tentativa. Só muda a ordem: chaves, sessão e modelos
+   *  ficam onde estavam, e é por isso que voltar atrás é um clique no outro cartão. */
+  const makePrimary = (kind: ProviderKind) => {
+    ipc
+      .setPrimaryProvider(kind)
+      .then((next) => {
+        setS(next);
+        refreshHealth();
+        toast.success(
+          kind === "gemini"
+            ? "Gemini is now tried first."
+            : "The fallback service is now tried first."
+        );
+      })
+      .catch(() => toast.error("Couldn't change which one goes first."));
+  };
+
   const presetsFor = (kind: ProviderKind, builtIn: string[]): string[] => {
     const c = catalogs[kind];
     const base = c?.live && c.models.length ? c.models.map((m) => m.id) : builtIn;
@@ -788,6 +981,7 @@ export function Settings() {
     // zero a cada reabertura.
     const unlistenOpen = listen("settings-opened", () => {
       setOpenKey((k) => k + 1);
+      loadSettings();
     });
 
     return () => {
@@ -795,7 +989,11 @@ export function Settings() {
     };
   }, []);
 
-  useEffect(() => {
+  /** Traz o estado do Rust para o ecra. Corre na montagem E a cada reabertura da janela: como
+   *  a janela e criada no ARRANQUE e depois so escondida/mostrada, sem isto ficava a mostrar o
+   *  que era verdade quando a app abriu (o projeto ativo mudado pelo picker, um atalho limpo na
+   *  sanitizacao da config, uma chave gravada noutro sitio). */
+  const loadSettings = useCallback(() => {
     ipc
       .getSettings()
       .then((res) => {
@@ -813,7 +1011,12 @@ export function Settings() {
       })
       .finally(() => setHydrated(true));
     refreshHealth();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    loadSettings();
+  }, [loadSettings]);
 
   const sourceLabel: Record<EmberSettings["profileSource"], string> = {
     claude_md: "auto-detected from your agent profile",
@@ -900,28 +1103,23 @@ export function Settings() {
           <motion.main
             key={openKey}
             className="min-h-screen bg-panel text-fg"
-            initial={{ opacity: 0, scale: 0.97 }}
+            // 280ms, e nao os 600 de antes: com a janela pre-aquecida no arranque, abrir e so
+            // mostrar, e uma entrada longa passa a ser a UNICA coisa que se sente lenta. A
+            // escala parte de 0.985 (era 0.97) para o texto nao chegar visivelmente a arrastar.
+            initial={{ opacity: 0, scale: 0.985 }}
             animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
             style={{ transformOrigin: "center" }}
           >
         <TitleBar />
         <motion.div
-          className="mx-auto max-w-3xl px-8 pb-12 pt-10"
-          initial={{ opacity: 0, y: 12 }}
+          className="mx-auto max-w-4xl px-8 pb-12 pt-10"
+          // Segue a de fora de perto (delay curto) em vez de somar mais meio segundo por cima:
+          // as duas encadeadas davam ~800ms ate a janela assentar.
+          initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.65, ease: [0.22, 1, 0.36, 1], delay: 0.12 }}
+          transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1], delay: 0.06 }}
         >
-          <header className="mb-10 flex items-center gap-3">
-            <Logo size={34} />
-            <div>
-              <h1 className="text-2xl font-semibold tracking-tight">Ember</h1>
-              <p className="text-sm text-fg-muted">
-                Refine any text in the moment, in any app.
-              </p>
-            </div>
-          </header>
-
           {!hydrated ? (
             // Esqueleto enquanto o getSettings nao voltou: evita piscar um estado falso (ex.:
             // "sem chave" antes da chave real aterrar). So opacidade anima (compositor-only).
@@ -942,6 +1140,9 @@ export function Settings() {
               </TabsTrigger>
               <TabsTrigger value="hotkey">
                 <Keyboard size={16} /> Shortcut
+              </TabsTrigger>
+              <TabsTrigger value="projects">
+                <Cube size={16} /> Projects
               </TabsTrigger>
               <TabsTrigger value="profile">
                 <UserCircleGear size={16} /> Profile
@@ -967,30 +1168,27 @@ export function Settings() {
                   dismissed={healthDismissed}
                   onDismiss={() => setHealthDismissed(true)}
                 />
-                <Section
-                  title="Your keys"
-                  hint="One key is enough to start. Gemini is free and takes a minute."
-                  detail={
-                    <>
-                      <p>
-                        Ember tries the keys top to bottom, so a second one is the backup for when
-                        the first is down or rate-limited. Keys live in your OS credential vault,
-                        never in plain text.
-                      </p>
-                      <p className="mt-2">
-                        Rate limits are normal, not a broken key: free tiers have daily caps and
-                        free models are shared with everyone. Wait, or point the fallback at a
-                        paid service, which costs cents per refine and never queues.
-                      </p>
-                    </>
-                  }
-                >
-                  <></>
-                </Section>
+                {(() => {
+                  // Os dois cartões existem sempre; só a ORDEM muda. Cada um vai dentro de um
+                  // `motion.div` com `layout`, e é isso que faz o cartão promovido subir de facto
+                  // em vez de a lista trocar de conteúdo num piscar de olhos: a animação mostra o
+                  // que aconteceu, que é exatamente a informação que o utilizador precisa.
+                  const gemini = (
+                    <motion.div
+                      key="gemini"
+                      layout
+                      transition={SWAP_SPRING}
+                    >
                 <ProviderConfig
                   kind="gemini"
-                  title="Gemini (primary)"
-                  subtitle="Free, fast, and the key takes a minute. Ember picks the model for you."
+                  isPrimary={s.primaryProvider === "gemini"}
+                  onMakePrimary={() => makePrimary("gemini")}
+                  title={s.primaryProvider === "gemini" ? "Gemini (primary)" : "Gemini (fallback)"}
+                  subtitle={
+                    s.primaryProvider === "gemini"
+                      ? "Free, fast, and the key takes a minute. Ember picks the model for you."
+                      : "Used whenever the primary fails or runs out of quota. Free, and Ember picks the model."
+                  }
                   hasKey={s.hasGeminiKey}
                   model={s.geminiModel}
                   presets={presetsFor("gemini", GEMINI_PRESETS)}
@@ -1010,16 +1208,42 @@ export function Settings() {
                     refreshCatalogs();
                   }}
                 />
+                    </motion.div>
+                  );
+                  const openai = (
+                    <motion.div
+                      key="openai"
+                      layout
+                      transition={SWAP_SPRING}
+                    >
                 <ProviderConfig
                   kind="openai"
-                  title="Fallback"
-                  subtitle="Used whenever Gemini fails or runs out of quota. Pick a service below."
+                  isPrimary={s.primaryProvider === "openai"}
+                  onMakePrimary={() => makePrimary("openai")}
+                  title={s.primaryProvider === "openai" ? "Primary" : "Fallback"}
+                  subtitle={
+                    s.primaryProvider === "openai"
+                      ? "Tried first for every refine. Pick a service below."
+                      : "Used whenever the primary fails or runs out of quota. Pick a service below."
+                  }
                   hasKey={s.hasOpenAiKey}
                   model={s.openaiModel}
-                  // Os modelos vivem COLADOS ao servico: um id do OpenRouter no Groq da 404.
-                  presets={presetsFor("openai", [...(endpointFor(s.openaiBaseUrl)?.models ?? [])])}
+                  // Os modelos vivem COLADOS ao servico: um id do OpenRouter no Groq da 404. Na
+                  // subscricao nao ha Base URL nenhuma e os modelos sao outros (os `gpt-5.x` do
+                  // backend do ChatGPT), por isso a lista de arranque vem do catalogo, que ali
+                  // nunca e viva: aquele backend nao publica listagem de modelos.
+                  presets={presetsFor(
+                    "openai",
+                    s.openaiAuth === "chat_gpt"
+                      ? (catalogs.openai?.models.map((m) => m.id) ?? [])
+                      : [...(endpointFor(s.openaiBaseUrl)?.models ?? [])]
+                  )}
                   catalog={catalogs.openai}
                   baseUrl={s.openaiBaseUrl}
+                  auth={s.openaiAuth}
+                  signedIn={s.chatgptSignedIn}
+                  account={s.chatgptAccount}
+                  onSettings={setS}
                   onKeyChanged={() => {
                     ipc.getSettings().then(setS).catch(() => {});
                     refreshHealth();
@@ -1034,6 +1258,12 @@ export function Settings() {
                     toast.success("Base URL updated.");
                   }}
                 />
+                    </motion.div>
+                  );
+                  // Ordem visual = ordem real de tentativa. Mostrar o fallback por cima do
+                  // primário seria contar a história ao contrário no sítio onde ela se decide.
+                  return s.primaryProvider === "gemini" ? [gemini, openai] : [openai, gemini];
+                })()}
               </div>
             </TabsContent>
   
@@ -1320,6 +1550,16 @@ export function Settings() {
                         onCommit={(accel) => commitHotkey("turbo", accel)}
                       />
                     </div>
+                    <div className="flex flex-col gap-2">
+                      <Label>Project picker</Label>
+                      <HotkeyCapture
+                        value={s.hotkeyPicker}
+                        slot="picker"
+                        clearable
+                        ariaLabel="Project picker shortcut"
+                        onCommit={(accel) => commitHotkey("picker", accel)}
+                      />
+                    </div>
                   </div>
                 </Section>
               </div>
@@ -1340,6 +1580,10 @@ export function Settings() {
               </div>
             </TabsContent>
   
+            <TabsContent value="projects">
+              <ProjectsTab s={s} setS={setS} />
+            </TabsContent>
+
             <TabsContent value="profile">
               <Section
                 title="Personalization profile"
@@ -1470,7 +1714,7 @@ export function Settings() {
                 <Section title="Updates" hint="Checks against the latest GitHub release, signed and verified.">
                   <UpdateChecker />
                 </Section>
-                <DiagnosticsSection debugMode={s.debugMode} />
+                <DiagnosticsSection debugMode={s.debugMode} savePrompts={s.savePrompts} />
               </div>
             </TabsContent>
           </Tabs>
