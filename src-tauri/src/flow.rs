@@ -51,7 +51,9 @@ pub struct RunOpts {
 
 fn emit(app: &AppHandle, phase: &str, message: Option<String>, provider: Option<String>) {
     let state = app.state::<AppState>();
-    state.orb_visible.store(phase == "refining", Ordering::SeqCst);
+    state
+        .orb_visible
+        .store(phase == "refining", Ordering::SeqCst);
     // Segue o cursor enquanto ha trabalho a decorrer E enquanto o preview espera resposta: nos
     // dois casos o utilizador ainda esta no meio da accao, e a overlay tem de estar onde ele
     // esta a olhar. As pilulas de resultado ficam onde nasceram: sao passageiras e persegui-las
@@ -257,8 +259,8 @@ pub async fn run(app: AppHandle, opts: RunOpts) {
     let Some(selected) = captured.text else {
         // Nada selecionado: restaura clipboard, hint subtil.
         let s = saved.clone();
-        let _ =
-            tauri::async_runtime::spawn_blocking(move || blocking_restore(s, image, terminal)).await;
+        let _ = tauri::async_runtime::spawn_blocking(move || blocking_restore(s, image, terminal))
+            .await;
         finish(&app, FlowOutcome::NoSelectionFound).await;
         return;
     };
@@ -273,8 +275,8 @@ pub async fn run(app: AppHandle, opts: RunOpts) {
             select_all_max_chars
         );
         let s = saved.clone();
-        let _ =
-            tauri::async_runtime::spawn_blocking(move || blocking_restore(s, image, terminal)).await;
+        let _ = tauri::async_runtime::spawn_blocking(move || blocking_restore(s, image, terminal))
+            .await;
         finish(&app, FlowOutcome::SelectAllTooBig).await;
         return;
     }
@@ -431,10 +433,9 @@ pub async fn run(app: AppHandle, opts: RunOpts) {
             // sempre diagnosticavel a posteriori.
             log::error!("refine failed: {e:?}");
             let s = saved.clone();
-            let _ = tauri::async_runtime::spawn_blocking(move || {
-                blocking_restore(s, image, terminal)
-            })
-            .await;
+            let _ =
+                tauri::async_runtime::spawn_blocking(move || blocking_restore(s, image, terminal))
+                    .await;
             let message = commands::friendly_error(&e);
             if matches!(e, ember_core::CoreError::NoProvidersConfigured) {
                 show_settings(&app);

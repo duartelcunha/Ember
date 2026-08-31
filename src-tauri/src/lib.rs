@@ -10,10 +10,10 @@ mod models_cache;
 mod oauth;
 mod picker;
 mod preview_hook;
-mod prompt_log;
 mod profile;
 mod project;
 mod projects;
+mod prompt_log;
 mod providers;
 mod secrets;
 mod selection;
@@ -21,12 +21,12 @@ mod state;
 
 use std::sync::atomic::Ordering;
 
+use ember_core::model::RefineMode;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
 use tauri::window::Color;
-use tauri::{AppHandle, Manager, PhysicalPosition, WebviewWindow, WebviewWindowBuilder, Emitter};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_autostart::MacosLauncher;
-use ember_core::model::RefineMode;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 /// Lado do quadrado da faisca, em px logicos. ESPELHADO em `SPARK_SIZE` (Orb.tsx); muda um,
@@ -111,7 +111,10 @@ pub(crate) fn get_or_create_window(app: &AppHandle, label: &str) -> Option<Webvi
         .iter()
         .find(|w| w.label == label)
         .cloned()?;
-    let w = WebviewWindowBuilder::from_config(app, &cfg).ok()?.build().ok()?;
+    let w = WebviewWindowBuilder::from_config(app, &cfg)
+        .ok()?
+        .build()
+        .ok()?;
     // Fecho da janela settings tratado NATIVAMENTE: o X (ou Alt+F4) esconde a janela em vez de
     // a destruir, para a app continuar na tray. Feito aqui no Rust, nao no JS: o onCloseRequested
     // do lado do webview e fragil (depende do webview estar vivo e responsivo, e deixava a janela
@@ -521,8 +524,14 @@ pub(crate) fn register_hotkeys(app: &AppHandle, cfg: &config::Config) -> Result<
     let _ = gs.unregister_all();
     let wanted: [(&str, HotkeyAction); 4] = [
         (cfg.hotkey.as_str(), HotkeyAction::Refine(None)),
-        (cfg.hotkey_polish.as_str(), HotkeyAction::Refine(Some(RefineMode::Polish))),
-        (cfg.hotkey_turbo.as_str(), HotkeyAction::Refine(Some(RefineMode::Turbo))),
+        (
+            cfg.hotkey_polish.as_str(),
+            HotkeyAction::Refine(Some(RefineMode::Polish)),
+        ),
+        (
+            cfg.hotkey_turbo.as_str(),
+            HotkeyAction::Refine(Some(RefineMode::Turbo)),
+        ),
         (cfg.hotkey_picker.as_str(), HotkeyAction::Picker),
     ];
     for (combo, action) in wanted {
@@ -588,11 +597,7 @@ pub(crate) fn probe_hotkey_free(app: &AppHandle, accel: &str) -> bool {
 }
 
 /// Regista um atalho. `forced_mode` a `None` significa "o modo que estiver nas settings".
-fn register_one(
-    app: &AppHandle,
-    hotkey: &str,
-    action: HotkeyAction,
-) -> Result<(), String> {
+fn register_one(app: &AppHandle, hotkey: &str, action: HotkeyAction) -> Result<(), String> {
     let gs = app.global_shortcut();
     gs.on_shortcut(hotkey, move |app, _shortcut, event| {
         if event.state == ShortcutState::Pressed {
@@ -778,7 +783,7 @@ pub fn run() {
         .setup(|app| {
             build_tray(app)?;
             let handle = app.handle().clone();
-            
+
             let is_install = match handle.path().app_data_dir() {
                 Ok(app_dir) => {
                     let marker = app_dir.join(".installed");
@@ -798,7 +803,7 @@ pub fn run() {
                     false
                 }
             };
-            
+
             let window_name = if is_install { "splash" } else { "startup_anim" };
             match get_or_create_window(&handle, window_name) {
                 Some(anim) => {
@@ -814,7 +819,7 @@ pub fn run() {
                     "startup animation: could not create '{window_name}'; Ember started with no                      visible sign of life (another instance running?)"
                 ),
             }
-            
+
             // Pre-cria a janela overlay (escondida) para o listener do orb estar pronto
             // antes do primeiro hotkey (senao o evento "refining" perde-se).
             let _ = get_or_create_window(&handle, "overlay");

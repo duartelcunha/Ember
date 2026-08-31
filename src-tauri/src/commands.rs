@@ -4,7 +4,7 @@ use ember_core::model::{ProfileSource, Provider, RefineMode};
 use ember_core::prompt::build_llm_request;
 use ember_core::retry::RetryConfig;
 use serde::Serialize;
-use tauri::{AppHandle, State, Manager};
+use tauri::{AppHandle, Manager, State};
 
 use crate::state::AppState;
 use crate::{config, profile, providers, secrets};
@@ -110,7 +110,11 @@ fn build_dto(app: &AppHandle, cfg: &config::Config) -> SettingsDto {
             // Pelo menos um falhou a ler o cofre. Loga para diagnostico; a UI mostra banner.
             let any_err = e_g.err().or_else(|| e_o.err());
             log::warn!("settings: credential vault read failed: {:?}", any_err);
-            (false, false, Some("credential vault unreadable".to_string()))
+            (
+                false,
+                false,
+                Some("credential vault unreadable".to_string()),
+            )
         }
     };
     let session = secrets::get_oauth().unwrap_or(None);
@@ -155,7 +159,12 @@ fn build_dto(app: &AppHandle, cfg: &config::Config) -> SettingsDto {
         active_project: cfg.active_project.clone(),
         accents: ember_core::projects::ACCENTS
             .iter()
-            .map(|a| AccentDto { raw: a.raw, mid: a.mid, glow: a.glow, label: a.label })
+            .map(|a| AccentDto {
+                raw: a.raw,
+                mid: a.mid,
+                glow: a.glow,
+                label: a.label,
+            })
             .collect(),
         icons: ember_core::projects::ICONS.to_vec(),
     }
@@ -234,7 +243,8 @@ pub fn set_gemini_model_auto(
             cfg.openai_auth,
         );
         if catalog.live {
-            if let Some(best) = ember_core::models::pick_default(Provider::Gemini, &catalog.models) {
+            if let Some(best) = ember_core::models::pick_default(Provider::Gemini, &catalog.models)
+            {
                 cfg.gemini_model = best;
             }
         }
@@ -464,7 +474,11 @@ pub fn set_capture_timing(
 }
 
 #[tauri::command]
-pub fn set_api_key(state: State<'_, AppState>, provider: String, key: String) -> Result<(), String> {
+pub fn set_api_key(
+    state: State<'_, AppState>,
+    provider: String,
+    key: String,
+) -> Result<(), String> {
     let p = parse_provider(&provider)?;
     secrets::set(p, &key).map_err(|e| e.to_string())?;
     // A chave mudou: o probe antigo deixa de valer. Tira do cache (fica "por revalidar").
@@ -806,7 +820,10 @@ pub fn set_active_project(app: AppHandle, id: Option<String>) -> Result<Settings
     cfg.active_project = id.filter(|i| !i.trim().is_empty());
     let escolhido = cfg.active_project.clone();
     let dto = save_and_reload(&app, cfg)?;
-    log::info!("projeto ativo: {}", escolhido.as_deref().unwrap_or("nenhum"));
+    log::info!(
+        "projeto ativo: {}",
+        escolhido.as_deref().unwrap_or("nenhum")
+    );
     Ok(dto)
 }
 
@@ -1119,8 +1136,8 @@ pub(crate) async fn build_chain(
     for provider in cfg.provider_order() {
         // Modo subscricao: a credencial nao e uma chave, e um token da sessao ChatGPT, resolvido
         // (e renovado se preciso) UMA vez por refine em vez de uma vez por tentativa.
-        let subscription = provider == Provider::OpenAi
-            && cfg.openai_auth == crate::config::OpenAiAuth::ChatGpt;
+        let subscription =
+            provider == Provider::OpenAi && cfg.openai_auth == crate::config::OpenAiAuth::ChatGpt;
         let credential = if subscription {
             match crate::oauth::access_token(state).await {
                 Ok((access_token, account_id)) => providers::Credential::ChatGpt {
@@ -1169,8 +1186,12 @@ pub(crate) async fn build_chain(
         // (ja aconteceu com o `qwen3-coder:free`). O Gemini nao tem nem uma coisa nem outra: o
         // catalogo e pequeno, e todo de modelos generalistas.
         if provider == Provider::Gemini {
-            let catalog =
-                crate::models_cache::catalog(state, provider, &cfg.openai_base_url, cfg.openai_auth);
+            let catalog = crate::models_cache::catalog(
+                state,
+                provider,
+                &cfg.openai_base_url,
+                cfg.openai_auth,
+            );
             models.extend(ember_core::models::alternates(
                 provider,
                 &chosen,
@@ -1282,7 +1303,10 @@ pub(crate) async fn refine_text(
         (Some(pc), Some(_)) => log::info!("project context: {} (brief)", pc.source_path),
         (Some(pc), None) => log::info!("project context: window title -> {}", pc.source_path),
         (None, Some(p)) => {
-            log::info!("project context: projeto \"{}\" ativo mas com brief vazio", p.name)
+            log::info!(
+                "project context: projeto \"{}\" ativo mas com brief vazio",
+                p.name
+            )
         }
         (None, None) if foreground_title.is_some() => {
             log::debug!("project context: enabled, none detected for the foreground window")
@@ -1312,8 +1336,16 @@ pub(crate) async fn refine_text(
         openai_base_url: &cfg.openai_base_url,
     };
     let started = std::time::Instant::now();
-    let resp = providers::refine(&state.http, &rcfg, &chain, &req, &pctx, on_attempt, on_delta)
-        .await?;
+    let resp = providers::refine(
+        &state.http,
+        &rcfg,
+        &chain,
+        &req,
+        &pctx,
+        on_attempt,
+        on_delta,
+    )
+    .await?;
     // Registo opt-in do que foi mesmo enviado e do que voltou. Depois do `?` de proposito: so se
     // guarda o que chegou a ser uma resposta. Um refine que falhou ja deixa rasto no log normal,
     // e o que aqui interessa estudar e o par prompt/resposta, nao a ausencia dele.
@@ -1332,7 +1364,11 @@ pub(crate) async fn refine_text(
             },
         );
     }
-    Ok((resp.text, prepared, resp.provider.display_name().to_string()))
+    Ok((
+        resp.text,
+        prepared,
+        resp.provider.display_name().to_string(),
+    ))
 }
 
 #[cfg(test)]
@@ -1379,6 +1415,9 @@ mod tests {
         }
         // Mensagens diferentes por classe (o utilizador tem de perceber o que falhou).
         assert_ne!(friendly_error(&Auth), friendly_error(&Truncated));
-        assert_ne!(friendly_error(&KeyStore), friendly_error(&NoProvidersConfigured));
+        assert_ne!(
+            friendly_error(&KeyStore),
+            friendly_error(&NoProvidersConfigured)
+        );
     }
 }

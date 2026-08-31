@@ -538,7 +538,10 @@ mod tests {
         // Vazio continua a voltar ao default: sem modelo nenhum nao havia pedido para fazer.
         let mut vazio = Config::default();
         vazio.gemini_model = "   ".into();
-        assert_eq!(vazio.sanitize().gemini_model, Config::default().gemini_model);
+        assert_eq!(
+            vazio.sanitize().gemini_model,
+            Config::default().gemini_model
+        );
     }
 
     #[test]

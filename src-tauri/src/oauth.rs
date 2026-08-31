@@ -64,14 +64,15 @@ pub async fn login(state: &AppState) -> Result<Option<String>, String> {
     };
 
     let url = wire::authorize_url(&challenge, &csrf_state, port);
-    crate::commands::open_in_browser(&url).map_err(|e| format!("couldn't open the browser: {e}"))?;
+    crate::commands::open_in_browser(&url)
+        .map_err(|e| format!("couldn't open the browser: {e}"))?;
     log::info!("oauth: a espera do callback do browser na porta {port}");
 
-    let code = match tokio::time::timeout(LOGIN_TIMEOUT, wait_for_code(&listener, &csrf_state)).await
-    {
-        Ok(r) => r?,
-        Err(_) => return Err("Sign-in timed out. Try again when you're ready.".into()),
-    };
+    let code =
+        match tokio::time::timeout(LOGIN_TIMEOUT, wait_for_code(&listener, &csrf_state)).await {
+            Ok(r) => r?,
+            Err(_) => return Err("Sign-in timed out. Try again when you're ready.".into()),
+        };
 
     let session = exchange(state, &code, &verifier, port).await?;
     let account = session.account_id.clone();
@@ -85,7 +86,10 @@ pub async fn login(state: &AppState) -> Result<Option<String>, String> {
         account_id: session.account_id.clone(),
         expires_at_ms: session.expires_at_ms,
     });
-    log::info!("oauth: sessao gravada (conta={})", account.as_deref().unwrap_or("desconhecida"));
+    log::info!(
+        "oauth: sessao gravada (conta={})",
+        account.as_deref().unwrap_or("desconhecida")
+    );
     Ok(account)
 }
 
@@ -240,12 +244,20 @@ async fn exchange(
 /// renovacao em que a OpenAI nao devolve refresh novo: nesse caso o antigo continua valido, e
 /// deita-lo fora era perder a sessao sem razao.
 fn session_from(body: &serde_json::Value, previous_refresh: Option<&str>) -> OAuthSession {
-    let s = |k: &str| body.get(k).and_then(serde_json::Value::as_str).unwrap_or("");
+    let s = |k: &str| {
+        body.get(k)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+    };
     let account_id = wire::jwt_claims(s("id_token"))
         .as_ref()
         .and_then(wire::chatgpt_account_id)
         // Alguns tokens so trazem a conta no access token.
-        .or_else(|| wire::jwt_claims(s("access_token")).as_ref().and_then(wire::chatgpt_account_id));
+        .or_else(|| {
+            wire::jwt_claims(s("access_token"))
+                .as_ref()
+                .and_then(wire::chatgpt_account_id)
+        });
     let refresh = s("refresh_token");
     OAuthSession {
         access_token: s("access_token").to_string(),
@@ -273,7 +285,10 @@ pub async fn access_token(state: &AppState) -> Result<(String, Option<String>), 
 /// ainda esta dentro da validade nao fazia pedido nenhum e dizia que a sessao serve, mesmo que ela
 /// tivesse sido revogada na conta ha uma hora. Um veredicto de saude que nao verificou nada e
 /// pior do que nao haver veredicto: o Ember diria que tem fallback provado e nao tinha.
-async fn token(state: &AppState, force_refresh: bool) -> Result<(String, Option<String>), CoreError> {
+async fn token(
+    state: &AppState,
+    force_refresh: bool,
+) -> Result<(String, Option<String>), CoreError> {
     let mut cache = state.oauth_access.lock().await;
     // O token em memoria serve enquanto for valido. Sem esta cache, e como o access token nao cabe
     // no cofre, CADA refine comecava por uma renovacao: um pedido a mais e uma rotacao de token a
@@ -380,7 +395,9 @@ async fn refresh_inner(
             // A sessao acabou (revogada na conta, ou o refresh expirou). NAO se apaga o que esta
             // gravado: quem apaga credenciais e o utilizador, e o "sign out" esta a um clique.
             // O que se faz e dizer a verdade, para a UI mandar fazer login outra vez.
-            log::warn!("oauth: sessao ChatGPT ja nao e valida (HTTP {status}); e preciso novo login");
+            log::warn!(
+                "oauth: sessao ChatGPT ja nao e valida (HTTP {status}); e preciso novo login"
+            );
             Err(CoreError::Auth)
         }
         wire::RefreshOutcome::Transient => {
@@ -492,7 +509,11 @@ mod tests {
         let b = random_b64(32).unwrap();
         assert_ne!(a, b, "dois verifiers iguais seriam um CSPRNG partido");
         // A RFC exige entre 43 e 128 caracteres.
-        assert!((43..=128).contains(&a.len()), "verifier com {} chars", a.len());
+        assert!(
+            (43..=128).contains(&a.len()),
+            "verifier com {} chars",
+            a.len()
+        );
         assert!(!a.contains('='));
     }
 
@@ -517,6 +538,9 @@ mod tests {
 
         // E quando devolve, o novo ganha.
         let rotated = serde_json::json!({ "access_token": "at-3", "refresh_token": "rt-novo" });
-        assert_eq!(session_from(&rotated, Some("rt-antigo")).refresh_token, "rt-novo");
+        assert_eq!(
+            session_from(&rotated, Some("rt-antigo")).refresh_token,
+            "rt-novo"
+        );
     }
 }

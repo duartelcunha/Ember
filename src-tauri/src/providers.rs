@@ -4,8 +4,8 @@
 use ember_core::codex;
 use ember_core::error::{CoreError, OutcomeClass};
 use ember_core::health::KeyCheck;
-use ember_core::models::ModelInfo;
 use ember_core::model::{LlmRequest, LlmResponse, Provider};
+use ember_core::models::ModelInfo;
 use ember_core::providers::{self as wire, OpenAiStreamEvent};
 use ember_core::retry::{classify, plan, Decision, LoopState, RetryConfig};
 use futures_util::StreamExt;
@@ -227,7 +227,10 @@ async fn call_once(
                 // como Auth para disparar o fallback: a outra familia tem chave diferente.
                 OutcomeClass::Payload
                     if provider == Provider::Gemini
-                        && body.as_ref().map(wire::gemini_is_invalid_key).unwrap_or(false) =>
+                        && body
+                            .as_ref()
+                            .map(wire::gemini_is_invalid_key)
+                            .unwrap_or(false) =>
                 {
                     Err(OutcomeClass::Auth)
                 }
@@ -238,11 +241,16 @@ async fn call_once(
                 // modelo devolve o mesmo, por isso vale mais ir ja para o passo seguinte.
                 OutcomeClass::Transient { .. }
                     if provider == Provider::Gemini
-                        && body.as_ref().map(wire::gemini_is_overloaded).unwrap_or(false) =>
+                        && body
+                            .as_ref()
+                            .map(wire::gemini_is_overloaded)
+                            .unwrap_or(false) =>
                 {
                     Err(OutcomeClass::Overloaded)
                 }
-                OutcomeClass::Transient { retry_after_ms: None } if provider == Provider::Gemini => {
+                OutcomeClass::Transient {
+                    retry_after_ms: None,
+                } if provider == Provider::Gemini => {
                     let body_ra = body.as_ref().and_then(wire::gemini_retry_delay_ms);
                     Err(OutcomeClass::Transient {
                         retry_after_ms: body_ra,
@@ -432,7 +440,11 @@ pub async fn refine(
                     provider,
                     state.attempt
                 );
-                return Ok(LlmResponse { text, provider, model: model.clone() })
+                return Ok(LlmResponse {
+                    text,
+                    provider,
+                    model: model.clone(),
+                });
             }
             // Cada tentativa falhada era engolida em silencio: a overlay dizia "provider error"
             // e o log nao tinha rasto nenhum de qual provider falhou nem porque. Logamos o
@@ -453,11 +465,7 @@ pub async fn refine(
                         // Diz QUAL e o passo seguinte: outro modelo da mesma familia e a outra
                         // familia sao decisoes diferentes, e sem isto o log dizia sempre o mesmo.
                         let to = &chain[next.step_index];
-                        log::info!(
-                            "falling back to {:?} with model {}",
-                            to.provider,
-                            to.model
-                        );
+                        log::info!("falling back to {:?} with model {}", to.provider, to.model);
                         state = next;
                     }
                     Decision::Fail { reason } => {

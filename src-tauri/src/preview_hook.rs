@@ -86,7 +86,12 @@ pub enum WatchVerdict {
 
 /// Classificador puro do watcher. `ignoring_held` = o Esc ja estava em baixo na instalacao;
 /// `decided` = ja consumimos um keydown fresco e estamos a engolir a cauda.
-pub fn classify_watch_event(vk: u32, is_down: bool, ignoring_held: bool, decided: bool) -> WatchVerdict {
+pub fn classify_watch_event(
+    vk: u32,
+    is_down: bool,
+    ignoring_held: bool,
+    decided: bool,
+) -> WatchVerdict {
     if vk != 0x1B {
         return WatchVerdict::Pass;
     }
@@ -431,7 +436,12 @@ mod imp {
 
             let hmod = unsafe { GetModuleHandleW(None) }.unwrap_or_default();
             let hook = match unsafe {
-                SetWindowsHookExW(WH_KEYBOARD_LL, Some(esc_watch_proc), Some(HINSTANCE(hmod.0)), 0)
+                SetWindowsHookExW(
+                    WH_KEYBOARD_LL,
+                    Some(esc_watch_proc),
+                    Some(HINSTANCE(hmod.0)),
+                    0,
+                )
             } {
                 Ok(h) => h,
                 Err(e) => {
@@ -471,7 +481,10 @@ mod imp {
                 }
             }
         });
-        EscWatcher { stop, join: Some(join) }
+        EscWatcher {
+            stop,
+            join: Some(join),
+        }
     }
 
     // -----------------------------------------------------------------------------------
@@ -569,12 +582,8 @@ mod imp {
                         return LRESULT(1);
                     }
                     // Clique FORA: fecha sem escolher, e o clique segue para a app. Era dela.
-                    let _ = PICKER_DECISION.compare_exchange(
-                        0,
-                        2,
-                        Ordering::SeqCst,
-                        Ordering::SeqCst,
-                    );
+                    let _ =
+                        PICKER_DECISION.compare_exchange(0, 2, Ordering::SeqCst, Ordering::SeqCst);
                 }
                 WM_LBUTTONUP => {
                     if PICKER_CLICK_TAIL.swap(0, Ordering::SeqCst) != 0 {
@@ -586,7 +595,6 @@ mod imp {
         }
         CallNextHookEx(None, code, wparam, lparam)
     }
-
 
     fn picker_key_bit(vk: u32) -> u8 {
         match vk {
@@ -721,7 +729,12 @@ mod imp {
 
         let hmod = unsafe { GetModuleHandleW(None) }.unwrap_or_default();
         let hook = match unsafe {
-            SetWindowsHookExW(WH_KEYBOARD_LL, Some(picker_proc), Some(HINSTANCE(hmod.0)), 0)
+            SetWindowsHookExW(
+                WH_KEYBOARD_LL,
+                Some(picker_proc),
+                Some(HINSTANCE(hmod.0)),
+                0,
+            )
         } {
             Ok(h) => h,
             // Um picker que nao consegue ouvir o teclado nao pode ficar no ecra a fingir que
@@ -736,7 +749,12 @@ mod imp {
         // clicado, nao percorrido a setas. Se ESTE nao instalar, a lista continua a servir pelo
         // teclado, por isso a falha aqui e um aviso e nao um cancelamento.
         let mouse_hook = unsafe {
-            SetWindowsHookExW(WH_MOUSE_LL, Some(picker_mouse_proc), Some(HINSTANCE(hmod.0)), 0)
+            SetWindowsHookExW(
+                WH_MOUSE_LL,
+                Some(picker_mouse_proc),
+                Some(HINSTANCE(hmod.0)),
+                0,
+            )
         };
         let _mouse_guard = match mouse_hook {
             Ok(h) => Some(HookGuard(h)),
@@ -822,7 +840,8 @@ pub use imp::gate;
 #[cfg(windows)]
 pub use imp::{run_picker_blocking, PickerGeom, PickerOutcome};
 #[cfg(windows)]
-#[allow(unused_imports)] // o tipo e parte do contrato publico, mesmo que so o flow o nomeie via inferencia
+#[allow(unused_imports)]
+// o tipo e parte do contrato publico, mesmo que so o flow o nomeie via inferencia
 pub use imp::{spawn_esc_watcher, EscWatcher};
 
 /// Non-Windows: sem hook, sem Esc-cancel (o atalho continua a cancelar). Mesmo contrato.
@@ -880,11 +899,17 @@ mod tests {
     fn enter_and_esc_answer_the_question_and_never_reach_the_app() {
         assert_eq!(
             classify_key(0x0D),
-            KeyVerdict::Decide { decision: Decision::Accept, consume: true }
+            KeyVerdict::Decide {
+                decision: Decision::Accept,
+                consume: true
+            }
         );
         assert_eq!(
             classify_key(0x1B),
-            KeyVerdict::Decide { decision: Decision::Reject, consume: true }
+            KeyVerdict::Decide {
+                decision: Decision::Reject,
+                consume: true
+            }
         );
     }
 
@@ -897,10 +922,18 @@ mod tests {
         // `consume: false` e a parte que nao pode falhar: a tecla era dele, ia para a app dele.
         // Engolir-lhe um caracter para fechar uma pilula nossa seria trocar um incomodo por um
         // bug de escrita, que e muito pior.
-        for vk in [0x41 /* A */, 0x20 /* Space */, 0x08 /* Backspace */, 0x09 /* Tab */] {
+        for vk in [
+            0x41, /* A */
+            0x20, /* Space */
+            0x08, /* Backspace */
+            0x09, /* Tab */
+        ] {
             assert_eq!(
                 classify_key(vk),
-                KeyVerdict::Decide { decision: Decision::Reject, consume: false },
+                KeyVerdict::Decide {
+                    decision: Decision::Reject,
+                    consume: false
+                },
                 "vk {vk:#x} devia manter o original sem consumir a tecla"
             );
         }
@@ -910,9 +943,18 @@ mod tests {
     fn watch_a_fresh_esc_cancels_and_is_consumed_with_its_tail() {
         // Esc fresco durante o refine: cancela. E dai em diante tudo o que for Esc e cauda da
         // NOSSA pressao (repeticoes, key-up) e continua consumido, senao vazava para a app.
-        assert_eq!(classify_watch_event(0x1B, true, false, false), WatchVerdict::Cancel);
-        assert_eq!(classify_watch_event(0x1B, true, false, true), WatchVerdict::ConsumeTail);
-        assert_eq!(classify_watch_event(0x1B, false, false, true), WatchVerdict::ConsumeTail);
+        assert_eq!(
+            classify_watch_event(0x1B, true, false, false),
+            WatchVerdict::Cancel
+        );
+        assert_eq!(
+            classify_watch_event(0x1B, true, false, true),
+            WatchVerdict::ConsumeTail
+        );
+        assert_eq!(
+            classify_watch_event(0x1B, false, false, true),
+            WatchVerdict::ConsumeTail
+        );
     }
 
     #[test]
@@ -920,8 +962,14 @@ mod tests {
         // O Esc ja estava em baixo quando o watcher instalou: essa pressao era para a app dele.
         // As repeticoes passam, o key-up passa (e limpa o "herdado"), e so a descida SEGUINTE
         // conta como cancelamento.
-        assert_eq!(classify_watch_event(0x1B, true, true, false), WatchVerdict::Pass);
-        assert_eq!(classify_watch_event(0x1B, false, true, false), WatchVerdict::ReleaseHeld);
+        assert_eq!(
+            classify_watch_event(0x1B, true, true, false),
+            WatchVerdict::Pass
+        );
+        assert_eq!(
+            classify_watch_event(0x1B, false, true, false),
+            WatchVerdict::ReleaseHeld
+        );
     }
 
     #[test]

@@ -201,7 +201,9 @@ pub async fn open_picker(app: AppHandle) {
             let _ = tx.send(outcome);
         });
     }
-    let outcome = rx.await.unwrap_or(crate::preview_hook::PickerOutcome::Cancelled);
+    let outcome = rx
+        .await
+        .unwrap_or(crate::preview_hook::PickerOutcome::Cancelled);
 
     if let crate::preview_hook::PickerOutcome::Committed(i) = outcome {
         let escolhido = rows.get(i).and_then(|r| r.id.clone());

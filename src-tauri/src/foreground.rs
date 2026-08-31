@@ -34,7 +34,9 @@ pub fn is_terminal_exe(path: &str) -> bool {
 
 #[cfg(windows)]
 pub fn is_terminal_foreground() -> bool {
-    foreground_exe().map(|p| is_terminal_exe(&p)).unwrap_or(false)
+    foreground_exe()
+        .map(|p| is_terminal_exe(&p))
+        .unwrap_or(false)
 }
 
 #[cfg(not(windows))]
@@ -51,7 +53,9 @@ pub fn is_terminal_foreground() -> bool {
 #[cfg(windows)]
 pub fn is_elevated() -> bool {
     use windows::Win32::Foundation::{CloseHandle, HANDLE};
-    use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
+    use windows::Win32::Security::{
+        GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
+    };
     use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
     unsafe {
         let mut token = HANDLE::default();
@@ -141,7 +145,9 @@ mod tests {
     #[test]
     fn matches_terminals_by_basename_case_insensitively() {
         assert!(is_terminal_exe(r"C:\Windows\System32\cmd.exe"));
-        assert!(is_terminal_exe(r"C:\Program Files\WindowsApps\WindowsTerminal.exe"));
+        assert!(is_terminal_exe(
+            r"C:\Program Files\WindowsApps\WindowsTerminal.exe"
+        ));
         assert!(is_terminal_exe("PowerShell.EXE"));
         assert!(is_terminal_exe("/usr/bin/pwsh.exe"));
     }
