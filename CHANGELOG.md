@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.8.0](https://github.com/duartelcunha/Ember/compare/v0.7.0...v0.8.0) (2026-08-31)
+
+
+### Features
+
+* a spark at the pointer that morphs into the pill ([d283fca](https://github.com/duartelcunha/Ember/commit/d283fcad5f0ffc07ff05881b9a4c1634b6a0a8b6))
+* Esc cancels a refine at any point, not just at the preview ([4fe35a8](https://github.com/duartelcunha/Ember/commit/4fe35a8588538def94387f5df6e1cd4777e445e2))
+* projects with their own brief, picked from the cursor ([aaa8dd5](https://github.com/duartelcunha/Ember/commit/aaa8dd50d2f6eaa8a6a69d1ff891ed259c941382))
+* settings that open instantly, and shortcut capture that explains itself ([a40394e](https://github.com/duartelcunha/Ember/commit/a40394e852a8810d74890c6de98b1f9581b87dfc))
+* sign in with ChatGPT, and fall back across model families ([b588fa7](https://github.com/duartelcunha/Ember/commit/b588fa74b8608bb816a9cccc97dd073a208c7444))
+
 ## [0.7.0](https://github.com/duartelcunha/Ember/compare/v0.6.1...v0.7.0) (2026-08-26)
 
 
