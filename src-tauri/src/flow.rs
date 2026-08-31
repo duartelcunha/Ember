@@ -206,13 +206,6 @@ pub async fn run(app: AppHandle, opts: RunOpts) {
     } = opts;
     emit(&app, "refining", None, None);
 
-    // Esc cancela em QUALQUER fase do ciclo, nao so no preview: um watcher de teclado proprio,
-    // vivo daqui ate ao fim do refine, que ao apanhar um Esc fresco aciona o mesmo caminho de
-    // cancelamento da segunda tecla do atalho. Os returns precoces ficam cobertos pelo Drop
-    // (para o hook sem join); antes do gate do preview ha um `stop_and_join` explicito, porque
-    // dois hooks vivos a consumir Esc davam o Esc do preview engolido pelo watcher.
-    let esc_watch = crate::preview_hook::spawn_esc_watcher(app.clone());
-
     let out = match tauri::async_runtime::spawn_blocking(move || {
         blocking_capture(terminal, timing, select_all_fallback)
     })
@@ -265,10 +258,10 @@ pub async fn run(app: AppHandle, opts: RunOpts) {
         return;
     };
 
-    // Nada que se refine: devolve o ecra sem gastar uma chamada. Vem ANTES de tudo o resto (do
-    // orb, do clipboard, do modelo) porque o objetivo e nao pagar nada por isto; refinar
-    // "tester aasdd" custava ~4s e uma chamada para devolver o mesmo texto.
-    if !ember_core::is_worth_refining(&selected) {
+    // Nada que se refine: acaba o ciclo sem CHAMAR O MODELO, que e o que custa dinheiro e os
+    // ~4 segundos. O orb ja apareceu e a captura ja foi feita, e assim tem de ser: so depois de
+    // ter o texto em maos e possivel decidir se ha alguma coisa para melhorar nele.
+    if !ember_core::is_worth_refining(&selected, mode) {
         log::info!(
             "preflight: seleccao sem nada a refinar ({} chars); sem chamada ao modelo",
             selected.chars().count()
@@ -304,6 +297,15 @@ pub async fn run(app: AppHandle, opts: RunOpts) {
         abort_cancelled(&app, saved, image, terminal).await;
         return;
     }
+
+    // Esc cancela a espera pelo modelo, que e a unica parte deste ciclo com duracao a serio.
+    //
+    // Nasce AQUI e nao no inicio do ciclo, e isso e uma correcao: com o watcher a viver desde o
+    // arranque, cada saida precoce (captura falhada, nada selecionado, clipboard ocupado) ainda
+    // corria o `finish` com o hook instalado, e durante esse segundo e meio de pilula o Esc do
+    // utilizador era consumido por um refine que ja tinha acabado. A captura demora ~300ms e nao
+    // e o que alguem quer cancelar; a chamada ao modelo pode demorar dezenas de segundos.
+    let esc_watch = crate::preview_hook::spawn_esc_watcher(app.clone());
 
     // Feedback de progresso honesto: torna visivel o retry e o fallback (nao a cauda do texto
     // a ser gerado, que sao tokens internos e nao o que sera colado). O orb + "Trying/Retrying

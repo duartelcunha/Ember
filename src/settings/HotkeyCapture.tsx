@@ -260,7 +260,17 @@ export function HotkeyCapture({
               Set shortcut
             </Button>
             {clearable && value && (
-              <Button variant="ghost" onClick={() => void onCommit("")}>
+              <Button
+                variant="ghost"
+                // Limpar tambem pode falhar (o registo do conjunto e tudo-ou-nada), e o erro
+                // segue para o MESMO alerta inline do resto. Descarta-lo deixava a pessoa a
+                // olhar para um atalho que ela julgava ter apagado.
+                onClick={() => {
+                  void onCommit("").then((msg) => {
+                    if (msg) setError(msg);
+                  });
+                }}
+              >
                 Clear
               </Button>
             )}

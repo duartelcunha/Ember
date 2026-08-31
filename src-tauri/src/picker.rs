@@ -71,6 +71,12 @@ pub async fn open_picker(app: AppHandle) {
     // Mas so conta como segunda pressao passado o `REOPEN_GRACE`: enquanto a combinacao esta
     // fisicamente premida o Windows entrega o atalho repetido, e sem esta janela a lista fechava
     // no mesmo instante em que abria, o que se via como "o atalho nao faz nada".
+    // A limpeza do sinal de fecho vem ANTES de publicar `picker_open`. Ao contrario, havia uma
+    // janela em que um refine a arrancar via a lista como aberta, pedia-lhe que fechasse, e nos
+    // apagavamos esse pedido logo a seguir: ficavam o hook do picker e o do refine vivos ao
+    // mesmo tempo, os dois a comer o Enter. Na segunda pressao do atalho o pedido de fecho e
+    // reposto mais abaixo, portanto limpar aqui nao perde nada.
+    state.picker_cancel.store(false, Ordering::SeqCst);
     if state.picker_open.swap(true, Ordering::SeqCst) {
         let idade = state
             .picker_opened_at
@@ -86,9 +92,16 @@ pub async fn open_picker(app: AppHandle) {
         }
         return;
     }
-    state.picker_cancel.store(false, Ordering::SeqCst);
     if let Ok(mut g) = state.picker_opened_at.lock() {
         *g = Some(std::time::Instant::now());
+    }
+    // Segunda verificacao do refine, agora que `picker_open` ja esta publicado: se um comecou
+    // entre a primeira e esta, e ele que manda (e o trabalho a serio) e a lista nem chega a
+    // aparecer. Sem isto, a corrida so era estreita, nao inexistente.
+    if state.busy.load(Ordering::SeqCst) {
+        state.picker_open.store(false, Ordering::SeqCst);
+        log::info!("picker: ignorado (refine arrancou entretanto)");
+        return;
     }
 
     let cfg = crate::config::load(&app);

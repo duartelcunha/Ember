@@ -192,6 +192,11 @@ mod imp {
                     return LRESULT(1); // consome o key-up de Enter/Esc para nao deixar cauda
                 }
                 if is_down {
+                    // Uma descida FRESCA apaga o "ja subiu" da pressao anterior desta mesma
+                    // tecla. Sem isto o `RELEASED` era um trinco: num toque duplo rapido, o
+                    // drain via o bit da PRIMEIRA subida, dava a tecla por largada e o hook caia
+                    // com a segunda pressao ainda em baixo, despejando o auto-repeat na app.
+                    RELEASED.fetch_and(!bit, Ordering::SeqCst);
                     if !ignoring {
                         if let KeyVerdict::Decide { decision, .. } = classify_key(vk) {
                             HOOK_DECISION.store(
@@ -453,6 +458,7 @@ mod imp {
             };
             let _guard = HookGuard(hook);
             let mut notified = false;
+            let watch_start = std::time::Instant::now();
             loop {
                 let mut msg = MSG::default();
                 while unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE) }.as_bool() {
@@ -470,11 +476,24 @@ mod imp {
                 }
                 // Depois de decidir, o hook so vive para engolir a cauda da pressao; visto o
                 // key-up, ja nao ha nada a proteger.
-                if notified && WATCH_RELEASED.load(Ordering::SeqCst) != 0 {
+                let released = WATCH_RELEASED.load(Ordering::SeqCst) != 0;
+                if notified && released {
                     break;
                 }
+                // O `stop` chega do flow assim que o refine acaba, e o refine acaba precisamente
+                // porque este Esc o cancelou: nesse instante a tecla costuma estar AINDA em
+                // baixo. Sair aqui largava o hook e despejava a cauda (auto-repeat e key-up) na
+                // app do utilizador, que e a regra que este ficheiro inteiro existe para
+                // respeitar. Fica-se ate ao key-up, com teto para uma tecla presa nao pendurar
+                // a thread.
                 if stop2.load(Ordering::SeqCst) {
-                    break;
+                    if !notified || released {
+                        break;
+                    }
+                    if watch_start.elapsed() > RELEASE_TIMEOUT {
+                        log::warn!("esc-watch: key-up nunca visto; a largar o hook na mesma");
+                        break;
+                    }
                 }
                 unsafe {
                     MsgWaitForMultipleObjectsEx(None, 50, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
@@ -707,6 +726,27 @@ mod imp {
         pub visible: usize,
     }
 
+    /// Bombeia mensagens, com o hook AINDA INSTALADO, ate as teclas que consumimos subirem.
+    ///
+    /// Vale para TODAS as saidas do picker e nao so para a da decisao: fechar por Esc externo ou
+    /// por inatividade com uma seta ainda premida despejava o auto-repeat dela na app, e o caret
+    /// da pessoa andava sozinho depois de o menu desaparecer.
+    fn drain_picker_held() {
+        let inicio = std::time::Instant::now();
+        while PICKER_HELD.load(Ordering::SeqCst) != 0 && inicio.elapsed() < RELEASE_TIMEOUT {
+            let mut m = MSG::default();
+            while unsafe { PeekMessageW(&mut m, None, 0, 0, PM_REMOVE) }.as_bool() {
+                unsafe {
+                    let _ = TranslateMessage(&m);
+                    DispatchMessageW(&m);
+                }
+            }
+            unsafe {
+                MsgWaitForMultipleObjectsEx(None, 10, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+            }
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn run_picker_blocking(
         len: usize,
@@ -789,21 +829,7 @@ mod imp {
             if d != 0 {
                 // Antes de largar o hook, espera que as teclas consumidas subam: largar com uma
                 // seta (ou o Enter) ainda em baixo despejava o auto-repeat na app.
-                let drain_start = std::time::Instant::now();
-                while PICKER_HELD.load(Ordering::SeqCst) != 0
-                    && drain_start.elapsed() < RELEASE_TIMEOUT
-                {
-                    let mut m2 = MSG::default();
-                    while unsafe { PeekMessageW(&mut m2, None, 0, 0, PM_REMOVE) }.as_bool() {
-                        unsafe {
-                            let _ = TranslateMessage(&m2);
-                            DispatchMessageW(&m2);
-                        }
-                    }
-                    unsafe {
-                        MsgWaitForMultipleObjectsEx(None, 10, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
-                    }
-                }
+                drain_picker_held();
                 return match d {
                     1 => {
                         let i = PICKER_INDEX.load(Ordering::SeqCst) as usize;
@@ -822,10 +848,12 @@ mod imp {
             }
             if should_cancel() {
                 log::info!("picker: cancelado de fora (atalho ou refine)");
+                drain_picker_held();
                 return PickerOutcome::Cancelled;
             }
             if last_activity.elapsed() >= PICKER_IDLE_TIMEOUT {
                 log::info!("picker: fechado por inatividade");
+                drain_picker_held();
                 return PickerOutcome::Cancelled;
             }
             unsafe {
