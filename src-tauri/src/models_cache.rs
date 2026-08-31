@@ -60,6 +60,13 @@ fn reconcile_saved(app: &AppHandle, provider: Provider, live: &[ModelInfo]) {
     let d = config::Config::default();
     let (saved, fallback) = match provider {
         Provider::Gemini => (cfg.gemini_model.clone(), d.gemini_model.clone()),
+        // Em modo subscricao o default do slot (um modelo do Groq) nao existe naquele backend:
+        // usa-lo como rede punha na config um id que da erro em todos os refines, que e
+        // exatamente o contrario do que a reconciliacao existe para fazer.
+        Provider::OpenAi if cfg.openai_auth == crate::config::OpenAiAuth::ChatGpt => (
+            cfg.openai_model.clone(),
+            ember_core::codex::DEFAULT_CODEX_MODEL.to_string(),
+        ),
         Provider::OpenAi => (cfg.openai_model.clone(), d.openai_model.clone()),
     };
     let auto = matches!(provider, Provider::Gemini) && cfg.gemini_model_auto;
@@ -99,7 +106,18 @@ pub fn forget(state: &AppState, provider: Provider) {
 
 /// O catalogo a mostrar na UI para este provider. Serve o que foi descoberto; sem descoberta,
 /// serve a lista embutida e diz que nao e viva (`live: false`).
-pub fn catalog(state: &AppState, provider: Provider, base_url: &str) -> ModelCatalog {
+pub fn catalog(
+    state: &AppState,
+    provider: Provider,
+    base_url: &str,
+    auth: crate::config::OpenAiAuth,
+) -> ModelCatalog {
+    let subscription =
+        matches!(provider, Provider::OpenAi) && auth == crate::config::OpenAiAuth::ChatGpt;
+    // O cache serve em qualquer modo, subscricao incluida: a rota de listagem daquele backend
+    // existe e o probe tenta-a (ver `oauth::discover_models`). O que impede a lista de um modo
+    // aparecer no outro nao e uma excecao aqui, e o `forget` na troca de modo, que e onde a
+    // distincao pertence.
     if let Ok(m) = state.model_lists.lock() {
         if let Some((models, at)) = m.get(&provider) {
             if !models.is_empty() {
@@ -112,7 +130,7 @@ pub fn catalog(state: &AppState, provider: Provider, base_url: &str) -> ModelCat
         }
     }
     ModelCatalog {
-        models: fallback_catalog(provider, base_url),
+        models: fallback_catalog(provider, base_url, subscription),
         fetched_at_ms: None,
         live: false,
     }
@@ -121,10 +139,13 @@ pub fn catalog(state: &AppState, provider: Provider, base_url: &str) -> ModelCat
 /// A lista embutida no binario, usada so ate a primeira descoberta. Curta de proposito: nao e
 /// para ser mantida atualizada (esse era o problema), so para o primeiro arranque, antes de
 /// haver chave nenhuma, ter alguma coisa para mostrar.
-fn fallback_catalog(provider: Provider, base_url: &str) -> Vec<ModelInfo> {
+fn fallback_catalog(provider: Provider, base_url: &str, subscription: bool) -> Vec<ModelInfo> {
     use ember_core::providers as wire;
     let ids: &[&str] = match provider {
         Provider::Gemini => &[wire::DEFAULT_GEMINI_MODEL],
+        // A subscricao ChatGPT serve os `gpt-5.x` e mais nenhum, e nao ha listagem para descobrir:
+        // esta lista e tudo o que ha, e a UI ja diz que nao e viva.
+        Provider::OpenAi if subscription => &ember_core::codex::CODEX_MODELS,
         Provider::OpenAi => {
             if wire::openai_is_openrouter(base_url) {
                 &wire::OPENROUTER_FREE_MODELS

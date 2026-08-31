@@ -88,6 +88,10 @@ pub struct LlmRequest {
 pub struct LlmResponse {
     pub text: String,
     pub provider: Provider,
+    /// O modelo que REALMENTE respondeu, que nao e sempre o escolhido nas settings: a cadeia
+    /// pode ter caido para um alternativo quando o primeiro estava cheio. Sem isto, o registo de
+    /// prompts atribuia a resposta ao modelo errado, que e pior do que nao a atribuir a nenhum.
+    pub model: String,
 }
 
 #[cfg(test)]

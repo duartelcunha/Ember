@@ -12,7 +12,12 @@ export const TabsList = React.forwardRef<
   <TabsPrimitive.List
     ref={ref}
     className={cn(
-      "inline-flex items-center gap-1 rounded-lg border border-[color:var(--border-subtle)] bg-surface-1 p-1",
+      // `flex w-full` e nao `inline-flex`: assim a pilula tem EXATAMENTE a largura do contentor,
+      // que e a mesma dos cartoes por baixo. Em inline-flex ela media-se pelo conteudo e, com
+      // sete tabs, passava a largura do contentor e ficava mais comprida do que tudo o resto.
+      // Assim os dois alinham por construcao, em qualquer tamanho de janela e com o numero de
+      // tabs que houver, em vez de dependerem de um max-width afinado a olho.
+      "flex w-full items-center gap-1 rounded-lg border border-[color:var(--border-subtle)] bg-surface-1 p-1",
       className,
     )}
     {...props}
@@ -27,7 +32,9 @@ export const TabsTrigger = React.forwardRef<
   <TabsPrimitive.Trigger
     ref={ref}
     className={cn(
-      "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-fg-muted transition-colors duration-300 ease-out hover:text-fg focus-visible:outline-none data-[state=active]:bg-surface-3 data-[state=active]:text-fg",
+      // `flex-1` para as tabs repartirem a largura em partes iguais; `min-w-0` para o texto poder
+      // encolher em vez de forcar a pilula a crescer outra vez.
+      "flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-sm font-medium text-fg-muted transition-colors duration-300 ease-out hover:text-fg focus-visible:outline-none data-[state=active]:bg-surface-3 data-[state=active]:text-fg",
       className,
     )}
     {...props}

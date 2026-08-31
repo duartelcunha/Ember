@@ -1090,17 +1090,19 @@ checksum = "4ef6b89e5b37196644d8796de5268852ff179b44e96276cf4290264843743bb7"
 
 [[package]]
 name = "ember"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "arboard",
  "ember-core",
  "enigo",
  "futures-util",
+ "getrandom 0.2.17",
  "keyring",
  "log",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-autostart",
@@ -1116,7 +1118,7 @@ dependencies = [
 
 [[package]]
 name = "ember-core"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "serde",
  "serde_json",

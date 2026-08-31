@@ -135,6 +135,26 @@ fn next_char_len(bytes: &[u8], i: usize) -> usize {
     }
 }
 
+/// Todos os ficheiros de contexto conhecidos que existem NESTA pasta, sem subir a arvore.
+///
+/// Serve o caso oposto ao do `nearest_context`: ali a pasta foi adivinhada a partir do titulo de
+/// uma janela e subir faz sentido; aqui foi uma PESSOA que a escolheu, e ir buscar convencoes de
+/// um repo pai seria uma surpresa e nao uma funcionalidade.
+///
+/// Devolve TODOS os que existem, e nao o primeiro. E deliberado: qual deles presta decide-se pelo
+/// conteudo (ver `projects::pick_source`), porque a precedencia sozinha erra em casos reais. Num
+/// dos repos onde isto foi testado o `CLAUDE.md` tem uma linha (`@AGENTS.md`, um ponteiro de
+/// import) e o conteudo verdadeiro esta no `AGENTS.md`: parar no primeiro daria a linha vazia.
+pub fn candidates_in(dir: &Path, exists: &dyn Fn(&Path) -> bool) -> Vec<Found> {
+    ContextKind::PRECEDENCE
+        .into_iter()
+        .filter_map(|kind| {
+            let path = dir.join(kind.rel_path());
+            exists(&path).then_some(Found { path, kind })
+        })
+        .collect()
+}
+
 /// Sobe da `start_dir` ate ao ficheiro de contexto mais proximo. Para no primeiro que encontrar
 /// (a menos que `all_kinds`, que junta um por tipo). Regras de paragem: raiz de repo git, o home
 /// do utilizador, a raiz do filesystem, ou `MAX_WALK_DEPTH`. Nunca sobe acima do home (privacidade).
@@ -329,6 +349,35 @@ mod tests {
         let exists = |_: &Path| true; // mesmo que exista, nao deteta projeto sob ~/.claude
         let no_git = |_: &Path| false;
         assert!(nearest_context(&start, &exists, &no_git, Some(&home), false).is_empty());
+    }
+
+    #[test]
+    fn candidates_in_returns_every_known_file_in_that_one_folder() {
+        // Ao contrario do walk-up, aqui queremos TODOS os candidatos, porque a escolha entre
+        // eles e por conteudo e nao por nome (ver `projects::pick_source`).
+        let dir = Path::new("/proj");
+        let exists = |p: &Path| {
+            p == Path::new("/proj/CLAUDE.md") || p == Path::new("/proj/AGENTS.md")
+        };
+        let found = candidates_in(dir, &exists);
+        assert_eq!(found.len(), 2);
+        // Pela ordem da precedencia, que e o desempate quando o conteudo empata.
+        assert_eq!(found[0].kind, ContextKind::ClaudeMd);
+        assert_eq!(found[1].kind, ContextKind::AgentsMd);
+    }
+
+    #[test]
+    fn candidates_in_never_walks_up_to_the_parent() {
+        // O pai TEM um CLAUDE.md e mesmo assim nao aparece: quem escolheu a pasta foi uma
+        // pessoa, e trazer convencoes de um repo acima seria ler o que ela nao mandou ler.
+        let exists = |p: &Path| p == Path::new("/proj/CLAUDE.md");
+        assert!(candidates_in(Path::new("/proj/sub"), &exists).is_empty());
+    }
+
+    #[test]
+    fn candidates_in_is_empty_for_a_folder_with_nothing() {
+        // Caso real (`wt-dev-merge`): projeto sem ficheiro nenhum. E legal, e quem chama trata.
+        assert!(candidates_in(Path::new("/vazio"), &|_| false).is_empty());
     }
 
     #[test]

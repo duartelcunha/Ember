@@ -50,13 +50,29 @@ pub struct RunOpts {
 }
 
 fn emit(app: &AppHandle, phase: &str, message: Option<String>, provider: Option<String>) {
-    app.state::<AppState>()
+    let state = app.state::<AppState>();
+    state
         .orb_visible
         .store(phase == "refining", Ordering::SeqCst);
+    // Segue o cursor enquanto ha trabalho a decorrer E enquanto o preview espera resposta: nos
+    // dois casos o utilizador ainda esta no meio da accao, e a overlay tem de estar onde ele
+    // esta a olhar. As pilulas de resultado ficam onde nasceram: sao passageiras e persegui-las
+    // com os olhos custava mais do que valia.
+    state
+        .follow_cursor
+        .store(phase == "refining" || phase == "preview", Ordering::SeqCst);
+    // A cor do projeto ativo viaja com o estado: e o unico sinal que diz, em cada refine, com que
+    // projeto ele esta a ser feito. Sem isto, um projeto ativo e invisivel e da para refinar uma
+    // semana com o contexto errado sem dar por nada.
+    let accent = state.orb_accent.lock().ok().and_then(|a| a.clone());
+    let project = state.orb_project.lock().ok().and_then(|a| a.clone());
     let _ = app.emit_to(
         "overlay",
         STATE_EVENT,
-        serde_json::json!({ "phase": phase, "message": message, "provider": provider }),
+        serde_json::json!({
+            "phase": phase, "message": message, "provider": provider,
+            "accent": accent, "project": project
+        }),
     );
 }
 
@@ -190,6 +206,13 @@ pub async fn run(app: AppHandle, opts: RunOpts) {
     } = opts;
     emit(&app, "refining", None, None);
 
+    // Esc cancela em QUALQUER fase do ciclo, nao so no preview: um watcher de teclado proprio,
+    // vivo daqui ate ao fim do refine, que ao apanhar um Esc fresco aciona o mesmo caminho de
+    // cancelamento da segunda tecla do atalho. Os returns precoces ficam cobertos pelo Drop
+    // (para o hook sem join); antes do gate do preview ha um `stop_and_join` explicito, porque
+    // dois hooks vivos a consumir Esc davam o Esc do preview engolido pelo watcher.
+    let esc_watch = crate::preview_hook::spawn_esc_watcher(app.clone());
+
     let out = match tauri::async_runtime::spawn_blocking(move || {
         blocking_capture(terminal, timing, select_all_fallback)
     })
@@ -236,8 +259,8 @@ pub async fn run(app: AppHandle, opts: RunOpts) {
     let Some(selected) = captured.text else {
         // Nada selecionado: restaura clipboard, hint subtil.
         let s = saved.clone();
-        let _ =
-            tauri::async_runtime::spawn_blocking(move || blocking_restore(s, image, terminal)).await;
+        let _ = tauri::async_runtime::spawn_blocking(move || blocking_restore(s, image, terminal))
+            .await;
         finish(&app, FlowOutcome::NoSelectionFound).await;
         return;
     };
@@ -252,8 +275,8 @@ pub async fn run(app: AppHandle, opts: RunOpts) {
             select_all_max_chars
         );
         let s = saved.clone();
-        let _ =
-            tauri::async_runtime::spawn_blocking(move || blocking_restore(s, image, terminal)).await;
+        let _ = tauri::async_runtime::spawn_blocking(move || blocking_restore(s, image, terminal))
+            .await;
         finish(&app, FlowOutcome::SelectAllTooBig).await;
         return;
     }
@@ -311,6 +334,11 @@ pub async fn run(app: AppHandle, opts: RunOpts) {
             }
         }
     };
+
+    // O refine terminou (bem, mal ou cancelado): o watcher ja nao tem nada a vigiar, e TEM de
+    // cair antes de o gate do preview instalar o hook dele. O join e curto (o pump acorda a cada
+    // 50ms) e garante a ordem hook-a-hook.
+    esc_watch.stop_and_join();
 
     let Some(refine_result) = outcome else {
         abort_cancelled(&app, saved, image, terminal).await;
@@ -405,10 +433,9 @@ pub async fn run(app: AppHandle, opts: RunOpts) {
             // sempre diagnosticavel a posteriori.
             log::error!("refine failed: {e:?}");
             let s = saved.clone();
-            let _ = tauri::async_runtime::spawn_blocking(move || {
-                blocking_restore(s, image, terminal)
-            })
-            .await;
+            let _ =
+                tauri::async_runtime::spawn_blocking(move || blocking_restore(s, image, terminal))
+                    .await;
             let message = commands::friendly_error(&e);
             if matches!(e, ember_core::CoreError::NoProvidersConfigured) {
                 show_settings(&app);

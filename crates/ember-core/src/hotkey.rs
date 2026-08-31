@@ -33,6 +33,9 @@ pub enum HotkeyVerdict {
     UsedByEmber { slot: String },
     /// Sem tecla principal (so modificadores), ou vazia.
     Incomplete,
+    /// A tecla principal e uma das que o picker usa para navegar (setas, Enter, Tab, Esc). So se
+    /// aplica ao slot do picker, onde o atalho competiria com a propria lista que abre.
+    ClashesWithPicker { key: String },
     /// Uma tecla sozinha que o utilizador precisa para escrever. Um atalho global captura a
     /// tecla em TODO o sistema, por isso um `Enter` sem modificador nenhum tira o Enter a toda
     /// a gente enquanto o Ember estiver aberto. Nao e teoria: chegou a ficar gravado assim.
@@ -180,6 +183,23 @@ pub const DEFAULT_HOTKEY_CANDIDATES: [&str; 6] = [
     "CmdOrCtrl+Shift+Space",
 ];
 
+/// Teclas que o PICKER consome enquanto esta aberto. Um atalho do picker cuja tecla principal
+/// seja uma destas morde-se a si proprio: abre-se a lista com `Shift+Up` e, como o Shift fica
+/// premido, o `Up` seguinte volta a disparar o atalho em vez de navegar, e a lista fecha na cara
+/// de quem a abriu. Foi exatamente isto que aconteceu na primeira utilizacao real.
+const PICKER_OWN_KEYS: &[&str] = &["up", "down", "left", "right", "enter", "tab", "escape"];
+
+/// A tecla principal deste acelerador colide com as teclas de navegacao do picker? Devolve a
+/// tecla ofensora, para a mensagem poder nomea-la em vez de dizer so "invalido".
+///
+/// Vale SO para o slot do picker: `CmdOrCtrl+Shift+Up` para refinar e perfeitamente legitimo,
+/// porque nada fica a ouvir setas depois de disparar.
+pub fn picker_key_clash(accel: &str) -> Option<String> {
+    let canon = canonical(accel)?;
+    let key = canon.rsplit('+').next()?.to_ascii_lowercase();
+    PICKER_OWN_KEYS.contains(&key.as_str()).then_some(key)
+}
+
 /// Avalia uma combinacao contra o SO e contra os atalhos que o Ember ja tem atribuidos.
 ///
 /// `taken` sao os slots ja ocupados, como (slot, acelerador). O slot que esta a ser editado NAO
@@ -222,6 +242,19 @@ pub fn evaluate(accel: &str, os: Os, taken: &[(&str, &str)]) -> HotkeyVerdict {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn picker_hotkey_may_not_use_the_keys_the_picker_itself_needs() {
+        // O bug real da primeira utilizacao: `Shift+Up` abre a lista, mas como o Shift continua
+        // premido o `Up` seguinte volta a disparar o atalho e fecha-a, em vez de navegar.
+        assert_eq!(picker_key_clash("Shift+Up").as_deref(), Some("up"));
+        assert_eq!(picker_key_clash("CmdOrCtrl+Alt+Down").as_deref(), Some("down"));
+        assert_eq!(picker_key_clash("CmdOrCtrl+Enter").as_deref(), Some("enter"));
+        assert_eq!(picker_key_clash("Alt+Escape").as_deref(), Some("escape"));
+        // Uma combinacao normal passa: depois de disparar, nada fica a ouvir estas teclas.
+        assert!(picker_key_clash("CmdOrCtrl+Shift+P").is_none());
+        assert!(picker_key_clash("Alt+Space").is_none());
+    }
 
     #[test]
     fn canonical_ignores_the_order_the_modifiers_were_pressed_in() {

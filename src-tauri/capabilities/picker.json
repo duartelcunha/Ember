@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "picker",
+  "description": "Janela do picker de projetos. Sem isto o webview nao recebe o evento ember://picker (as capabilities sao por janela e falham em silencio).",
+  "windows": [
+    "picker"
+  ],
+  "permissions": [
+    "core:default"
+  ]
+}

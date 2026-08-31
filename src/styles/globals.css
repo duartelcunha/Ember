@@ -136,25 +136,8 @@
   }
 }
 
-.ember-orb {
-  width: 11px;
-  height: 11px;
-  border-radius: 9999px;
-  background: var(--color-orb-accent);
-  box-shadow: 0 1px 8px rgba(227, 134, 77, 0.5);
-  will-change: transform;
-}
-
 /* Glow pulsante (estado "a pensar"), por baixo do orb. Sem rotacao: so respiracao de luz.
    Tom quente da marca (laranja vivo -> transparente), a condizer com a estrela. */
-.ember-glow {
-  position: absolute;
-  inset: -4px;
-  border-radius: 9999px;
-  background: radial-gradient(circle, rgba(253, 140, 60, 0.6) 0%, rgba(253, 140, 60, 0) 70%);
-  filter: blur(2px);
-  will-change: opacity, transform;
-}
 
 /* Bolha de preview (vidro). NUNCA animar transform (translate/scale) nesta classe: o
    backdrop-filter re-amostra o fundo desfocado a cada frame do movimento e engasga. So

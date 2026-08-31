@@ -120,6 +120,26 @@ pub fn gemini_is_invalid_key(body: &Value) -> bool {
     reason_invalid || msg_invalid
 }
 
+/// O 503 do Gemini que quer dizer "este MODELO esta cheio agora", e nao "o servico esta em baixo".
+///
+/// A diferenca importa porque muda a decisao: um transitorio normal repete-se no mesmo sitio, mas
+/// uma fila de capacidade de um modelo especifico responde exatamente o mesmo por mais que se
+/// insista. Medido no log de producao: o `gemini-3.7-flash` (o mais recente, logo o mais disputado
+/// do free tier) devolvia isto tres vezes seguidas, ~3s deitados fora, antes de o Ember fazer o
+/// que devia ter feito logo, que era ir para o modelo do lado. Esse acabou por responder bem.
+pub fn gemini_is_overloaded(body: &Value) -> bool {
+    let status_unavailable = body
+        .pointer("/error/status")
+        .and_then(Value::as_str)
+        .is_some_and(|s| s == "UNAVAILABLE");
+    let msg = body
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    status_unavailable || msg.contains("high demand") || msg.contains("overloaded")
+}
+
 /// Extrai o atraso sugerido por um erro 429 do Gemini a partir do detalhe
 /// `google.rpc.RetryInfo` no corpo (campo `retryDelay`, formato "42s"/"1.5s"), usado quando
 /// o header HTTP `Retry-After` esta ausente. Sem isto, o backoff exponencial cego ignorava
@@ -556,6 +576,32 @@ mod tests {
         // Um 400 de payload comum nao e uma chave invalida.
         let plain_400 = json!({ "error": { "code": 400, "message": "Invalid JSON payload" } });
         assert!(!gemini_is_invalid_key(&plain_400));
+    }
+
+    #[test]
+    fn a_model_at_capacity_is_told_apart_from_a_normal_blip() {
+        // Do log real do utilizador: tres destes seguidos no `gemini-3.7-flash`, ~3s deitados
+        // fora, e o modelo do lado respondeu a primeira. Sem esta distincao os dois erros sao
+        // "transitorio" e a maquina insiste onde nunca vai passar.
+        let high_demand = json!({ "error": {
+            "code": 503,
+            "message": "This model is currently experiencing high demand. Please try again later.",
+            "status": "UNAVAILABLE"
+        }});
+        assert!(gemini_is_overloaded(&high_demand));
+
+        // So o status ja chega (a mensagem muda com o tempo e nao queremos depender dela).
+        assert!(gemini_is_overloaded(&json!({ "error": { "status": "UNAVAILABLE" } })));
+        // E so a mensagem tambem (se um dia vier sem status).
+        assert!(gemini_is_overloaded(&json!({ "error": { "message": "The model is overloaded" } })));
+
+        // Um 500 generico NAO e isto: e um transitorio normal e merece o retry no mesmo sitio.
+        assert!(!gemini_is_overloaded(&json!({ "error": { "code": 500, "message": "Internal" } })));
+        // E um rate-limit tambem nao: esse tem `Retry-After` proprio e outro tratamento.
+        assert!(!gemini_is_overloaded(&json!({ "error": {
+            "code": 429, "status": "RESOURCE_EXHAUSTED", "message": "Quota exceeded"
+        }})));
+        assert!(!gemini_is_overloaded(&json!({})));
     }
 
     #[test]

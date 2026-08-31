@@ -32,7 +32,13 @@ serde_json = "1"
 
 # Resiliencia / providers
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
-tokio = { version = "1", features = ["time", "sync", "macros"] }
+# `net`/`io-util`: o servidor de callback do login com a conta ChatGPT (um TcpListener em
+# localhost que recebe UM pedido do browser e fecha). Ver `oauth.rs`.
+tokio = { version = "1", features = ["time", "sync", "macros", "net", "io-util"] }
+# PKCE do login com a conta ChatGPT: SHA-256 do verifier, e bytes de um CSPRNG do SO para o
+# verifier e o state. O `jitter01()` dos retries NAO serve aqui (o relogio e adivinhavel).
+sha2 = "0.10"
+getrandom = "0.2"
 # Consumir o body de streaming (SSE) como Stream<Item = Bytes>: so o essencial (sem runtime,
 # sem executor), a mesma peca que o proprio reqwest usa internamente para bytes_stream().
 futures-util = { version = "0.3", default-features = false, features = ["std"] }

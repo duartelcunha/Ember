@@ -311,6 +311,40 @@ pub fn pick_default(provider: Provider, models: &[ModelInfo]) -> Option<String> 
     rank(provider, models).into_iter().next().map(|m| m.id)
 }
 
+/// Modelos da MESMA familia a tentar quando o escolhido falha por uma razao que e do MODELO e
+/// nao do provider: sobrecarga (503 "high demand", 429) ou um id que deixou de existir (404).
+///
+/// Porque existe: o `gemini-3.7-flash` e o mais recente e por isso o mais concorrido do free
+/// tier. Um utilizador com a chave perfeita apanhava 503 atras de 503 nesse modelo, e como a
+/// cadeia so tinha um passo por familia o Ember dava o Gemini inteiro por perdido e saltava para
+/// o fallback, apesar de a mesma chave servir mais quinze modelos, cada um com a sua fila.
+///
+/// Duas regras, e as duas sao conservadoras de proposito:
+/// - **so modelos gratuitos, e so quando o escolhido tambem e gratuito**. Um alternativo pago
+///   gastaria dinheiro num modelo que o utilizador nao pediu, que e a mesma linha que o
+///   `openai_fallback_models` ja recusa atravessar;
+/// - **nunca previews**: uma rede de seguranca tem de ser a parte aborrecida e estavel do
+///   catalogo, nao a que desaparece sem aviso.
+///
+/// Catalogo vazio (offline, sem chave, endpoint sem `/models`) devolve vazio: sem listagem nao
+/// sabemos que modelos existem, e inventar ids seria voltar exatamente ao problema que este
+/// modulo resolve.
+pub fn alternates(provider: Provider, chosen: &str, catalog: &[ModelInfo], max: usize) -> Vec<String> {
+    let chosen_is_free = catalog
+        .iter()
+        .find(|m| m.id == chosen)
+        .is_some_and(|m| m.free_tier);
+    if !chosen_is_free || max == 0 {
+        return Vec::new();
+    }
+    rank(provider, catalog)
+        .into_iter()
+        .filter(|m| m.id != chosen && m.free_tier && !m.preview)
+        .map(|m| m.id)
+        .take(max)
+        .collect()
+}
+
 /// Reconcilia o modelo gravado em disco com o que o provider diz existir HOJE.
 ///
 /// Substitui a lista `DEAD_MODELS` escrita a mao: um modelo descontinuado deixa simplesmente de
@@ -555,5 +589,51 @@ mod tests {
             reconcile(Provider::Gemini, "gemini-2.5-flash", &[], "gemini-3.5-flash"),
             "gemini-2.5-flash"
         );
+    }
+
+    /// Catalogo parecido com o que a chave do Google AI Studio devolve mesmo.
+    fn gemini_catalog() -> Vec<ModelInfo> {
+        vec![
+            m("gemini-3.7-flash", true),
+            m("gemini-3.6-flash", true),
+            m("gemini-2.5-flash", true),
+            m("gemini-3-flash-preview", true),
+            m("gemini-2.5-pro", false),
+        ]
+    }
+
+    #[test]
+    fn alternates_are_the_next_best_free_models_of_the_same_family() {
+        // O caso que motivou isto: o 3.7-flash e o mais recente e por isso o mais concorrido,
+        // e devolvia 503 "high demand" em serie. Os outros flash da mesma chave estavam livres.
+        let alt = alternates(Provider::Gemini, "gemini-3.7-flash", &gemini_catalog(), 2);
+        assert_eq!(alt, vec!["gemini-3.6-flash", "gemini-2.5-flash"]);
+        // O escolhido nunca se repete a si proprio (seria gastar um pedido para apanhar o mesmo
+        // 503), e o preview fica de fora (uma rede de seguranca nao pode desaparecer sem aviso).
+        assert!(!alt.contains(&"gemini-3.7-flash".to_string()));
+        assert!(!alt.contains(&"gemini-3-flash-preview".to_string()));
+    }
+
+    #[test]
+    fn alternates_never_spend_money_the_user_did_not_choose() {
+        // Quem escolheu um modelo pago pediu AQUELE modelo. Trocar-lho por outro pelas costas
+        // gastava-lhe dinheiro e mudava-lhe a qualidade sem ele saber, que e a mesma linha que o
+        // `openai_fallback_models` ja recusa atravessar para o OpenRouter.
+        assert!(alternates(Provider::Gemini, "gemini-2.5-pro", &gemini_catalog(), 2).is_empty());
+        // E um alternativo pago nunca entra, mesmo com o escolhido gratuito.
+        let alt = alternates(Provider::Gemini, "gemini-3.7-flash", &gemini_catalog(), 9);
+        assert!(!alt.contains(&"gemini-2.5-pro".to_string()));
+    }
+
+    #[test]
+    fn alternates_are_empty_without_a_live_catalog() {
+        // Sem listagem nao sabemos que modelos existem. Inventar ids aqui era voltar ao problema
+        // que este modulo inteiro existe para resolver.
+        assert!(alternates(Provider::Gemini, "gemini-3.7-flash", &[], 2).is_empty());
+        // Um modelo escrito a mao que nao esta no catalogo tambem nao gera alternativos: nao
+        // sabemos se e gratuito, e assumir que sim podia custar dinheiro ao utilizador.
+        let c = gemini_catalog();
+        assert!(alternates(Provider::Gemini, "gemini-9.9-flash", &c, 2).is_empty());
+        assert!(alternates(Provider::Gemini, "gemini-3.7-flash", &c, 0).is_empty());
     }
 }
