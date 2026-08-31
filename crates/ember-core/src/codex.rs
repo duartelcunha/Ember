@@ -351,10 +351,12 @@ fn is_plausible_model_id(id: &str) -> bool {
 /// resposta chegava cortada. Um refine e limitado pelo tamanho do que se selecionou; o corte,
 /// se acontecer, e detetado em `codex_is_truncated` e nunca e colado por cima da seleccao.
 pub fn codex_request_body(req: &LlmRequest) -> Value {
-    let effort = if req.thinking {
-        req.thinking_level.as_str()
-    } else {
-        "minimal"
+    // A configuracao e partilhada com o Gemini, que aceita `minimal`. Os modelos Codex
+    // expostos pelo Ember usam `none` para desligar e `low` como menor nivel ativo.
+    let effort = match (req.thinking, req.thinking_level.as_str()) {
+        (false, _) => "none",
+        (true, "minimal") => "low",
+        (true, level) => level,
     };
     json!({
         "model": req.model,
@@ -488,17 +490,34 @@ mod tests {
     }
 
     #[test]
-    fn reasoning_effort_follows_the_thinking_setting() {
+    fn reasoning_effort_preserves_supported_levels() {
         let mut r = req();
         r.thinking_level = "high".into();
         assert_eq!(
             codex_request_body(&r).pointer("/reasoning/effort").unwrap(),
             "high"
         );
+    }
+
+    #[test]
+    fn reasoning_effort_uses_none_when_thinking_is_disabled() {
+        let mut r = req();
+        r.model = "gpt-5.6-luna".into();
         r.thinking = false;
         assert_eq!(
             codex_request_body(&r).pointer("/reasoning/effort").unwrap(),
-            "minimal"
+            "none"
+        );
+    }
+
+    #[test]
+    fn reasoning_effort_maps_minimal_to_low_for_codex_models() {
+        let mut r = req();
+        r.model = "gpt-5.6-luna".into();
+        r.thinking_level = "minimal".into();
+        assert_eq!(
+            codex_request_body(&r).pointer("/reasoning/effort").unwrap(),
+            "low"
         );
     }
 
