@@ -22,7 +22,7 @@
 ---
 
 <p align="center">
-  <img src="docs/media/refine-slack.gif" width="94%" alt="Ember in action refining a Slack message in-place">
+  <img src="docs/media/refine-slack.gif" width="100%" alt="Ember in action refining a Slack message in-place">
 </p>
 
 You know that clumsy message, that rambling prompt you keep editing, or that rough commit note? Select it, hit your shortcut, and Ember cleans it up directly where your cursor is.
@@ -36,7 +36,7 @@ No window switching. No copy-paste dance. No lost focus.
 Ember adapts its transformation engine according to your intent:
 
 <p align="center">
-  <img src="docs/media/settings-refining-dark.png" width="94%" alt="Ember Refining Modes and Extended Thinking">
+  <img src="docs/media/settings-refining-dark.png" width="100%" alt="Ember Refining Modes and Extended Thinking">
 </p>
 
 - **Fix:** Corrects spelling, grammar, accents, and punctuation while strictly preserving structure and tone.
@@ -47,24 +47,26 @@ Ember adapts its transformation engine according to your intent:
 
 ## Projects & Knowledge Context
 
-Switch project-specific tone, guidelines, and vocabulary on the fly:
+Switch project-specific tone, guidelines, and vocabulary on the fly without polluting prompts or leaking private keys:
 
 <p align="center">
-  <img src="docs/media/settings-projects-dark.png" width="58%" alt="Ember Projects Configuration">
-  &nbsp;
-  <img src="docs/media/picker-dark.png" width="36%" alt="Ember Project Picker Popup">
+  <img src="docs/media/settings-projects-dark.png" width="100%" alt="Ember Projects Configuration">
 </p>
 
-- **Project Picker:** Press <kbd>Ctrl+Shift+P</kbd> to bring up a lightweight, cursor-anchored project switcher.
-- **Distilled Rules:** Automatically digests conventions from `CLAUDE.md`, `AGENTS.md`, or `.cursorrules` to retain domain jargon without polluting prompts or leaking private keys.
-- **Custom Accents & Icons:** Visual indicator reflects active project color on the ambient orb and tray.
+<p align="center">
+  <img src="docs/media/picker-dark.png" width="340px" alt="Ember Project Picker Popup">
+</p>
+
+- **Project Picker:** Press <kbd>Ctrl+Shift+P</kbd> to open a fast, keyboard-navigable popup right by your cursor.
+- **Distilled Rules:** Automatically digests conventions from `CLAUDE.md`, `AGENTS.md`, or `.cursorrules` to retain domain jargon without prompt injection risks.
+- **Custom Accents & Icons:** Dedicated colors and icons reflect active projects on the ambient orb and tray icon.
 
 ---
 
 ## Terminal & CLI Workflow
 
 <p align="center">
-  <img src="docs/media/refine-terminal-claude-code.gif" width="94%" alt="Ember refining a prompt in Claude Code terminal">
+  <img src="docs/media/refine-terminal-claude-code.gif" width="100%" alt="Ember refining a prompt in Claude Code terminal">
 </p>
 
 When working in terminals (Windows Terminal, PowerShell, CMD, Alacritty, WezTerm, Warp, or CLI tools like Claude Code):
@@ -77,7 +79,7 @@ When working in terminals (Windows Terminal, PowerShell, CMD, Alacritty, WezTerm
 ## Customization & Shortcuts
 
 <p align="center">
-  <img src="docs/media/settings-shortcuts-dark.png" width="94%" alt="Interactive Shortcut Recorder">
+  <img src="docs/media/settings-shortcuts-dark.png" width="100%" alt="Interactive Shortcut Recorder">
 </p>
 
 - **Interactive Hotkey Recorder:** Configurable slots for Main refinement, direct Fix, direct Rebuild, and Project Picker.
@@ -86,14 +88,18 @@ When working in terminals (Windows Terminal, PowerShell, CMD, Alacritty, WezTerm
 
 ---
 
-## Themes: Dark & Cream
+## Native Dark & Cream Themes
 
-Ember is designed to look native and refined across both dark and light desktop setups:
+Ember is built to blend seamlessly with both dark and light desktop setups:
 
+### Dark Theme (Default)
 <p align="center">
-  <img src="docs/media/settings-providers-dark.png" width="48%" alt="Ember Settings in Dark Theme">
-  &nbsp;
-  <img src="docs/media/settings-providers-cream.png" width="48%" alt="Ember Settings in Cream Theme">
+  <img src="docs/media/settings-providers-dark.png" width="100%" alt="Ember Settings in Dark Theme">
+</p>
+
+### Cream Theme (Light)
+<p align="center">
+  <img src="docs/media/settings-providers-cream.png" width="100%" alt="Ember Settings in Cream Theme">
 </p>
 
 ---
