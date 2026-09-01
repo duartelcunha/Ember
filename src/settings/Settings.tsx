@@ -767,16 +767,16 @@ const MODE_COPY: Record<RefineMode, { title: string; hint: string }> = {
  *  exemplo escrito a mao, nao um refine ao vivo, e a UI diz isso: mostrar uma amostra colada
  *  como se fosse output real seria uma promessa que nao podemos garantir. */
 const MODE_EXAMPLE = {
-  input: "marca reuniao amanha com o joao",
+  input: "set up meeting tomorrow with john",
   outputs: {
-    polish: "Marca reunião amanhã com o João.",
-    adaptive: "Agenda uma reunião com o João para amanhã e confirma a hora com ele.",
+    polish: "Set up a meeting tomorrow with John.",
+    adaptive: "Schedule a meeting with John for tomorrow and confirm the time with him.",
     turbo:
       [
-        "És o meu assistente de agenda.",
-        "Objetivo: marcar uma reunião com o João.",
-        "Quando: amanhã, hora ainda por confirmar.",
-        "Devolve: o convite pronto a enviar.",
+        "You are my scheduling assistant.",
+        "Goal: Schedule a meeting with John.",
+        "When: Tomorrow, time to be confirmed.",
+        "Output: Ready-to-send invite and note.",
       ].join("\n"),
   } as Record<RefineMode, string>,
 };
@@ -930,7 +930,7 @@ function DiagnosticsSection({
   );
 }
 
-export function Settings() {
+export function Settings({ initialTab = "providers" }: { initialTab?: string } = {}) {
   // A janela e pintada escura pelo Rust (backgroundColor) e mostrada quando o componente monta,
   // por isso o fade-in de entrada corre no mount e ja se ve. As reaberturas re-animam via
   // `openKey` (remount do conteudo). O fecho esconde a janela no lado nativo (ver useEffect),
@@ -1183,7 +1183,7 @@ export function Settings() {
               <div className="h-32 w-full animate-pulse rounded-lg bg-surface-1" />
             </div>
           ) : (
-          <Tabs defaultValue="providers">
+          <Tabs defaultValue={initialTab}>
             <TabsList>
               <TabsTrigger value="providers">
                 <Plugs size={16} /> Providers

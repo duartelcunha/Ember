@@ -22,7 +22,7 @@
 ---
 
 <p align="center">
-  <img src="docs/media/refine-slack.gif" width="92%" alt="Ember in action refining a Slack message in-place">
+  <img src="docs/media/refine-slack.gif" width="94%" alt="Ember in action refining a Slack message in-place">
 </p>
 
 You know that clumsy message, that rambling prompt you keep editing, or that rough commit note? Select it, hit your shortcut, and Ember cleans it up directly where your cursor is.
@@ -31,58 +31,81 @@ No window switching. No copy-paste dance. No lost focus.
 
 ---
 
-## Highlights
+## Precision Modes
 
-- **In-Place Transformation:** A low-latency background daemon captures your active selection, refines it via your configured LLM provider, pastes the improved text over the original, and seamlessly restores your prior clipboard contents.
-- **Select-All Smart Fallback:** In chat composers (ChatGPT, Codex, Slack), pressing the hotkey with nothing selected automatically selects the current input field and refines it safely.
-- **Three Distilled Modes:**
-  - **Fix:** Corrects spelling, grammar, accents, and phrasing while preserving exact formatting.
-  - **Improve:** Tightens structure and breaks run-on thoughts into crisp bullet points.
-  - **Rebuild:** Transforms raw thoughts into a fully structured prompt with role, context, constraints, and output format.
-- **Terminal & TUI Aware:** Detects Windows Terminal, PowerShell, CMD, Alacritty, WezTerm, and Warp; uses terminal-safe `Ctrl+Shift+C/V` combos and flattens newlines to prevent accidental shell execution.
-- **Code & Placeholder Preservation:** Code blocks, CLI commands, URLs, Markdown structures, and `{variables}` are tokenized and protected against unwanted LLM edits or phantom translations.
-- **Optional Preview Gate:** Review changes in a transient, cursor-anchored overlay before pasting: <kbd>Enter</kbd> to apply, <kbd>Esc</kbd> to keep original.
-- **Free-Tier First:** Runs out-of-the-box on Google **Gemini** (generous free tier) with automatic fallback to **Groq** (free OpenAI-compatible endpoint, ~14,000 requests/day).
+Ember adapts its transformation engine according to your intent:
+
+<p align="center">
+  <img src="docs/media/settings-refining-dark.png" width="94%" alt="Ember Refining Modes and Extended Thinking">
+</p>
+
+- **Fix:** Corrects spelling, grammar, accents, and punctuation while strictly preserving structure and tone.
+- **Improve:** Tightens phrasing, eliminates wordiness, and structures run-on thoughts into crisp bullet points.
+- **Rebuild:** Transforms raw notes into an engineer-grade prompt complete with **Role**, **Context**, **Constraints**, and **Output Format**.
+
+---
+
+## Projects & Knowledge Context
+
+Switch project-specific tone, guidelines, and vocabulary on the fly:
+
+<p align="center">
+  <img src="docs/media/settings-projects-dark.png" width="58%" alt="Ember Projects Configuration">
+  &nbsp;
+  <img src="docs/media/picker-dark.png" width="36%" alt="Ember Project Picker Popup">
+</p>
+
+- **Project Picker:** Press <kbd>Ctrl+Shift+P</kbd> to bring up a lightweight, cursor-anchored project switcher.
+- **Distilled Rules:** Automatically digests conventions from `CLAUDE.md`, `AGENTS.md`, or `.cursorrules` to retain domain jargon without polluting prompts or leaking private keys.
+- **Custom Accents & Icons:** Visual indicator reflects active project color on the ambient orb and tray.
 
 ---
 
 ## Terminal & CLI Workflow
 
 <p align="center">
-  <img src="docs/media/refine-terminal-claude-code.gif" width="92%" alt="Ember refining a prompt in Claude Code terminal">
+  <img src="docs/media/refine-terminal-claude-code.gif" width="94%" alt="Ember refining a prompt in Claude Code terminal">
 </p>
 
-When working in terminals (CMD, PowerShell, WezTerm, Warp, or terminal AI tools like Claude Code):
-1. Ember uses synchronous input injection and handles modifier hold times.
-2. Output is flattened into single-line commands to eliminate dangerous multi-line paste execution.
-3. Automatically falls back to selection memory if synthetic clipboard capture is blocked.
+When working in terminals (Windows Terminal, PowerShell, CMD, Alacritty, WezTerm, Warp, or CLI tools like Claude Code):
+1. **Accidental Execution Prevention:** Output is automatically flattened to single-line commands to eliminate dangerous multi-line paste execution in interactive shells.
+2. **Terminal-Safe Shortcuts:** Uses synchronous input injection and terminal-aware modifier sequences (`Ctrl+Shift+C/V`).
+3. **Selection Recovery:** Falls back to selection clipboard memory if synthetic copy is blocked.
 
 ---
 
-## Settings & Personalization
-
-Ember ships with a lightweight, frameless Settings panel with **Dark** and **Cream** themes.
+## Customization & Shortcuts
 
 <p align="center">
-  <img src="docs/media/settings-cream.png" width="48%" alt="Ember Settings in Cream Theme">
-  &nbsp;
-  <img src="docs/media/settings-dark.png" width="48%" alt="Ember Settings in Dark Theme">
+  <img src="docs/media/settings-shortcuts-dark.png" width="94%" alt="Interactive Shortcut Recorder">
 </p>
 
-- **BYOK (Bring Your Own Key):** Direct links to create keys in 1 click for Gemini, Groq, OpenAI, OpenRouter, and Anthropic.
-- **Project Context Awareness:** Automatically reads conventions from `CLAUDE.md`, `AGENTS.md`, or `GEMINI.md` to adapt tone and project vocabulary without leaking secrets.
-- **Live Model Catalog:** Reads available models dynamically from provider discovery endpoints.
+- **Interactive Hotkey Recorder:** Configurable slots for Main refinement, direct Fix, direct Rebuild, and Project Picker.
+- **Preview Gate (Optional):** Review changes in an unobtrusive bubble before applying: <kbd>Enter</kbd> to paste, <kbd>Esc</kbd> to keep original.
+- **Smart Select-All Fallback:** In chat inputs (ChatGPT, Slack, Codex), triggers a safe select-all when no text is highlighted.
+
+---
+
+## Themes: Dark & Cream
+
+Ember is designed to look native and refined across both dark and light desktop setups:
+
+<p align="center">
+  <img src="docs/media/settings-providers-dark.png" width="48%" alt="Ember Settings in Dark Theme">
+  &nbsp;
+  <img src="docs/media/settings-providers-cream.png" width="48%" alt="Ember Settings in Cream Theme">
+</p>
 
 ---
 
 ## Security & Privacy Architecture
 
-Ember is built with defensive security principles from the ground up:
+Ember is engineered from the ground up with strict defensive security principles:
 
 | Area | Security Guarantee |
 |---|---|
-| **Secret Storage** | API keys and tokens are stored exclusively in the OS Credential Vault (**Windows Credential Manager** / macOS Keychain). Keys never cross the IPC bridge to frontend JavaScript. |
-| **Prompt Injection Protection** | User selections and project context files are wrapped with anti-injection boundaries and escaped (`[EMBER_INPUT]`, `[EMBER_PROJECT_SOURCE]`, `[EMBER_PROJECT_CONTEXT]`). |
+| **Secret Storage** | API keys and OAuth tokens are stored exclusively in the OS Credential Vault (**Windows Credential Manager** / macOS Keychain). Keys never cross the IPC bridge to frontend JavaScript. |
+| **Prompt Boundary Isolation** | Input text and project context are wrapped with strict anti-injection delimiters and escaped (`[EMBER_INPUT]`, `[EMBER_PROJECT_SOURCE]`, `[EMBER_PROJECT_CONTEXT]`). |
 | **Window & Focus Isolation** | Overlay and Picker windows run with `focus: false` and strict Content Security Policy (`default-src 'self'`). Keystrokes land strictly in the user's active application. |
 | **Input Hook Hygiene** | Low-level keyboard hooks (`WH_KEYBOARD_LL`) intercept only the single approval key (`Enter`/`Esc`) during preview gates and pass all other system keystrokes through untouched. |
 | **OS Sandboxing** | Browser links and URLs are opened directly via Win32 `ShellExecuteW`, bypassing `cmd.exe` execution layers. |
@@ -97,6 +120,7 @@ Ember is built with defensive security principles from the ground up:
 ```
 
 - **Resilient State Machine:** Transient network errors and rate limits (`429`) automatically trigger exponential backoff according to `Retry-After` headers.
+- **Free-Tier First:** Runs out-of-the-box on Google **Gemini** (generous free tier) with automatic fallback to **Groq** (free OpenAI-compatible endpoint, ~14,000 requests/day).
 - **Clean Degradation:** If all configured providers fail, your original text remains intact on the clipboard and an unobtrusive notification is displayed.
 
 ---
