@@ -59,19 +59,6 @@ Switch project-specific tone, guidelines, and vocabulary on the fly without poll
 
 ---
 
-## Preview Gate & Direct Approval
-
-Review changes before applying them with zero disruption to your flow:
-
-<p align="center">
-  <img src="docs/media/preview-gate.gif" width="100%" alt="Ember Preview Gate confirming changes before paste">
-</p>
-
-- **Optional Preview Gate:** Review transformed text in a floating bubble: press <kbd>Enter</kbd> to paste, or <kbd>Esc</kbd> to keep your original draft.
-- **Smart Select-All Fallback:** In chat composers (ChatGPT, Slack, Codex), pressing your shortcut with nothing selected automatically captures the active field.
-
----
-
 ## Terminal & CLI Workflow
 
 <p align="center">
@@ -95,6 +82,8 @@ Ember blends natively with both dark and light desktop setups with instant theme
 
 - **BYOK (Bring Your Own Key):** Direct links to create keys in 1 click for Gemini, Groq, OpenAI, OpenRouter, and Anthropic.
 - **Interactive Hotkey Recorder:** Set custom shortcuts for Main refinement, direct Fix, direct Rebuild, and Project Picker.
+- **Preview Gate (Optional):** Review changes in an unobtrusive bubble before applying (<kbd>Enter</kbd> to paste, <kbd>Esc</kbd> to keep original).
+- **Smart Select-All Fallback:** In chat composers (ChatGPT, Slack, Codex), pressing your shortcut with nothing selected captures the active field.
 
 ---
 
