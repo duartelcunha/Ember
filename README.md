@@ -53,13 +53,22 @@ Switch project-specific tone, guidelines, and vocabulary on the fly without poll
   <img src="docs/media/project-picker.gif" width="100%" alt="Ember Project Picker activated by global hotkey">
 </p>
 
-<p align="center">
-  <img src="docs/media/settings-projects-dark.png" width="100%" alt="Ember Projects Configuration">
-</p>
-
-- **Instant Hotkey Switcher:** Press <kbd>Ctrl+Shift+P</kbd> anywhere on your system to bring up a lightweight, cursor-anchored switcher and navigate between projects using arrow keys.
+- **Instant Hotkey Switcher:** Press <kbd>Ctrl+Shift+P</kbd> anywhere on your system to open a lightweight, cursor-anchored switcher and navigate between projects using arrow keys.
 - **Distilled Rules:** Automatically digests conventions from `CLAUDE.md`, `AGENTS.md`, or `.cursorrules` to retain domain jargon without prompt injection risks.
 - **Custom Accents & Icons:** Dedicated colors and icons reflect active projects on the ambient orb and tray icon.
+
+---
+
+## Preview Gate & Direct Approval
+
+Review changes before applying them with zero disruption to your flow:
+
+<p align="center">
+  <img src="docs/media/preview-gate.gif" width="100%" alt="Ember Preview Gate confirming changes before paste">
+</p>
+
+- **Optional Preview Gate:** Review transformed text in a floating bubble: press <kbd>Enter</kbd> to paste, or <kbd>Esc</kbd> to keep your original draft.
+- **Smart Select-All Fallback:** In chat composers (ChatGPT, Slack, Codex), pressing your shortcut with nothing selected automatically captures the active field.
 
 ---
 
@@ -76,31 +85,16 @@ When working in terminals (Windows Terminal, PowerShell, CMD, Alacritty, WezTerm
 
 ---
 
-## Customization & Shortcuts
-
-<p align="center">
-  <img src="docs/media/settings-shortcuts-dark.png" width="100%" alt="Interactive Shortcut Recorder">
-</p>
-
-- **Interactive Hotkey Recorder:** Configurable slots for Main refinement, direct Fix, direct Rebuild, and Project Picker.
-- **Preview Gate (Optional):** Review changes in an unobtrusive bubble before applying: <kbd>Enter</kbd> to paste, <kbd>Esc</kbd> to keep original.
-- **Smart Select-All Fallback:** In chat inputs (ChatGPT, Slack, Codex), triggers a safe select-all when no text is highlighted.
-
----
-
 ## Native Dark & Cream Themes
 
 Ember is built to blend seamlessly with both dark and light desktop setups:
 
-### Dark Theme (Default)
 <p align="center">
-  <img src="docs/media/settings-providers-dark.png" width="100%" alt="Ember Settings in Dark Theme">
+  <img src="docs/media/settings-providers-dark.png" width="100%" alt="Ember Settings and Provider Configuration">
 </p>
 
-### Cream Theme (Light)
-<p align="center">
-  <img src="docs/media/settings-providers-cream.png" width="100%" alt="Ember Settings in Cream Theme">
-</p>
+- **BYOK (Bring Your Own Key):** Direct links to create keys in 1 click for Gemini, Groq, OpenAI, OpenRouter, and Anthropic.
+- **Interactive Hotkey Recorder:** Set custom shortcuts for Main refinement, direct Fix, direct Rebuild, and Project Picker.
 
 ---
 
