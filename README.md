@@ -87,10 +87,10 @@ When working in terminals (Windows Terminal, PowerShell, CMD, Alacritty, WezTerm
 
 ## Native Dark & Cream Themes
 
-Ember is built to blend seamlessly with both dark and light desktop setups:
+Ember blends natively with both dark and light desktop setups with instant theme switching:
 
 <p align="center">
-  <img src="docs/media/settings-providers-dark.png" width="100%" alt="Ember Settings and Provider Configuration">
+  <img src="docs/media/theme-morph.gif" width="100%" alt="Ember Settings theme morph between Dark and Cream">
 </p>
 
 - **BYOK (Bring Your Own Key):** Direct links to create keys in 1 click for Gemini, Groq, OpenAI, OpenRouter, and Anthropic.
