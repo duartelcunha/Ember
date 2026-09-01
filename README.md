@@ -50,14 +50,14 @@ Ember adapts its transformation engine according to your intent:
 Switch project-specific tone, guidelines, and vocabulary on the fly without polluting prompts or leaking private keys:
 
 <p align="center">
-  <img src="docs/media/settings-projects-dark.png" width="100%" alt="Ember Projects Configuration">
+  <img src="docs/media/project-picker.gif" width="100%" alt="Ember Project Picker activated by global hotkey">
 </p>
 
 <p align="center">
-  <img src="docs/media/picker-dark.png" width="340px" alt="Ember Project Picker Popup">
+  <img src="docs/media/settings-projects-dark.png" width="100%" alt="Ember Projects Configuration">
 </p>
 
-- **Project Picker:** Press <kbd>Ctrl+Shift+P</kbd> to open a fast, keyboard-navigable popup right by your cursor.
+- **Instant Hotkey Switcher:** Press <kbd>Ctrl+Shift+P</kbd> anywhere on your system to bring up a lightweight, cursor-anchored switcher and navigate between projects using arrow keys.
 - **Distilled Rules:** Automatically digests conventions from `CLAUDE.md`, `AGENTS.md`, or `.cursorrules` to retain domain jargon without prompt injection risks.
 - **Custom Accents & Icons:** Dedicated colors and icons reflect active projects on the ambient orb and tray icon.
 
