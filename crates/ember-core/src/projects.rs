@@ -80,9 +80,20 @@ pub fn content_score(text: &str) -> usize {
 /// o ficheiro nomeia, contra a regra de so lermos ficheiros conhecidos. A pontuacao chega ao mesmo
 /// sitio sem essa porta: o ponteiro pontua zero e o ficheiro real ganha.
 pub fn pick_source(candidates: &[(Found, String)]) -> Option<&Found> {
+    // O README e uma REDE, nao um concorrente: so conta quando nenhum ficheiro de convencoes tem
+    // conteudo. Sem esta linha ganhava por tamanho (a escolha e por `content_score`, e um README
+    // de 300 linhas de prosa pontua muito mais do que um AGENTS.md de tres linhas uteis), e a
+    // pessoa acabava com o texto de apresentacao do produto em vez das regras de como se escreve
+    // ali dentro. Inverter a ordem geral (precedencia antes de conteudo) nao servia: partia o
+    // caso do `CLAUDE.md` que e so um ponteiro `@AGENTS.md`, que foi o que motivou esta funcao.
+    let ha_convencoes = candidates
+        .iter()
+        .any(|(f, t)| f.kind != ContextKind::ReadmeMd && content_score(t) > 0);
     candidates
         .iter()
-        .filter(|(_, text)| content_score(text) > 0)
+        .filter(|(f, text)| {
+            content_score(text) > 0 && !(ha_convencoes && f.kind == ContextKind::ReadmeMd)
+        })
         .max_by_key(|(found, text)| {
             // `max_by_key` fica com o ULTIMO maximo em caso de empate, por isso a precedencia
             // entra invertida: mais preferido tem de dar chave maior.
@@ -415,6 +426,25 @@ mod tests {
             cand(ContextKind::AgentsMd, "## Imported project instructions\n"),
         ];
         assert_eq!(pick_source(&c).unwrap().kind, ContextKind::ClaudeMd);
+    }
+
+    #[test]
+    fn a_real_conventions_file_beats_the_readme() {
+        // O README so existe para as pastas que nao tem mais nada. Havendo um AGENTS.md com
+        // conteudo, e ele que manda, mesmo que o README seja muito maior: um README fala do
+        // produto para quem chega, um AGENTS.md diz como se escreve ali dentro.
+        let readme = "# Doto
+
+".to_string() + &"Uma frase de prosa sobre o produto. ".repeat(40);
+        let cands = vec![
+            cand(ContextKind::ReadmeMd, &readme),
+            cand(
+                ContextKind::AgentsMd,
+                "Escreve os comentarios em portugues.
+Testes antes do codigo.",
+            ),
+        ];
+        assert_eq!(pick_source(&cands).unwrap().kind, ContextKind::AgentsMd);
     }
 
     #[test]

@@ -2,6 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- Sem isto o WebView2 pede /favicon.ico a cada janela aberta e o Tauri loga
+         "asset not found" em nivel ERROR. O log e a primeira paragem do debugging;
+         ERRORs falsos ali custam mais do que um icone que ninguem ve. -->
+    <link rel="icon" href="data:," />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Ember Settings</title>
   </head>

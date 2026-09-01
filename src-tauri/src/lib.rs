@@ -414,10 +414,29 @@ pub(crate) fn show_settings(app: &AppHandle) {
     // Com o pre-aquecimento no arranque, o caminho normal e este: a janela existe, esta escondida
     // e ja hidratada, portanto abrir e mostrar + recarregar.
     let existed = app.get_webview_window("settings").is_some();
-    if let Some(w) = get_or_create_window(app, "settings") {
-        let _ = w.center();
-        let _ = w.show();
-        let _ = w.set_focus();
+    let Some(w) = get_or_create_window(app, "settings") else {
+        // Nunca foi reportado: a janela nao existia e nao houve maneira de a criar. Em silencio,
+        // isto era indistinguivel de "abriu e nao se ve".
+        log::error!("settings: nao foi possivel obter nem criar a janela");
+        return;
+    };
+    {
+        // Os erros destas tres chamadas eram descartados com `let _ =`. Um `show()` que falha
+        // dava exatamente o que se viu a depurar isto: nenhuma janela, nenhuma pista, nada no
+        // log. Nao se ignora o que se precisa de ler quando corre mal.
+        if let Err(e) = w.center() {
+            log::warn!("settings: center falhou: {e}");
+        }
+        if let Err(e) = w.show() {
+            log::error!("settings: show falhou: {e}");
+        }
+        if let Err(e) = w.set_focus() {
+            log::warn!("settings: set_focus falhou: {e}");
+        }
+        log::info!(
+            "settings: mostrada (ja existia={existed}, visivel={:?})",
+            w.is_visible()
+        );
         if existed {
             let _ = w.emit("settings-opened", ());
         }
@@ -735,6 +754,10 @@ pub fn run() {
     tauri::Builder::default()
         // single-instance TEM de ser o primeiro plugin.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // Logar A ENTRADA: sem isto nao ha forma de distinguir "a segunda instancia nunca
+            // avisou a primeira" de "avisou e o mostrar da janela falhou", e as duas mandam
+            // procurar em sitios opostos.
+            log::info!("single-instance: segunda instancia detetada, a mostrar as settings");
             show_settings(app);
         }))
         // Log logo a seguir, para captar a inicializacao dos plugins seguintes.

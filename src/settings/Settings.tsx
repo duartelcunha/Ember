@@ -239,6 +239,41 @@ function GetKeyButton({ console: target }: { console: KeyConsole }) {
   );
 }
 
+/** Uma linha de um cartao de provider: etiqueta A ESQUERDA, controlo a ocupar o resto.
+ *
+ *  Estes cartoes tinham a etiqueta POR CIMA de cada campo, como o resto das settings. Aqui isso
+ *  custava caro: sao quatro a cinco campos no mesmo cartao, e ha DOIS cartoes um a seguir ao
+ *  outro, por isso o separador nao cabia na janela sem scroll. Lado a lado, cada campo passa de
+ *  duas linhas para uma. So neste separador: onde ha um ou dois campos, a etiqueta por cima
+ *  continua a ler-se melhor.
+ *
+ *  A coluna da etiqueta e fixa (92px) para os campos ficarem todos alinhados uns por baixo dos
+ *  outros; a `hint` por baixo leva o mesmo avanco, senao lia-se como legenda da etiqueta em vez
+ *  de legenda do campo. */
+function ProviderRow({
+  label,
+  htmlFor,
+  hint,
+  children,
+}: {
+  label: string;
+  htmlFor?: string;
+  hint?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-3">
+        <Label htmlFor={htmlFor} className="w-[92px] shrink-0">
+          {label}
+        </Label>
+        <div className="flex min-w-0 flex-1 items-center gap-2">{children}</div>
+      </div>
+      {hint && <div className="pl-[104px] text-xs text-fg-muted">{hint}</div>}
+    </div>
+  );
+}
+
 function ModelPicker({
   kind,
   presets,
@@ -274,27 +309,37 @@ function ModelPicker({
 
   if (auto) {
     return (
-      <div className="flex flex-col gap-2">
-        <Label>Model</Label>
-        <div className="flex items-center gap-2">
-          <div className="flex h-9 flex-1 items-center rounded-sm border border-[color:var(--border-subtle)] bg-surface-2 px-3 font-mono text-sm text-fg">
-            {model}
-          </div>
-          <Button variant="ghost" onClick={() => onSetAuto?.(false)}>
-            Change
-          </Button>
+      <ProviderRow
+        label="Model"
+        hint="Chosen for you: the best free model this provider serves. It follows new generations on its own."
+      >
+        <div className="flex h-9 flex-1 items-center rounded-sm border border-[color:var(--border-subtle)] bg-surface-2 px-3 font-mono text-sm text-fg">
+          {model}
         </div>
-        <p className="text-xs text-fg-muted">
-          Chosen for you: the best free model this provider serves. It follows new generations on
-          its own.
-        </p>
-      </div>
+        <Button variant="ghost" onClick={() => onSetAuto?.(false)}>
+          Change
+        </Button>
+      </ProviderRow>
     );
   }
 
   return (
-    <div className="flex flex-col gap-2">
-      <Label htmlFor={`${kind}-model`}>Model</Label>
+    <div className="flex flex-col gap-1.5">
+      <ProviderRow
+        label="Model"
+        htmlFor={`${kind}-model`}
+        hint={
+          /* Diz de onde vem a lista. Servir a lista embutida sem o dizer faria uma lista velha
+             passar por atual, que e exatamente o problema que a descoberta veio resolver. */
+          live
+            ? `Live list from the provider${
+                live.fetchedAtMs
+                  ? `, read at ${new Date(live.fetchedAtMs).toLocaleTimeString()}`
+                  : ""
+              }. Discontinued models disappear on their own.`
+            : "Built-in list. Add and validate a key to load the models this provider serves today."
+        }
+      >
       <Select
         value={picked}
         onValueChange={(v) => {
@@ -302,7 +347,7 @@ function ModelPicker({
           if (v !== CUSTOM) onCommit(v);
         }}
       >
-        <SelectTrigger id={`${kind}-model`}>
+        <SelectTrigger id={`${kind}-model`} className="flex-1">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -319,20 +364,11 @@ function ModelPicker({
           <SelectItem value={CUSTOM}>Custom…</SelectItem>
         </SelectContent>
       </Select>
-      {/* Diz de onde vem a lista. Servir a lista embutida sem o dizer faria uma lista velha
-          passar por atual, que e exatamente o problema que a descoberta veio resolver. */}
-      <p className="text-xs text-fg-muted">
-        {live
-          ? `Live list from the provider${
-              live.fetchedAtMs
-                ? `, read at ${new Date(live.fetchedAtMs).toLocaleTimeString()}`
-                : ""
-            }. Discontinued models disappear on their own.`
-          : "Built-in list. Add and validate a key to load the models this provider serves today."}
-      </p>
+      </ProviderRow>
       {picked === CUSTOM && (
         <Input
           aria-label={`Custom ${kind} model id`}
+          className="ml-[104px] w-[calc(100%-104px)]"
           value={custom}
           onChange={(e) => setCustom(e.target.value)}
           onBlur={() => custom.trim() && onCommit(custom.trim())}
@@ -529,39 +565,34 @@ function ProviderConfig({
     kind === "openai" ? (subscription ? undefined : endpoint?.id) : (kind as KeyConsole);
 
   return (
+    <div className="relative">
     <Section
       title={title}
       hint={subtitle}
-      action={
-        (onMakePrimary && !isPrimary) || keyConsole ? (
-          <div className="flex items-center gap-2">
-            {onMakePrimary && !isPrimary && (
-              // De volta para dentro do cartao. Estava numa coluna a direita, fora dele, e essa
-              // coluna tirava 47px de largura AOS CARTOES DESTE SEPARADOR, que ficavam mais
-              // estreitos do que os de todos os outros e do que a propria pilula de navegacao.
-              // Ter os cartoes todos com a mesma largura ganha a ter a seta na margem.
-              <button
-                type="button"
-                onClick={onMakePrimary}
-                aria-label="Try this one first"
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-[color:var(--border-subtle)] text-fg-muted transition-colors hover:border-[color:var(--border-accent)] hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--border-accent)]"
-              >
-                <ArrowUp size={15} weight="bold" />
-              </button>
-            )}
-            {keyConsole && <GetKeyButton console={keyConsole} />}
-          </div>
-        ) : undefined
-      }
+      action={keyConsole ? <GetKeyButton console={keyConsole} /> : undefined}
     >
       {kind === "openai" && onCommitBaseUrl && (
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="openai-endpoint">Service</Label>
+        <ProviderRow
+          label="Service"
+          htmlFor="openai-endpoint"
+          hint={
+            subscription ? (
+              // A ressalva vem ANTES de ele depender disto, e não depois de deixar de funcionar.
+              <>
+                Refines come out of the ChatGPT plan you already pay for. Unofficial: it uses the
+                same route as the Codex CLI and OpenAI can turn it off without notice. If that
+                happens, pick any service above; those keep working.
+              </>
+            ) : (
+              endpoint?.note
+            )
+          }
+        >
           <Select
             value={subscription ? CHATGPT : (endpoint?.id ?? CUSTOM)}
             onValueChange={(v) => switchEndpoint(v as EndpointId | typeof CHATGPT)}
           >
-            <SelectTrigger id="openai-endpoint">
+            <SelectTrigger id="openai-endpoint" className="flex-1">
               <SelectValue placeholder="Custom endpoint" />
             </SelectTrigger>
             <SelectContent>
@@ -576,22 +607,11 @@ function ProviderConfig({
               )}
             </SelectContent>
           </Select>
-          {subscription ? (
-            // A ressalva vem ANTES de ele depender disto, e não depois de deixar de funcionar.
-            <p className="text-xs text-fg-muted">
-              Refines come out of the ChatGPT plan you already pay for. Unofficial: it uses the
-              same route as the Codex CLI and OpenAI can turn it off without notice. If that
-              happens, pick any service above; those keep working.
-            </p>
-          ) : (
-            endpoint && <p className="text-xs text-fg-muted">{endpoint.note}</p>
-          )}
-        </div>
+        </ProviderRow>
       )}
       {subscription ? (
-        <div className="flex flex-col gap-2">
-          <Label>ChatGPT account</Label>
-          <div className="flex items-center gap-2">
+        <ProviderRow label="Account">
+          <>
             {signedIn ? (
               <>
                 <p className="flex-1 text-sm text-fg-muted">
@@ -611,12 +631,11 @@ function ProviderConfig({
                 </Button>
               </>
             )}
-          </div>
-        </div>
+          </>
+        </ProviderRow>
       ) : (
-        <div className="flex flex-col gap-2">
-          <Label htmlFor={`${kind}-key`}>API key</Label>
-          <div className="flex gap-2">
+        <ProviderRow label="API key" htmlFor={`${kind}-key`}>
+          <>
             <Input
               id={`${kind}-key`}
               type="password"
@@ -632,12 +651,11 @@ function ProviderConfig({
                 Remove
               </Button>
             )}
-          </div>
-        </div>
+          </>
+        </ProviderRow>
       )}
       {!subscription && baseUrl !== undefined && onCommitBaseUrl && (
-        <div className="flex flex-col gap-2">
-          <Label htmlFor={`${kind}-base-url`}>Base URL</Label>
+        <ProviderRow label="Base URL" htmlFor={`${kind}-base-url`}>
           <Input
             id={`${kind}-base-url`}
             value={urlDraft}
@@ -651,7 +669,7 @@ function ProviderConfig({
             }
             placeholder="https://openrouter.ai/api/v1"
           />
-        </div>
+        </ProviderRow>
       )}
       <ModelPicker
         kind={kind}
@@ -663,6 +681,33 @@ function ProviderConfig({
         onCommit={commitModel}
       />
     </Section>
+      {onMakePrimary && !isPrimary && (
+        // AO LADO do cartao, e ABSOLUTA de proposito. Uma coluna normal a direita ja esteve aqui
+        // e foi removida porque tirava 47px de largura AOS CARTOES DESTE SEPARADOR, que ficavam
+        // mais estreitos do que os de todos os outros. Fora do fluxo nao rouba largura nenhuma:
+        // os cartoes ficam com a largura toda E a seta fica na margem.
+        //
+        // O espaco dela vem do padding lateral da pagina (64px), e nao da sobra do centramento:
+        // e a diferenca entre caber sempre e caber por sorte. Por isso a janela abre a 1000px e
+        // nao a 920: sem esses 80px, alargar o padding tirava largura aos cartoes.
+        //
+        // Sem legenda por escolha do utilizador. O `title` e o `aria-label` carregam o significado
+        // para quem passa o rato e para quem usa leitor de ecra.
+        <button
+          type="button"
+          onClick={onMakePrimary}
+          aria-label="Try this one first"
+          title={
+            kind === "gemini"
+              ? "Try Gemini first for every refine; the other service becomes the fallback"
+              : "Try this service first for every refine; Gemini becomes the fallback"
+          }
+          className="absolute -right-12 top-1/2 flex h-9 w-9 -translate-y-1/2 shrink-0 items-center justify-center rounded-md border border-[color:var(--border-subtle)] bg-surface-1 text-fg-muted transition-colors hover:border-[color:var(--border-accent)] hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--border-accent)]"
+        >
+          <ArrowUp size={15} weight="bold" />
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -1113,7 +1158,15 @@ export function Settings() {
           >
         <TitleBar />
         <motion.div
-          className="mx-auto max-w-4xl px-8 pb-12 pt-10"
+          // pt-14 e nao pt-10: a TitleBar e `fixed` e tem 36px de altura, por isso com 40px de
+          // topo os cartoes passavam a 4px dos botoes de minimizar e fechar e liam-se colados.
+          //
+          // px-16 (64px) e nao px-8: e deste padding que sai o espaco da seta de "tentar este
+          // primeiro", que vive FORA dos cartoes. Antes ela usava a sobra do `mx-auto`, que numa
+          // janela de 920px dava 4px de cada lado e numa janela estreita dava zero. O padding e
+          // igual em qualquer largura; a sobra do centramento nao. O `max-w` sobe junto para os
+          // cartoes nao ficarem mais estreitos do que ja eram.
+          className="mx-auto max-w-5xl px-16 pb-12 pt-14"
           // Segue a de fora de perto (delay curto) em vez de somar mais meio segundo por cima:
           // as duas encadeadas davam ~800ms ate a janela assentar.
           initial={{ opacity: 0, y: 8 }}

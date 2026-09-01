@@ -1,6 +1,7 @@
 //! Comandos Tauri das settings + o helper de refinamento usado pelo loop nativo.
 
 use ember_core::model::{ProfileSource, Provider, RefineMode};
+use ember_core::project::{ContextChoice, NoContext};
 use ember_core::prompt::build_llm_request;
 use ember_core::retry::RetryConfig;
 use serde::Serialize;
@@ -952,36 +953,47 @@ const REPO_URL: &str = "https://github.com/duartelcunha/ember";
 /// arbitrario do webview para um `start`/`open` do SO seria uma superficie de ataque (o `start`
 /// do Windows aceita caminhos e protocolos, nao so http).
 pub(crate) fn open_in_browser(url: &str) -> Result<(), String> {
-    // Windows: o `start` corre DENTRO do cmd, e no cmd o `&` separa comandos. Sem aspas a volta
-    // do URL, tudo a partir do primeiro `&` deixava de ser URL e passava a ser interpretado como
-    // comandos, portanto o browser recebia so o primeiro parametro da query.
-    //
-    // Isto passou despercebido durante muito tempo porque os URLs daqui (consolas de chave, o
-    // repo) nao tem query string nenhuma. Apareceu com o login da conta ChatGPT, cujo URL tem
-    // nove parametros: chegava `...authorize?response_type=code` e a OpenAI respondia
-    // `missing_required_parameter`, um erro que aponta para o pedido e nao para quem o partiu.
-    //
-    // `raw_arg` (em vez de `args`) e o que permite pôr as aspas: o escaping normal do Rust nao
-    // considera o `&` um caracter que obrigue a citar, porque para um programa qualquer nao e.
+    // Windows: usa ShellExecuteW diretamente com a operacao "open", sem passar por cmd.exe.
+    // Elimina parsing de linha de comandos e qualquer problema com caracteres especiais na query string.
     #[cfg(target_os = "windows")]
     let result = {
-        use std::os::windows::process::CommandExt;
-        // Um URL nosso nunca tem aspas (vai tudo percent-encoded), mas se tivesse, fechava as
-        // nossas e o resto virava linha de comandos. Recusar e mais barato do que escapar.
-        if url.contains('"') {
-            return Err("refusing to open a URL containing a quote".into());
+        use windows::core::PCWSTR;
+        use windows::Win32::UI::Shell::ShellExecuteW;
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+        let op: Vec<u16> = "open\0".encode_utf16().collect();
+        let wide_url: Vec<u16> = url.encode_utf16().chain(std::iter::once(0)).collect();
+
+        let hinst = unsafe {
+            ShellExecuteW(
+                None,
+                PCWSTR(op.as_ptr()),
+                PCWSTR(wide_url.as_ptr()),
+                PCWSTR::null(),
+                PCWSTR::null(),
+                SW_SHOWNORMAL,
+            )
+        };
+        // ShellExecuteW devolve HINSTANCE; valores superiores a 32 indicam sucesso no Win32.
+        if (hinst.0 as usize) > 32 {
+            Ok(())
+        } else {
+            Err(format!("ShellExecuteW failed with error code {:?}", hinst.0))
         }
-        // O primeiro par de aspas vazio e o TITULO da janela, nao o alvo: sem ele, o `start`
-        // trataria o URL entre aspas como titulo e nao abria nada.
-        std::process::Command::new("cmd")
-            .raw_arg(format!("/C start \"\" \"{url}\""))
-            .spawn()
     };
     #[cfg(target_os = "macos")]
-    let result = std::process::Command::new("open").arg(url).spawn();
+    let result = std::process::Command::new("open")
+        .arg(url)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string());
     #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
-    let result = std::process::Command::new("xdg-open").arg(url).spawn();
-    result.map(|_| ()).map_err(|e| e.to_string())
+    let result = std::process::Command::new("xdg-open")
+        .arg(url)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string());
+    result
 }
 
 /// Le um ficheiro de perfil escolhido pelo utilizador no seletor de ficheiros e devolve o texto,
@@ -1289,44 +1301,43 @@ pub(crate) async fn refine_text(
     let chain = build_chain(app, state, &cfg).await?;
 
     let resolved = profile::resolve(app, cfg.profile_override.as_deref(), cfg.ignore_claude_md);
-    // Contexto de projeto (best-effort, so quando ligado): junta o CLAUDE.md/AGENTS.md do projeto
-    // em foco ao perfil global. Qualquer falha -> None -> segue so com o global (comportamento
-    // de sempre). O `foreground_title` so vem preenchido quando `config.project_context` esta on.
-    // Precedencia: o projeto que o utilizador escolheu A MAO ganha sempre a detecao pela janela.
-    // Ele disse em que projeto esta; adivinhar por cima disso seria ignora-lo. A detecao continua
-    // a servir para quando nao ha nenhum escolhido.
+    // Contexto de projeto (best-effort, so quando ligado): junta as convencoes do projeto ao
+    // perfil global. Qualquer falha -> None -> segue so com o global (comportamento de sempre).
+    // O `foreground_title` so vem preenchido quando `config.project_context` esta on.
     //
-    // O brief passa pelo MESMO `frame_project` do caminho automatico, e nao por um atalho: e dai
-    // que vem a moldura que diz ao modelo para tratar aquilo como convencoes e nunca como ordens.
+    // Quem DECIDE de onde vem o contexto (e a precedencia, e o porque) e o `choose_context`, que
+    // e puro e testado; aqui so se EXECUTA a escolha, porque so a deteccao pela janela precisa de
+    // ler disco. Cada ramo loga o que ganhou: sem isso, ninguem consegue explicar depois porque e
+    // que o prompt saiu como saiu.
     let active = ember_core::projects::active(&cfg.projects, cfg.active_project.as_deref());
-    let project_ctx = match active {
-        Some(p) => ember_core::project::frame_project(&p.brief).map(|block| {
-            crate::project::ProjectContext {
-                block,
-                source_path: format!("projeto \"{}\"", p.name),
-            }
-        }),
-        None => foreground_title.and_then(|t| {
+    let escolha = ember_core::project::choose_context(
+        active.map(|p| (p.name.as_str(), p.brief.as_str())),
+        foreground_title,
+    );
+    let project_ctx = match escolha {
+        ContextChoice::Project { block, name } => {
+            let source_path = format!("projeto \"{name}\"");
+            log::info!("project context: {source_path} (brief)");
+            Some(crate::project::ProjectContext { block, source_path })
+        }
+        ContextChoice::DetectFromWindow => {
             let home = app.path().home_dir().ok();
-            crate::project::resolve(t, home.as_deref())
-        }),
+            let detetado =
+                foreground_title.and_then(|t| crate::project::resolve(t, home.as_deref()));
+            match &detetado {
+                Some(pc) => log::info!("project context: window title -> {}", pc.source_path),
+                None => {
+                    log::debug!("project context: enabled, none detected for the foreground window")
+                }
+            }
+            detetado
+        }
+        ContextChoice::NoContext(NoContext::ActiveProjectHasNoBrief { name }) => {
+            log::info!("project context: projeto \"{name}\" ativo mas com brief vazio");
+            None
+        }
+        ContextChoice::NoContext(NoContext::NothingToGoOn) => None,
     };
-    match (&project_ctx, active) {
-        // Dizer sempre QUAL dos dois ganhou: com as duas coisas ligadas e sem esta linha, ninguem
-        // consegue explicar porque e que o prompt saiu como saiu.
-        (Some(pc), Some(_)) => log::info!("project context: {} (brief)", pc.source_path),
-        (Some(pc), None) => log::info!("project context: window title -> {}", pc.source_path),
-        (None, Some(p)) => {
-            log::info!(
-                "project context: projeto \"{}\" ativo mas com brief vazio",
-                p.name
-            )
-        }
-        (None, None) if foreground_title.is_some() => {
-            log::debug!("project context: enabled, none detected for the foreground window")
-        }
-        (None, None) => {}
-    }
     // Motor Ember, fase 1: normaliza o input, mascara codigo/URLs e escapa marcadores. O modelo
     // ve o `masked_input`; o `prepared` volta para o `flow.rs` reconstruir o output.
     let prepared = ember_core::precondition(input, mode);
