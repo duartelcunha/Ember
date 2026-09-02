@@ -37,7 +37,10 @@ mod tests {
 
     #[test]
     fn trims_trailing_spaces_and_edges() {
-        assert_eq!(finalize("  hello world   \n\n", EolStyle::Lf), "hello world");
+        assert_eq!(
+            finalize("  hello world   \n\n", EolStyle::Lf),
+            "hello world"
+        );
     }
 
     #[test]

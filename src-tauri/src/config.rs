@@ -87,6 +87,12 @@ pub struct Config {
     /// melhorar o prompting com casos reais. Default OFF, e por privacidade: ao contrario do log
     /// normal, isto leva o TEXTO do utilizador para disco. Ver `prompt_log`.
     pub save_prompts: bool,
+    /// Guarda em disco os refinados ja pagos, para uma interrupcao (Esc, uma tecla durante o
+    /// preview, o clipboard ocupado, fechar a app) nao custar dinheiro: o atalho seguinte sobre
+    /// o mesmo texto reaproveita em vez de pagar. Default ON, ao contrario do `save_prompts`:
+    /// este ficheiro existe para o utilizador, nao para nos, e sem ele a cache morre no fecho.
+    /// Guarda texto do utilizador; desligar apaga o que la esta (ver `refine_store::forget`).
+    pub keep_results: bool,
     /// Modo debug: abre as devtools nas settings e mostra o painel de diagnostico. O ficheiro
     /// de log capta sempre; isto controla a superficie visivel ao utilizador. Default off.
     pub debug_mode: bool,
@@ -148,6 +154,7 @@ impl Default for Config {
             capture_step_ms: 10,
             paste_settle_ms: 90,
             save_prompts: false,
+            keep_results: true,
             debug_mode: false,
             project_context: false,
             preview_before_paste: false,

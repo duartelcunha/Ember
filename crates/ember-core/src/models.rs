@@ -329,7 +329,12 @@ pub fn pick_default(provider: Provider, models: &[ModelInfo]) -> Option<String> 
 /// Catalogo vazio (offline, sem chave, endpoint sem `/models`) devolve vazio: sem listagem nao
 /// sabemos que modelos existem, e inventar ids seria voltar exatamente ao problema que este
 /// modulo resolve.
-pub fn alternates(provider: Provider, chosen: &str, catalog: &[ModelInfo], max: usize) -> Vec<String> {
+pub fn alternates(
+    provider: Provider,
+    chosen: &str,
+    catalog: &[ModelInfo],
+    max: usize,
+) -> Vec<String> {
     let chosen_is_free = catalog
         .iter()
         .find(|m| m.id == chosen)
@@ -444,11 +449,11 @@ mod tests {
         // e a maioria deles nada tinha a ver com refinar texto. Todos ANUNCIAM generateContent,
         // por isso o filtro de capacidade sozinho deixava-os passar.
         let lixo = [
-            "lyria-3-pro-preview",              // musica
+            "lyria-3-pro-preview", // musica
             "lyria-3-clip-preview",
-            "nano-banana-pro-preview",          // imagem
+            "nano-banana-pro-preview", // imagem
             "gemini-3-pro-image-preview",
-            "gemini-robotics-er-2-preview",     // robotica
+            "gemini-robotics-er-2-preview", // robotica
             "gemini-2.5-computer-use-preview-10-2025",
             "deep-research-pro-preview-12-2025",
             "antigravity-preview-05-2026",
@@ -528,7 +533,9 @@ mod tests {
         // Entre dois free da mesma geracao, o estavel ganha ao preview.
         assert!(
             ids.iter().position(|i| *i == "gemini-3.5-flash")
-                < ids.iter().position(|i| *i == "gemini-3.5-flash-preview-01-01")
+                < ids
+                    .iter()
+                    .position(|i| *i == "gemini-3.5-flash-preview-01-01")
         );
         // Geracao mais recente ganha a mais antiga.
         assert!(
@@ -539,13 +546,15 @@ mod tests {
 
     #[test]
     fn ranking_prefers_flash_over_flash_lite_at_the_same_generation() {
-        let models = vec![m("gemini-3.5-flash-lite", true), m("gemini-3.5-flash", true)];
+        let models = vec![
+            m("gemini-3.5-flash-lite", true),
+            m("gemini-3.5-flash", true),
+        ];
         assert_eq!(
             pick_default(Provider::Gemini, &models).unwrap(),
             "gemini-3.5-flash"
         );
     }
-
 
     #[test]
     fn ranking_is_stable_across_refreshes() {
@@ -561,7 +570,12 @@ mod tests {
         let live = vec![m("gemini-2.5-flash", true), m("gemini-3.5-flash", true)];
         // Nao e o que escolhiamos hoje, mas a escolha e dele.
         assert_eq!(
-            reconcile(Provider::Gemini, "gemini-2.5-flash", &live, "gemini-3.5-flash"),
+            reconcile(
+                Provider::Gemini,
+                "gemini-2.5-flash",
+                &live,
+                "gemini-3.5-flash"
+            ),
             "gemini-2.5-flash"
         );
     }
@@ -571,7 +585,12 @@ mod tests {
         // O caso `deepseek-r1:free`: descontinuado pelo provider, e todo o refine dava erro.
         let live = vec![m("gemini-3.5-flash", true)];
         assert_eq!(
-            reconcile(Provider::Gemini, "gemini-1.0-pro", &live, "gemini-3.5-flash"),
+            reconcile(
+                Provider::Gemini,
+                "gemini-1.0-pro",
+                &live,
+                "gemini-3.5-flash"
+            ),
             "gemini-3.5-flash"
         );
         // Fallback tambem morto: cai no melhor da listagem viva, nunca num id inventado.
@@ -586,7 +605,12 @@ mod tests {
         // Offline, sem chave, ou endpoint sem `/models`: lista vazia nao e prova de que o modelo
         // morreu. Trocar aqui seria mudar a config do utilizador por causa de uma falha de rede.
         assert_eq!(
-            reconcile(Provider::Gemini, "gemini-2.5-flash", &[], "gemini-3.5-flash"),
+            reconcile(
+                Provider::Gemini,
+                "gemini-2.5-flash",
+                &[],
+                "gemini-3.5-flash"
+            ),
             "gemini-2.5-flash"
         );
     }

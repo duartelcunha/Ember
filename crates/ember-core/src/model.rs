@@ -103,8 +103,14 @@ mod tests {
     /// runtime e partiria o `needsRevalidation`/`set_model`. Pina-a aqui.
     #[test]
     fn provider_serializes_to_ipc_ids() {
-        assert_eq!(serde_json::to_string(&Provider::Gemini).unwrap(), "\"gemini\"");
-        assert_eq!(serde_json::to_string(&Provider::OpenAi).unwrap(), "\"openai\"");
+        assert_eq!(
+            serde_json::to_string(&Provider::Gemini).unwrap(),
+            "\"gemini\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Provider::OpenAi).unwrap(),
+            "\"openai\""
+        );
         // Round-trip: o id "openai" (sem underscore) tem de desserializar de volta.
         let p: Provider = serde_json::from_str("\"openai\"").unwrap();
         assert_eq!(p, Provider::OpenAi);

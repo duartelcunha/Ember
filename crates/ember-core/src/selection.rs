@@ -215,6 +215,22 @@ pub fn flatten_for_terminal(text: &str) -> String {
     out.trim().to_string()
 }
 
+/// A janela em foco ainda e o alvo deste refine? `(hwnd, pid)` de cada lado.
+///
+/// Entre a captura e o paste pode passar uma chamada de dezenas de segundos mais dez de preview,
+/// e sem esta pergunta o texto de uma app acabava dentro de outra.
+///
+/// Compara o PROCESSO e nao so a janela: apps em Electron (Slack, VS Code) recriam janelas ao
+/// mudar de vista, e recusar o paste ai seria recusa-lo em uso normal. O que importa e nao
+/// aterrar noutra aplicacao. Sem informacao de um dos lados responde `true`: recusar as cegas
+/// seria pior do que colar.
+pub fn paste_allowed(target: Option<(u64, u32)>, now: Option<(u64, u32)>) -> bool {
+    match (target, now) {
+        (Some((thwnd, tpid)), Some((nhwnd, npid))) => thwnd == nhwnd || tpid == npid,
+        _ => true,
+    }
+}
+
 /// Clampa a posicao (x,y) de uma janela wxh a uma area de trabalho, para o orb
 /// nunca sair do ecra.
 pub fn clamp_pos(
@@ -405,7 +421,10 @@ mod tests {
         let mut io = FakeIo {
             clipboard: Some("old".into()),
             selection: Some("hi".into()),
-            held: ModifierState { ctrl: true, ..Default::default() },
+            held: ModifierState {
+                ctrl: true,
+                ..Default::default()
+            },
             ..Default::default()
         };
         // step 10, timeout 20 -> WaitMore(0), WaitMore(10), ForceRelease(20).
@@ -558,10 +577,7 @@ mod tests {
             "linha um linha dois"
         );
         // \r\n, tabs e corridas de espacos colapsam num so espaco.
-        assert_eq!(
-            flatten_for_terminal("a\r\n\r\n  b\t\tc"),
-            "a b c"
-        );
+        assert_eq!(flatten_for_terminal("a\r\n\r\n  b\t\tc"), "a b c");
         // Pontas aparadas; uma linha simples fica intacta.
         assert_eq!(flatten_for_terminal("  ja e uma linha  "), "ja e uma linha");
         assert_eq!(flatten_for_terminal("sem quebras"), "sem quebras");
@@ -581,7 +597,10 @@ mod tests {
     #[test]
     fn clamp_keeps_window_on_screen() {
         // cursor perto do canto inferior-direito: a janela e empurrada para dentro.
-        assert_eq!(clamp_pos(1910, 1070, 260, 100, 0, 0, 1920, 1080), (1660, 980));
+        assert_eq!(
+            clamp_pos(1910, 1070, 260, 100, 0, 0, 1920, 1080),
+            (1660, 980)
+        );
         // dentro: inalterado.
         assert_eq!(clamp_pos(100, 100, 260, 100, 0, 0, 1920, 1080), (100, 100));
     }
@@ -646,5 +665,28 @@ mod tests {
         let (wx, _wy) =
             clamp_window_for_content(win_x, 500, content_dx, 60, 20, 20, 0, 0, 2560, 1440);
         assert_eq!(wx + content_dx, 0);
+    }
+
+    #[test]
+    fn paste_is_allowed_when_the_same_window_still_has_focus() {
+        assert!(paste_allowed(Some((10, 100)), Some((10, 100))));
+    }
+
+    #[test]
+    fn paste_is_allowed_when_the_app_recreated_its_window() {
+        // Electron (Slack, VS Code) troca de HWND ao mudar de vista. Recusar aqui seria recusar
+        // em uso normal; o que importa e nao aterrar noutra aplicacao.
+        assert!(paste_allowed(Some((10, 100)), Some((11, 100))));
+    }
+
+    #[test]
+    fn paste_is_refused_when_another_application_took_the_focus() {
+        assert!(!paste_allowed(Some((10, 100)), Some((20, 200))));
+    }
+
+    #[test]
+    fn paste_is_allowed_when_there_is_nothing_to_compare() {
+        assert!(paste_allowed(None, Some((20, 200))));
+        assert!(paste_allowed(Some((10, 100)), None));
     }
 }

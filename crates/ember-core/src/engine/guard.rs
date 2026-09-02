@@ -42,12 +42,48 @@ const MIN_HITS: usize = 4;
 /// repetem-se entre linguas proximas de proposito (o "que" em pt/es/fr), e e isso que faz o
 /// desempate falhar entre elas em vez de escolher a sorte.
 const STOPWORDS: [(&str, &[&str]); 6] = [
-    ("en", &["the", "and", "of", "to", "is", "that", "for", "with", "you", "this", "are", "not", "your", "it"]),
-    ("pt", &["que", "nao", "uma", "com", "para", "como", "mais", "voce", "esta", "isso", "tambem", "muito", "quando", "porque", "dos", "das"]),
-    ("es", &["que", "una", "con", "para", "como", "mas", "usted", "esto", "tambien", "muy", "cuando", "porque", "pero", "los", "las", "sus"]),
-    ("fr", &["que", "une", "avec", "pour", "comme", "plus", "vous", "est", "aussi", "tres", "quand", "parce", "alors", "les", "des", "dans"]),
-    ("de", &["und", "der", "die", "das", "nicht", "ein", "eine", "mit", "fur", "wie", "sie", "ist", "auch", "sehr", "wenn", "weil"]),
-    ("it", &["che", "non", "una", "con", "per", "come", "piu", "questo", "anche", "molto", "quando", "perche", "gli", "dei", "nel", "sono"]),
+    (
+        "en",
+        &[
+            "the", "and", "of", "to", "is", "that", "for", "with", "you", "this", "are", "not",
+            "your", "it",
+        ],
+    ),
+    (
+        "pt",
+        &[
+            "que", "nao", "uma", "com", "para", "como", "mais", "voce", "esta", "isso", "tambem",
+            "muito", "quando", "porque", "dos", "das",
+        ],
+    ),
+    (
+        "es",
+        &[
+            "que", "una", "con", "para", "como", "mas", "usted", "esto", "tambien", "muy",
+            "cuando", "porque", "pero", "los", "las", "sus",
+        ],
+    ),
+    (
+        "fr",
+        &[
+            "que", "une", "avec", "pour", "comme", "plus", "vous", "est", "aussi", "tres", "quand",
+            "parce", "alors", "les", "des", "dans",
+        ],
+    ),
+    (
+        "de",
+        &[
+            "und", "der", "die", "das", "nicht", "ein", "eine", "mit", "fur", "wie", "sie", "ist",
+            "auch", "sehr", "wenn", "weil",
+        ],
+    ),
+    (
+        "it",
+        &[
+            "che", "non", "una", "con", "per", "come", "piu", "questo", "anche", "molto", "quando",
+            "perche", "gli", "dei", "nel", "sono",
+        ],
+    ),
 ];
 
 /// Grupo de escrita dominante. Nao ha grafia partilhada entre estes: um input em Han a sair em
@@ -117,7 +153,12 @@ fn dominant_script(text: &str) -> Option<Script> {
 fn words(text: &str) -> Vec<String> {
     text.split(|c: char| !c.is_alphabetic())
         .filter(|w| !w.is_empty())
-        .map(|w| w.chars().map(deaccent).flat_map(char::to_lowercase).collect())
+        .map(|w| {
+            w.chars()
+                .map(deaccent)
+                .flat_map(char::to_lowercase)
+                .collect()
+        })
         .collect()
 }
 
@@ -264,8 +305,12 @@ mod tests {
     fn a_different_script_is_proof_on_its_own() {
         // Sem contar palavra nenhuma: um texto em japones que volta em alfabeto latino foi
         // traduzido, e nao ha outra leitura possivel.
-        let ja = "決済システムの状況を明確にまとめてください。どこで失敗しているのかが分かりません。";
-        assert!(language_flipped(ja, "please summarise the payment system status clearly"));
+        let ja =
+            "決済システムの状況を明確にまとめてください。どこで失敗しているのかが分かりません。";
+        assert!(language_flipped(
+            ja,
+            "please summarise the payment system status clearly"
+        ));
         assert!(!language_flipped(ja, ja));
     }
 

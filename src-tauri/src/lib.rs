@@ -15,6 +15,7 @@ mod project;
 mod projects;
 mod prompt_log;
 mod providers;
+mod refine_store;
 mod secrets;
 mod selection;
 mod state;
@@ -328,8 +329,7 @@ async fn orb_follow_loop(app: AppHandle) {
                         .state::<state::AppState>()
                         .orb_visible
                         .load(Ordering::SeqCst);
-                    let (mon, scale) =
-                        monitor_at_point(&w, cx.round() as i32, cy.round() as i32);
+                    let (mon, scale) = monitor_at_point(&w, cx.round() as i32, cy.round() as i32);
                     let (nx, ny) = geom::clamp_window(cx, cy, mon, scale, is_orb, &LAYOUT);
                     let _ = w.set_position(PhysicalPosition::new(nx, ny));
                 }
@@ -528,7 +528,36 @@ pub(crate) fn finalize_quit_now(app: &AppHandle) {
         .quitting
         .swap(true, Ordering::SeqCst)
     {
-        app.exit(0);
+        // Se ha uma chamada ao modelo a decorrer, da-se-lhe um instante para acabar e gravar: ela
+        // ja esta paga, e sair a meio deitava fora o resultado, que e precisamente o que este
+        // trabalho todo existe para evitar. Limitado a 1.5s, porque um stream preso nao pode
+        // impedir a app de fechar; a animacao de quit ja demora 1.2s, portanto quase nunca se ve.
+        let app2 = app.clone();
+        tauri::async_runtime::spawn(async move {
+            const GRACE: std::time::Duration = std::time::Duration::from_millis(1500);
+            let started = std::time::Instant::now();
+            let mut waited = false;
+            while started.elapsed() < GRACE {
+                let busy = app2
+                    .state::<state::AppState>()
+                    .inflight
+                    .lock()
+                    .map(|f| f.is_some())
+                    .unwrap_or(false);
+                if !busy {
+                    break;
+                }
+                waited = true;
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            if waited {
+                log::info!(
+                    "quit: esperou {}ms pela chamada em curso",
+                    started.elapsed().as_millis()
+                );
+            }
+            app2.exit(0);
+        });
     }
 }
 
@@ -670,18 +699,29 @@ fn register_one(app: &AppHandle, hotkey: &str, action: HotkeyAction) -> Result<(
             // CANCELA-o (em vez de arrancar um segundo fluxo, que corromperia o clipboard).
             let st = app.state::<state::AppState>();
             if st.busy.swap(true, Ordering::SeqCst) {
-                st.cancel.store(true, Ordering::SeqCst);
-                st.cancel_notify.notify_waiters();
+                // Ja ha um ciclo a decorrer: esta tecla DISPENSA a espera. Nao mata a chamada ao
+                // modelo, que segue ate ao fim numa tarefa propria e guarda o refinado; antes
+                // matava-a, o provider cobrava na mesma e o resultado ia para o lixo. O atalho
+                // seguinte sobre o mesmo texto junta-se a essa chamada ou usa o que ela guardou.
+                let run = st.run_seq.load(Ordering::SeqCst);
+                log::info!("[run {run}] hotkey: dispensado pela segunda tecla");
+                st.request_dismiss(run);
                 return;
             }
-            // Arranque limpo: sem cancelamento pendente de um ciclo anterior.
-            st.cancel.store(false, Ordering::SeqCst);
+            let run_id = st.run_seq.fetch_add(1, Ordering::SeqCst) + 1;
+            // Este ciclo passa a ser o dono da overlay: um `hide_after` de um ciclo anterior
+            // (a pilula ainda no ecra) compara com isto e deixa de lhe mexer.
+            st.hide_gen.store(run_id, Ordering::SeqCst);
             let cfg = config::load(app);
             // Deteta o terminal E captura o titulo da janela (para contexto de projeto) ANTES de
             // mostrar o orb: a app em foco ainda e o alvo, o nosso orb nao rouba o foco.
             let terminal = cfg.terminal_handling && foreground::is_terminal_foreground();
+            // O alvo do paste fica fixado AQUI, com a app do utilizador ainda em foco. Verifica-se
+            // outra vez mesmo antes de colar: entre as duas coisas pode passar uma chamada longa
+            // e um preview de dez segundos, e colar as cegas metia o texto na app errada.
+            let target_hwnd = foreground::foreground_target();
             log::info!(
-                "hotkey: mode={:?} terminal_handling={} exe={:?} -> terminal={}",
+                "[run {run_id}] hotkey: mode={:?} terminal_handling={} exe={:?} -> terminal={}",
                 forced_mode.unwrap_or(cfg.mode),
                 cfg.terminal_handling,
                 foreground::debug_foreground_exe(),
@@ -705,13 +745,16 @@ fn register_one(app: &AppHandle, hotkey: &str, action: HotkeyAction) -> Result<(
                     && foreground::select_all_is_safe_here(),
                 select_all_max_chars: cfg.select_all_max_chars,
                 mode: forced_mode.unwrap_or(cfg.mode),
+                run_id,
+                target_hwnd,
             };
             show_orb_at_cursor(app);
             let app = app.clone();
             tauri::async_runtime::spawn(async move {
                 flow::run(app.clone(), opts).await;
-                // Liberta a guarda so no fim do ciclo (o orb ja foi escondido dentro de run):
-                // ate aqui, o hide_after deste ciclo nao pode ser pisado por outra tecla.
+                // Rede de seguranca: o `finish` ja liberta a guarda antes da pilula (para o
+                // atalho seguinte nao ser engolido durante os ~2s dela), mas um caminho de saida
+                // que nao passe pelo `finish` nao pode deixar a app presa em "ocupada".
                 app.state::<state::AppState>()
                     .busy
                     .store(false, Ordering::SeqCst);
@@ -723,8 +766,14 @@ fn register_one(app: &AppHandle, hotkey: &str, action: HotkeyAction) -> Result<(
 
 fn build_tray(app: &tauri::App) -> tauri::Result<()> {
     let open = MenuItemBuilder::with_id("open_settings", "Settings").build(app)?;
+    // A saida para tudo o que interrompeu um refine: dispensado, recusado no preview, clipboard
+    // ocupado, janela trocada. Guardar o resultado so serve para alguma coisa se houver uma
+    // maneira de o aplicar depois.
+    let reapply = MenuItemBuilder::with_id("reapply_last", "Reapply last refine").build(app)?;
     let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
-    let menu = MenuBuilder::new(app).items(&[&open, &quit]).build()?;
+    let menu = MenuBuilder::new(app)
+        .items(&[&open, &reapply, &quit])
+        .build()?;
     let Some(icon) = app.default_window_icon().cloned() else {
         // Sem icone nao construimos a tray (em vez de rebentar). A app continua viva; o log
         // deixa rasto. Na pratica o icone vem sempre da config, por isso isto e defensivo.
@@ -738,6 +787,10 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open_settings" => {
                 show_settings(app);
+            }
+            "reapply_last" => {
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move { flow::reapply_last(app).await });
             }
             "quit" => {
                 if let Some(quit_anim) = get_or_create_window(app, "quit_anim") {
@@ -817,6 +870,7 @@ pub fn run() {
             commands::finalize_quit,
             commands::set_debug_mode,
             commands::set_save_prompts,
+            commands::set_keep_results,
             commands::save_project,
             commands::delete_project,
             commands::set_active_project,
@@ -832,6 +886,17 @@ pub fn run() {
         .setup(|app| {
             build_tray(app)?;
             let handle = app.handle().clone();
+
+            // Refinados ja pagos de sessoes anteriores. Sem isto, fechar a app deitava fora
+            // dinheiro gasto e o mesmo texto voltava a ser cobrado no arranque seguinte.
+            if config::load(&handle).keep_results {
+                let cache = refine_store::load(&handle);
+                if let Ok(mut slot) = handle.state::<state::AppState>().store.lock() {
+                    *slot = cache;
+                }
+            } else {
+                refine_store::forget(&handle);
+            }
 
             let is_install = match handle.path().app_data_dir() {
                 Ok(app_dir) => {

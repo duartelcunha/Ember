@@ -64,7 +64,10 @@ mod tests {
     #[test]
     fn strips_single_outer_fence() {
         assert_eq!(strip_structural("```\nhello\n```", false), "hello");
-        assert_eq!(strip_structural("```json\n{\"a\":1}\n```", false), "{\"a\":1}");
+        assert_eq!(
+            strip_structural("```json\n{\"a\":1}\n```", false),
+            "{\"a\":1}"
+        );
     }
 
     #[test]

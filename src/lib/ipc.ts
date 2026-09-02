@@ -140,6 +140,7 @@ export interface EmberSettings {
   debugMode: boolean;
   /** Grava prompt e resposta num ficheiro, para se poder melhorar o prompting com casos reais. */
   savePrompts: boolean;
+  keepResults: boolean;
   projectContext: boolean;
   previewBeforePaste: boolean;
   theme: Theme;
@@ -187,6 +188,7 @@ export const DEFAULT_SETTINGS: EmberSettings = {
   pasteSettleMs: 90,
   debugMode: false,
   savePrompts: false,
+  keepResults: true,
   projectContext: false,
   previewBeforePaste: false,
   theme: "cream",
@@ -251,6 +253,7 @@ export const ipc = {
   setTerminalHandling: (enabled: boolean) => invoke<void>("set_terminal_handling", { enabled }),
   setProjectContext: (enabled: boolean) => invoke<void>("set_project_context", { enabled }),
   setSavePrompts: (enabled: boolean) => invoke<void>("set_save_prompts", { enabled }),
+  setKeepResults: (enabled: boolean) => invoke<void>("set_keep_results", { enabled }),
   /** Cria (id vazio) ou atualiza um projeto. O Rust devolve o estado ja sanitizado. */
   saveProject: (project: Project) => invoke<EmberSettings>("save_project", { project }),
   deleteProject: (id: string) => invoke<EmberSettings>("delete_project", { id }),

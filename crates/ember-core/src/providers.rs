@@ -84,7 +84,8 @@ pub fn gemini_is_content_policy(body: &Value) -> bool {
         return true;
     }
     matches!(
-        body.pointer("/candidates/0/finishReason").and_then(Value::as_str),
+        body.pointer("/candidates/0/finishReason")
+            .and_then(Value::as_str),
         Some("SAFETY") | Some("RECITATION") | Some("BLOCKLIST") | Some("PROHIBITED_CONTENT")
     )
 }
@@ -93,7 +94,8 @@ pub fn gemini_is_content_policy(body: &Value) -> bool {
 /// ser colado por cima da seleccao do utilizador (perderia a cauda em silencio).
 pub fn gemini_is_truncated(body: &Value) -> bool {
     matches!(
-        body.pointer("/candidates/0/finishReason").and_then(Value::as_str),
+        body.pointer("/candidates/0/finishReason")
+            .and_then(Value::as_str),
         Some("MAX_TOKENS")
     )
 }
@@ -107,9 +109,8 @@ pub fn gemini_is_invalid_key(body: &Value) -> bool {
         .pointer("/error/details")
         .and_then(Value::as_array)
         .map(|ds| {
-            ds.iter().any(|d| {
-                d.get("reason").and_then(Value::as_str) == Some("API_KEY_INVALID")
-            })
+            ds.iter()
+                .any(|d| d.get("reason").and_then(Value::as_str) == Some("API_KEY_INVALID"))
         })
         .unwrap_or(false);
     let msg_invalid = body
@@ -147,7 +148,9 @@ pub fn gemini_is_overloaded(body: &Value) -> bool {
 pub fn gemini_retry_delay_ms(body: &Value) -> Option<u64> {
     let details = body.pointer("/error/details")?.as_array()?;
     let delay = details.iter().find_map(|d| {
-        if d.get("@type").and_then(Value::as_str) == Some("type.googleapis.com/google.rpc.RetryInfo") {
+        if d.get("@type").and_then(Value::as_str)
+            == Some("type.googleapis.com/google.rpc.RetryInfo")
+        {
             d.get("retryDelay").and_then(Value::as_str)
         } else {
             None
@@ -285,7 +288,9 @@ pub fn openai_request_body(req: &LlmRequest, stream: bool, base_url: &str) -> Va
 /// Recusa por politica: `finish_reason == "content_filter"`.
 pub fn openai_is_content_policy(chunk: &Value) -> bool {
     matches!(
-        chunk.pointer("/choices/0/finish_reason").and_then(Value::as_str),
+        chunk
+            .pointer("/choices/0/finish_reason")
+            .and_then(Value::as_str),
         Some("content_filter")
     )
 }
@@ -294,7 +299,9 @@ pub fn openai_is_content_policy(chunk: &Value) -> bool {
 /// colar por cima da seleccao.
 pub fn openai_is_truncated(chunk: &Value) -> bool {
     matches!(
-        chunk.pointer("/choices/0/finish_reason").and_then(Value::as_str),
+        chunk
+            .pointer("/choices/0/finish_reason")
+            .and_then(Value::as_str),
         Some("length")
     )
 }
@@ -315,7 +322,9 @@ pub enum OpenAiStreamEvent {
     ReasoningDelta(String),
     /// `choices[0].finish_reason` presente: terminal. O caller classifica com
     /// `openai_is_truncated`/`openai_is_content_policy` sobre `{ "finish_reason": .. }`.
-    Stopped { finish_reason: String },
+    Stopped {
+        finish_reason: String,
+    },
     Other,
 }
 
@@ -323,13 +332,19 @@ pub enum OpenAiStreamEvent {
 /// Ordem: finish_reason (terminal) primeiro, depois raciocinio, depois conteudo final.
 pub fn openai_stream_event(chunk: &Value) -> OpenAiStreamEvent {
     // 1. Terminal: finish_reason presente (pode vir num chunk com delta vazio no fim).
-    if let Some(fr) = chunk.pointer("/choices/0/finish_reason").and_then(Value::as_str) {
+    if let Some(fr) = chunk
+        .pointer("/choices/0/finish_reason")
+        .and_then(Value::as_str)
+    {
         return OpenAiStreamEvent::Stopped {
             finish_reason: fr.to_string(),
         };
     }
     // 2. Raciocinio: OpenRouter normaliza para `reasoning`; DeepSeek nativo usa `reasoning_content`.
-    if let Some(r) = chunk.pointer("/choices/0/delta/reasoning").and_then(Value::as_str) {
+    if let Some(r) = chunk
+        .pointer("/choices/0/delta/reasoning")
+        .and_then(Value::as_str)
+    {
         if !r.is_empty() {
             return OpenAiStreamEvent::ReasoningDelta(r.to_string());
         }
@@ -343,7 +358,10 @@ pub fn openai_stream_event(chunk: &Value) -> OpenAiStreamEvent {
         }
     }
     // 3. Conteudo final. O primeiro chunk so traz `role: "assistant"` (sem content) -> Other.
-    if let Some(c) = chunk.pointer("/choices/0/delta/content").and_then(Value::as_str) {
+    if let Some(c) = chunk
+        .pointer("/choices/0/delta/content")
+        .and_then(Value::as_str)
+    {
         if !c.is_empty() {
             return OpenAiStreamEvent::ContentDelta(c.to_string());
         }
@@ -444,7 +462,8 @@ mod tests {
         let blocked = json!({ "promptFeedback": { "blockReason": "SAFETY" } });
         assert!(gemini_is_content_policy(&blocked));
 
-        let safety = json!({ "candidates": [{ "finishReason": "SAFETY", "content": { "parts": [] } }] });
+        let safety =
+            json!({ "candidates": [{ "finishReason": "SAFETY", "content": { "parts": [] } }] });
         assert!(gemini_is_content_policy(&safety));
     }
 
@@ -456,7 +475,8 @@ mod tests {
         r.thinking_level = "high".into();
         let b = gemini_request_body(&r);
         assert_eq!(
-            b.pointer("/generationConfig/thinkingConfig/thinkingLevel").unwrap(),
+            b.pointer("/generationConfig/thinkingConfig/thinkingLevel")
+                .unwrap(),
             "high"
         );
         assert!(b
@@ -471,7 +491,8 @@ mod tests {
         r.thinking = false;
         let b = gemini_request_body(&r);
         assert_eq!(
-            b.pointer("/generationConfig/thinkingConfig/thinkingLevel").unwrap(),
+            b.pointer("/generationConfig/thinkingConfig/thinkingLevel")
+                .unwrap(),
             "minimal"
         );
     }
@@ -483,13 +504,15 @@ mod tests {
         r.thinking = true;
         let on = gemini_request_body(&r);
         assert_eq!(
-            on.pointer("/generationConfig/thinkingConfig/thinkingBudget").unwrap(),
+            on.pointer("/generationConfig/thinkingConfig/thinkingBudget")
+                .unwrap(),
             -1
         );
         r.thinking = false;
         let off = gemini_request_body(&r);
         assert_eq!(
-            off.pointer("/generationConfig/thinkingConfig/thinkingBudget").unwrap(),
+            off.pointer("/generationConfig/thinkingConfig/thinkingBudget")
+                .unwrap(),
             0
         );
     }
@@ -516,11 +539,6 @@ mod tests {
         assert_eq!(gemini_stream_text_delta(&no_parts), None);
     }
 
-
-
-
-
-
     #[test]
     fn gemini_detects_truncation() {
         let chunk = json!({
@@ -531,7 +549,6 @@ mod tests {
         });
         assert!(gemini_is_truncated(&chunk));
     }
-
 
     #[test]
     fn split_sse_events_splits_on_blank_line_and_keeps_incomplete_remainder() {
@@ -591,12 +608,18 @@ mod tests {
         assert!(gemini_is_overloaded(&high_demand));
 
         // So o status ja chega (a mensagem muda com o tempo e nao queremos depender dela).
-        assert!(gemini_is_overloaded(&json!({ "error": { "status": "UNAVAILABLE" } })));
+        assert!(gemini_is_overloaded(
+            &json!({ "error": { "status": "UNAVAILABLE" } })
+        ));
         // E so a mensagem tambem (se um dia vier sem status).
-        assert!(gemini_is_overloaded(&json!({ "error": { "message": "The model is overloaded" } })));
+        assert!(gemini_is_overloaded(
+            &json!({ "error": { "message": "The model is overloaded" } })
+        ));
 
         // Um 500 generico NAO e isto: e um transitorio normal e merece o retry no mesmo sitio.
-        assert!(!gemini_is_overloaded(&json!({ "error": { "code": 500, "message": "Internal" } })));
+        assert!(!gemini_is_overloaded(
+            &json!({ "error": { "code": 500, "message": "Internal" } })
+        ));
         // E um rate-limit tambem nao: esse tem `Retry-After` proprio e outro tratamento.
         assert!(!gemini_is_overloaded(&json!({ "error": {
             "code": 429, "status": "RESOURCE_EXHAUSTED", "message": "Quota exceeded"
@@ -653,7 +676,6 @@ mod tests {
         assert!((temp - 0.3).abs() < 1e-6);
     }
 
-
     // ----- OpenAI-compatible -----
 
     #[test]
@@ -666,10 +688,7 @@ mod tests {
             openai_chat_url("https://openrouter.ai/api/v1/"),
             "https://openrouter.ai/api/v1/chat/completions"
         );
-        assert_eq!(
-            openai_models_url("https://x/"),
-            "https://x/models"
-        );
+        assert_eq!(openai_models_url("https://x/"), "https://x/models");
     }
 
     #[test]
@@ -709,7 +728,10 @@ mod tests {
             "o modelo escolhido nao pode aparecer duas vezes"
         );
         // O campo `model` continua la (o OpenRouter usa-o como primario).
-        assert_eq!(b.get("model").unwrap(), "meta-llama/llama-3.3-70b-instruct:free");
+        assert_eq!(
+            b.get("model").unwrap(),
+            "meta-llama/llama-3.3-70b-instruct:free"
+        );
     }
 
     #[test]
@@ -782,7 +804,9 @@ mod tests {
             let chunk = json!({ "choices": [{ "finish_reason": fr, "delta": {} }] });
             assert_eq!(
                 openai_stream_event(&chunk),
-                OpenAiStreamEvent::Stopped { finish_reason: fr.into() }
+                OpenAiStreamEvent::Stopped {
+                    finish_reason: fr.into()
+                }
             );
         }
     }

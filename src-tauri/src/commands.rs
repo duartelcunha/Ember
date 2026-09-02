@@ -53,6 +53,7 @@ pub struct SettingsDto {
     paste_settle_ms: u64,
     debug_mode: bool,
     save_prompts: bool,
+    keep_results: bool,
     project_context: bool,
     preview_before_paste: bool,
     theme: String,
@@ -153,6 +154,7 @@ fn build_dto(app: &AppHandle, cfg: &config::Config) -> SettingsDto {
         paste_settle_ms: cfg.paste_settle_ms,
         debug_mode: cfg.debug_mode,
         save_prompts: cfg.save_prompts,
+        keep_results: cfg.keep_results,
         project_context: cfg.project_context,
         preview_before_paste: cfg.preview_before_paste,
         theme: cfg.theme.clone(),
@@ -927,6 +929,25 @@ pub fn set_save_prompts(app: AppHandle, enabled: bool) -> Result<(), String> {
     config::save(&app, &cfg).map_err(|e| e.to_string())
 }
 
+/// Liga/desliga a memoria de refinados. Ao DESLIGAR apaga o ficheiro e esvazia a cache em
+/// memoria, ao contrario do `set_save_prompts`: aquele ficheiro existe para o utilizador o ir ler
+/// (esta a um clique na pasta de logs), este e interno, e um interruptor de privacidade que so
+/// valesse para o futuro deixava o texto antigo em disco sem ninguem dar por isso.
+#[tauri::command]
+pub fn set_keep_results(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut cfg = config::load(&app);
+    cfg.keep_results = enabled;
+    config::save(&app, &cfg).map_err(|e| e.to_string())?;
+    if !enabled {
+        crate::refine_store::forget(&app);
+        if let Ok(mut store) = app.state::<AppState>().store.lock() {
+            *store = ember_core::RefineCache::default();
+        }
+        log::info!("refine cache: desligada pelo utilizador; ficheiro apagado");
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn set_debug_mode(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut cfg = config::load(&app);
@@ -978,7 +999,10 @@ pub(crate) fn open_in_browser(url: &str) -> Result<(), String> {
         if (hinst.0 as usize) > 32 {
             Ok(())
         } else {
-            Err(format!("ShellExecuteW failed with error code {:?}", hinst.0))
+            Err(format!(
+                "ShellExecuteW failed with error code {:?}",
+                hinst.0
+            ))
         }
     };
     #[cfg(target_os = "macos")]
@@ -1281,12 +1305,28 @@ pub(crate) fn friendly_error(e: &ember_core::CoreError) -> String {
     }
 }
 
-/// Refina `input` com a chain Gemini->fallback (filtrada pelos configurados). Devolve
-/// (texto CRU do modelo, `Prepared`, provider) ou CoreError: o pos-processamento do motor corre
-/// em `flow.rs`, para um output que degrada cair no ramo de restauro do clipboard (nao colar por
-/// cima da seleccao). `on_attempt` recebe (provider, indice, tentativa) antes de cada chamada;
-/// `on_delta` e no-op (preview off).
-pub(crate) async fn refine_text(
+/// Tudo o que uma chamada ao modelo precisa, ja resolvido: a cadeia de providers, o pedido, o
+/// `Prepared` do motor e a CHAVE DE CACHE deste refine.
+///
+/// Separado da execucao de proposito. A chave tem de existir ANTES de se gastar dinheiro, para
+/// se poder perguntar "isto ja foi refinado?" e para o ciclo seguinte saber que ha uma chamada
+/// igual a decorrer e se poder juntar a ela em vez de pagar a mesma coisa outra vez.
+pub(crate) struct PreparedRefine {
+    pub chain: Vec<providers::ChainStep>,
+    pub req: ember_core::LlmRequest,
+    pub prepared: ember_core::Prepared,
+    pub rcfg: RetryConfig,
+    pub openai_base_url: String,
+    pub save_prompts: bool,
+    pub mode: RefineMode,
+    pub project_source: Option<String>,
+    pub key: ember_core::CacheKey,
+    /// Gravar o refinado em disco quando ele chegar (ver `refine_store`).
+    pub keep_results: bool,
+}
+
+/// Resolve perfil, contexto de projeto, cadeia e prompt. NAO chama o modelo nem gasta nada.
+pub(crate) async fn prepare_refine(
     app: &AppHandle,
     state: &AppState,
     input: &str,
@@ -1294,9 +1334,7 @@ pub(crate) async fn refine_text(
     // O modo deste refine vem do atalho que disparou (ver `flow::RunOpts`), nao de `cfg.mode`:
     // com atalhos por modo, a config so decide o que faz o atalho principal.
     mode: RefineMode,
-    on_attempt: &(dyn Fn(Provider, usize, u32) + Send + Sync),
-    on_delta: &(dyn Fn(&str) + Send + Sync),
-) -> Result<(String, ember_core::Prepared, String), ember_core::CoreError> {
+) -> Result<PreparedRefine, ember_core::CoreError> {
     let cfg = config::load(app);
     let chain = build_chain(app, state, &cfg).await?;
 
@@ -1357,42 +1395,72 @@ pub(crate) async fn refine_text(
         step_providers: chain.iter().map(|s| s.provider).collect(),
         ..RetryConfig::default()
     };
+    // A chave leva o system prompt inteiro (por impressao digital): mudar o perfil, o nivel de
+    // thinking ou o brief do projeto TEM de dar um miss, senao a cache servia um refine feito
+    // com outras regras. O projeto ativo tambem entra, porque muda o contexto sem mudar o texto.
+    let key = ember_core::CacheKey::new(input, mode, cfg.active_project.as_deref(), &req.system);
+    Ok(PreparedRefine {
+        chain,
+        req,
+        prepared,
+        rcfg,
+        openai_base_url: cfg.openai_base_url,
+        save_prompts: cfg.save_prompts,
+        mode,
+        project_source: project_ctx.map(|pc| pc.source_path),
+        key,
+        keep_results: cfg.keep_results,
+    })
+}
+
+/// Chama o modelo com a cadeia preparada. Devolve (texto CRU, provider, modelo): o
+/// pos-processamento do motor corre em `flow.rs`, para um output que degrada cair no ramo de
+/// restauro do clipboard (nao colar por cima da seleccao).
+pub(crate) async fn execute_refine(
+    app: &AppHandle,
+    state: &AppState,
+    p: &PreparedRefine,
+    on_attempt: &(dyn Fn(Provider, usize, u32) + Send + Sync),
+) -> Result<(String, String, String), ember_core::CoreError> {
+    // O preview de streaming fica desligado de proposito: o texto cru pre-engine nao e o que se
+    // cola. `on_delta` mantem-se como no-op para a assinatura de `refine`.
+    let on_delta = |_delta: &str| {};
     let pctx = providers::ProviderCtx {
-        openai_base_url: &cfg.openai_base_url,
+        openai_base_url: &p.openai_base_url,
     };
     let started = std::time::Instant::now();
     let resp = providers::refine(
         &state.http,
-        &rcfg,
-        &chain,
-        &req,
+        &p.rcfg,
+        &p.chain,
+        &p.req,
         &pctx,
         on_attempt,
-        on_delta,
+        &on_delta,
     )
     .await?;
     // Registo opt-in do que foi mesmo enviado e do que voltou. Depois do `?` de proposito: so se
     // guarda o que chegou a ser uma resposta. Um refine que falhou ja deixa rasto no log normal,
     // e o que aqui interessa estudar e o par prompt/resposta, nao a ausencia dele.
-    if cfg.save_prompts {
+    if p.save_prompts {
         crate::prompt_log::append(
             app,
             &crate::prompt_log::Record {
-                mode: mode_str(mode),
+                mode: mode_str(p.mode),
                 provider: resp.provider.display_name(),
                 model: &resp.model,
                 ms: started.elapsed().as_millis(),
-                system: &req.system,
-                input: &req.user,
+                system: &p.req.system,
+                input: &p.req.user,
                 output: &resp.text,
-                project: project_ctx.as_ref().map(|pc| pc.source_path.as_str()),
+                project: p.project_source.as_deref(),
             },
         );
     }
     Ok((
         resp.text,
-        prepared,
         resp.provider.display_name().to_string(),
+        resp.model,
     ))
 }
 

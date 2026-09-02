@@ -103,7 +103,9 @@ pub fn is_worth_refining(text: &str, mode: RefineMode) -> bool {
         return true;
     }
     // Pontuacao e sinal de que ha frase, mesmo curta ("nao, obrigado").
-    if t.chars().any(|c| matches!(c, '.' | '!' | '?' | ',' | ';' | ':')) {
+    if t.chars()
+        .any(|c| matches!(c, '.' | '!' | '?' | ',' | ';' | ':'))
+    {
         return true;
     }
     t.split_whitespace().count() > TRIVIAL_MAX_WORDS
@@ -207,7 +209,11 @@ mod golds {
 
     #[test]
     fn echoed_markers_are_stripped() {
-        let r = run("hi", "[EMBER_INPUT]\nHello there.\n[/EMBER_INPUT]", RefineMode::Adaptive);
+        let r = run(
+            "hi",
+            "[EMBER_INPUT]\nHello there.\n[/EMBER_INPUT]",
+            RefineMode::Adaptive,
+        );
         assert_eq!(r, EngineResult::Paste("Hello there.".into()));
     }
 
@@ -217,7 +223,10 @@ mod golds {
         let prepared = precondition(input, RefineMode::Adaptive);
         // O modelo deitou fora o token do URL: nao da para restaurar -> degrada.
         let r = postprocess("Please run the command now.", &prepared);
-        assert_eq!(r, EngineResult::Degrade(DegradeReason::PreservationViolation));
+        assert_eq!(
+            r,
+            EngineResult::Degrade(DegradeReason::PreservationViolation)
+        );
     }
 
     #[test]
@@ -254,7 +263,10 @@ mod preflight {
     fn a_sentence_without_spaces_is_never_silently_skipped() {
         // Japones, chines e tailandes escrevem sem espacos: a contagem de palavras dava 1 e a
         // frase inteira era descartada. Fora do ASCII nao se decide nada.
-        assert!(is_worth_refining("明日の会議は中止になりました。", RefineMode::Polish));
+        assert!(is_worth_refining(
+            "明日の会議は中止になりました。",
+            RefineMode::Polish
+        ));
         assert!(is_worth_refining("我们明天开会", RefineMode::Polish));
         assert!(is_worth_refining("ola mundo", RefineMode::Polish) == false);
         assert!(is_worth_refining("olá mundo", RefineMode::Polish));
@@ -285,7 +297,10 @@ mod preflight {
         assert!(is_worth_refining("fix this bug", RefineMode::Polish));
         assert!(is_worth_refining("ok.", RefineMode::Polish));
         assert!(is_worth_refining("we ship monday", RefineMode::Polish));
-        assert!(is_worth_refining("preciso que vas ao linear ver os issues", RefineMode::Polish));
+        assert!(is_worth_refining(
+            "preciso que vas ao linear ver os issues",
+            RefineMode::Polish
+        ));
         assert!(is_worth_refining("nao, obrigado", RefineMode::Polish));
     }
 }

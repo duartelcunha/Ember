@@ -829,18 +829,22 @@ function ProviderHealthNotice({
 function DiagnosticsSection({
   debugMode,
   savePrompts,
+  keepResults,
 }: {
   debugMode: boolean;
   savePrompts: boolean;
+  keepResults: boolean;
 }) {
   const [on, setOn] = useState(debugMode);
   const [saving, setSaving] = useState(savePrompts);
+  const [keeping, setKeeping] = useState(keepResults);
   const [logs, setLogs] = useState("");
   const [loadingLogs, setLoadingLogs] = useState(false);
 
   // debugMode chega do getSettings assincrono; ressincroniza como os outros toggles.
   useEffect(() => setOn(debugMode), [debugMode]);
   useEffect(() => setSaving(savePrompts), [savePrompts]);
+  useEffect(() => setKeeping(keepResults), [keepResults]);
 
   const toggle = (v: boolean) => {
     setOn(v);
@@ -855,6 +859,14 @@ function DiagnosticsSection({
     ipc.setSavePrompts(v).catch(() => {
       setSaving(!v);
       toast.error("Couldn't change prompt saving.");
+    });
+  };
+
+  const toggleKeep = (v: boolean) => {
+    setKeeping(v);
+    ipc.setKeepResults(v).catch(() => {
+      setKeeping(!v);
+      toast.error("Couldn't change refine memory.");
     });
   };
 
@@ -901,6 +913,22 @@ function DiagnosticsSection({
           id="save-prompts"
           checked={saving}
           onCheckedChange={togglePrompts}
+          className="mt-1 shrink-0"
+        />
+      </div>
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <Label htmlFor="keep-results">Remember refines</Label>
+          <p className="mt-1 text-xs text-fg-muted">
+            Keeps recent refined results on this machine, so an interrupted refine is never lost
+            and the same text is never paid for twice. Reapply the last one from the tray menu.
+            Turning this off deletes what is stored.
+          </p>
+        </div>
+        <Switch
+          id="keep-results"
+          checked={keeping}
+          onCheckedChange={toggleKeep}
           className="mt-1 shrink-0"
         />
       </div>
@@ -1767,7 +1795,11 @@ export function Settings({ initialTab = "providers" }: { initialTab?: string } =
                 <Section title="Updates" hint="Checks against the latest GitHub release, signed and verified.">
                   <UpdateChecker />
                 </Section>
-                <DiagnosticsSection debugMode={s.debugMode} savePrompts={s.savePrompts} />
+                <DiagnosticsSection
+                  debugMode={s.debugMode}
+                  savePrompts={s.savePrompts}
+                  keepResults={s.keepResults}
+                />
               </div>
             </TabsContent>
           </Tabs>

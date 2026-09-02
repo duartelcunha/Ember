@@ -93,9 +93,7 @@ pub fn classify(
     match http_status {
         200 => OutcomeClass::Success,
         // Transitorios explicitos: timeout/conflito/rate-limit/erros de servidor/overload.
-        408 | 409 | 429 | 500 | 502 | 503 | 504 | 529 => {
-            OutcomeClass::Transient { retry_after_ms }
-        }
+        408 | 409 | 429 | 500 | 502 | 503 | 504 | 529 => OutcomeClass::Transient { retry_after_ms },
         // Credencial: nao faz retry cego; dispara fallback (chave diferente no outro).
         401 | 403 => OutcomeClass::Auth,
         // O MODELO nao existe (descontinuado, ou id mal escrito). Nao e um bug do pedido: o
@@ -132,7 +130,10 @@ pub fn backoff_ms(
         return server.max(cfg.base_delay_ms);
     }
     let factor = 1u64.checked_shl(attempt).unwrap_or(u64::MAX);
-    let capped = cfg.base_delay_ms.saturating_mul(factor).min(cfg.max_delay_ms);
+    let capped = cfg
+        .base_delay_ms
+        .saturating_mul(factor)
+        .min(cfg.max_delay_ms);
     let jitter = (capped as f64) * cfg.jitter_frac * rng01.clamp(0.0, 1.0);
     ((capped as f64) + jitter).min(cfg.max_delay_ms as f64) as u64
 }
@@ -252,18 +253,31 @@ mod tests {
         // para o fallback, apesar de a mesma chave servir mais quinze modelos com fila propria.
         // O utilizador ficava sem refine nenhum por causa de UM modelo cheio.
         let c = chain_2gemini_1openai();
-        let out = OutcomeClass::Transient { retry_after_ms: None };
-        let exhausted = LoopState { step_index: 0, attempt: c.max_retries_per_step };
+        let out = OutcomeClass::Transient {
+            retry_after_ms: None,
+        };
+        let exhausted = LoopState {
+            step_index: 0,
+            attempt: c.max_retries_per_step,
+        };
         assert_eq!(
             plan(&exhausted, &out, &c, 0.0),
             Decision::Fallback { next: LoopState { step_index: 1, attempt: 0 } },
             "esgotar retries no modelo escolhido tem de levar ao modelo alternativo, nao a outra familia"
         );
         // E so quando o alternativo TAMBEM esgota e que se desiste da familia.
-        let exhausted_alt = LoopState { step_index: 1, attempt: c.max_retries_per_step };
+        let exhausted_alt = LoopState {
+            step_index: 1,
+            attempt: c.max_retries_per_step,
+        };
         assert_eq!(
             plan(&exhausted_alt, &out, &c, 0.0),
-            Decision::Fallback { next: LoopState { step_index: 2, attempt: 0 } }
+            Decision::Fallback {
+                next: LoopState {
+                    step_index: 2,
+                    attempt: 0
+                }
+            }
         );
     }
 
@@ -275,20 +289,43 @@ mod tests {
         let c = chain_2gemini_1openai();
         assert_eq!(
             plan(&LoopState::start(), &OutcomeClass::Overloaded, &c, 0.0),
-            Decision::Fallback { next: LoopState { step_index: 1, attempt: 0 } },
+            Decision::Fallback {
+                next: LoopState {
+                    step_index: 1,
+                    attempt: 0
+                }
+            },
             "sem retry nenhum: vai direto ao modelo do lado"
         );
         // Vai para o passo seguinte mesmo que seja da MESMA familia (ao contrario do Auth, que
         // salta a familia toda): a chave esta boa, o que esta cheio e o modelo.
         assert_eq!(
-            plan(&LoopState { step_index: 1, attempt: 0 }, &OutcomeClass::Overloaded, &c, 0.0),
-            Decision::Fallback { next: LoopState { step_index: 2, attempt: 0 } }
+            plan(
+                &LoopState {
+                    step_index: 1,
+                    attempt: 0
+                },
+                &OutcomeClass::Overloaded,
+                &c,
+                0.0
+            ),
+            Decision::Fallback {
+                next: LoopState {
+                    step_index: 2,
+                    attempt: 0
+                }
+            }
         );
         // Sem passo nenhum a seguir, falha como o transitorio esgotado que e.
-        let so_um = RetryConfig { step_count: 1, ..RetryConfig::default() };
+        let so_um = RetryConfig {
+            step_count: 1,
+            ..RetryConfig::default()
+        };
         assert_eq!(
             plan(&LoopState::start(), &OutcomeClass::Overloaded, &so_um, 0.0),
-            Decision::Fail { reason: CoreError::AllProvidersFailed }
+            Decision::Fail {
+                reason: CoreError::AllProvidersFailed
+            }
         );
     }
 
@@ -300,14 +337,24 @@ mod tests {
         let c = chain_2gemini_1openai();
         assert_eq!(
             plan(&LoopState::start(), &OutcomeClass::Auth, &c, 0.0),
-            Decision::Fallback { next: LoopState { step_index: 2, attempt: 0 } },
+            Decision::Fallback {
+                next: LoopState {
+                    step_index: 2,
+                    attempt: 0
+                }
+            },
             "Auth no passo 0 (Gemini) tem de saltar o passo 1 (Gemini) e ir direto ao 2 (OpenAi)"
         );
         // O mesmo para o corte por tokens: o teto e nosso e vai igual em todos os modelos, so
         // outra familia tem contabilidade diferente.
         assert_eq!(
             plan(&LoopState::start(), &OutcomeClass::Truncated, &c, 0.0),
-            Decision::Fallback { next: LoopState { step_index: 2, attempt: 0 } }
+            Decision::Fallback {
+                next: LoopState {
+                    step_index: 2,
+                    attempt: 0
+                }
+            }
         );
         // Sem familia diferente a seguir, falha em vez de andar as voltas nos modelos.
         let so_gemini = RetryConfig {
@@ -317,7 +364,9 @@ mod tests {
         };
         assert_eq!(
             plan(&LoopState::start(), &OutcomeClass::Auth, &so_gemini, 0.0),
-            Decision::Fail { reason: CoreError::Auth }
+            Decision::Fail {
+                reason: CoreError::Auth
+            }
         );
     }
 
@@ -328,7 +377,12 @@ mod tests {
         let c = chain_2gemini_1openai();
         assert_eq!(
             plan(&LoopState::start(), &OutcomeClass::ModelNotFound, &c, 0.0),
-            Decision::Fallback { next: LoopState { step_index: 1, attempt: 0 } }
+            Decision::Fallback {
+                next: LoopState {
+                    step_index: 1,
+                    attempt: 0
+                }
+            }
         );
     }
 
@@ -345,13 +399,26 @@ mod tests {
         };
         assert_eq!(
             plan(&LoopState::start(), &out, &c, 0.0),
-            Decision::Fallback { next: LoopState { step_index: 1, attempt: 0 } }
+            Decision::Fallback {
+                next: LoopState {
+                    step_index: 1,
+                    attempt: 0
+                }
+            }
         );
         // E do ultimo modelo da familia sai mesmo para a familia seguinte.
-        let last_gemini = LoopState { step_index: 1, attempt: 0 };
+        let last_gemini = LoopState {
+            step_index: 1,
+            attempt: 0,
+        };
         assert_eq!(
             plan(&last_gemini, &out, &c, 0.0),
-            Decision::Fallback { next: LoopState { step_index: 2, attempt: 0 } }
+            Decision::Fallback {
+                next: LoopState {
+                    step_index: 2,
+                    attempt: 0
+                }
+            }
         );
     }
 
@@ -363,7 +430,12 @@ mod tests {
         assert!(c.step_providers.is_empty());
         assert_eq!(
             plan(&LoopState::start(), &OutcomeClass::Auth, &c, 0.0),
-            Decision::Fallback { next: LoopState { step_index: 1, attempt: 0 } }
+            Decision::Fallback {
+                next: LoopState {
+                    step_index: 1,
+                    attempt: 0
+                }
+            }
         );
     }
 
@@ -377,7 +449,12 @@ mod tests {
                 retry_after_ms: Some(1500)
             }
         );
-        assert_eq!(classify(g, 503, None, None), OutcomeClass::Transient { retry_after_ms: None });
+        assert_eq!(
+            classify(g, 503, None, None),
+            OutcomeClass::Transient {
+                retry_after_ms: None
+            }
+        );
         assert_eq!(classify(g, 401, None, None), OutcomeClass::Auth);
         assert_eq!(classify(g, 403, None, None), OutcomeClass::Auth);
         assert_eq!(classify(g, 400, None, None), OutcomeClass::Payload);
@@ -417,15 +494,23 @@ mod tests {
         assert_eq!(
             plan(&s, &OutcomeClass::ModelNotFound, &c, 0.0),
             Decision::Fallback {
-                next: LoopState { step_index: 1, attempt: 0 }
+                next: LoopState {
+                    step_index: 1,
+                    attempt: 0
+                }
             }
         );
         // Sem familia seguinte, falha com uma razao QUE SE PERCEBE (nao um "payload invalido"
         // que mandava o utilizador procurar um bug que nao existe).
-        let last = LoopState { step_index: 1, attempt: 0 };
+        let last = LoopState {
+            step_index: 1,
+            attempt: 0,
+        };
         assert_eq!(
             plan(&last, &OutcomeClass::ModelNotFound, &cfg2(), 0.0),
-            Decision::Fail { reason: CoreError::ModelNotFound }
+            Decision::Fail {
+                reason: CoreError::ModelNotFound
+            }
         );
         // Um 400 continua a ser Payload: aí o bug e mesmo nosso e propaga sem mascarar.
         assert_eq!(
@@ -460,11 +545,17 @@ mod tests {
         assert_eq!(
             plan(&s, &out, &c, 0.0),
             Decision::Fallback {
-                next: LoopState { step_index: 1, attempt: 0 }
+                next: LoopState {
+                    step_index: 1,
+                    attempt: 0
+                }
             }
         );
         // Sem outra familia, falha honestamente em vez de prender o utilizador num sleep longo.
-        let last = LoopState { step_index: 1, attempt: 0 };
+        let last = LoopState {
+            step_index: 1,
+            attempt: 0,
+        };
         assert_eq!(
             plan(&last, &out, &cfg2(), 0.0),
             Decision::Fail {
@@ -476,7 +567,9 @@ mod tests {
     #[test]
     fn transient_retries_then_falls_back_then_fails() {
         let c = cfg2(); // max_retries_per_step = 2, step_count = 2
-        let out = OutcomeClass::Transient { retry_after_ms: None };
+        let out = OutcomeClass::Transient {
+            retry_after_ms: None,
+        };
 
         // attempt 0 e 1 -> retry no mesmo provider.
         let s0 = LoopState::start();
@@ -487,7 +580,10 @@ mod tests {
             }
             d => panic!("esperava Retry, veio {d:?}"),
         }
-        let s_exhausted = LoopState { step_index: 0, attempt: 2 };
+        let s_exhausted = LoopState {
+            step_index: 0,
+            attempt: 2,
+        };
         match plan(&s_exhausted, &out, &c, 0.0) {
             Decision::Fallback { next } => {
                 assert_eq!(next.step_index, 1);
@@ -496,10 +592,15 @@ mod tests {
             d => panic!("esperava Fallback, veio {d:?}"),
         }
         // ultimo provider esgotado -> Fail.
-        let s_last = LoopState { step_index: 1, attempt: 2 };
+        let s_last = LoopState {
+            step_index: 1,
+            attempt: 2,
+        };
         assert_eq!(
             plan(&s_last, &out, &c, 0.0),
-            Decision::Fail { reason: CoreError::AllProvidersFailed }
+            Decision::Fail {
+                reason: CoreError::AllProvidersFailed
+            }
         );
     }
 
@@ -510,10 +611,15 @@ mod tests {
             plan(&LoopState::start(), &OutcomeClass::Auth, &c, 0.0),
             Decision::Fallback { .. }
         ));
-        let last = LoopState { step_index: 1, attempt: 0 };
+        let last = LoopState {
+            step_index: 1,
+            attempt: 0,
+        };
         assert_eq!(
             plan(&last, &OutcomeClass::Auth, &c, 0.0),
-            Decision::Fail { reason: CoreError::Auth }
+            Decision::Fail {
+                reason: CoreError::Auth
+            }
         );
     }
 
@@ -522,7 +628,9 @@ mod tests {
         let c = cfg();
         assert_eq!(
             plan(&LoopState::start(), &OutcomeClass::Payload, &c, 0.0),
-            Decision::Fail { reason: CoreError::Payload }
+            Decision::Fail {
+                reason: CoreError::Payload
+            }
         );
     }
 
@@ -534,22 +642,37 @@ mod tests {
             plan(&LoopState::start(), &OutcomeClass::Truncated, &c, 0.0),
             Decision::Fallback { .. }
         ));
-        let last = LoopState { step_index: 1, attempt: 0 };
+        let last = LoopState {
+            step_index: 1,
+            attempt: 0,
+        };
         assert_eq!(
             plan(&last, &OutcomeClass::Truncated, &c, 0.0),
-            Decision::Fail { reason: CoreError::Truncated }
+            Decision::Fail {
+                reason: CoreError::Truncated
+            }
         );
     }
 
     #[test]
     fn single_provider_transient_exhausts_to_fail() {
-        let c = RetryConfig { step_count: 1, ..RetryConfig::default() };
-        let out = OutcomeClass::Transient { retry_after_ms: None };
+        let c = RetryConfig {
+            step_count: 1,
+            ..RetryConfig::default()
+        };
+        let out = OutcomeClass::Transient {
+            retry_after_ms: None,
+        };
         // Sem provider seguinte: retries esgotam e falha (nao fica preso nem faz fallback).
-        let exhausted = LoopState { step_index: 0, attempt: c.max_retries_per_step };
+        let exhausted = LoopState {
+            step_index: 0,
+            attempt: c.max_retries_per_step,
+        };
         assert_eq!(
             plan(&exhausted, &out, &c, 0.0),
-            Decision::Fail { reason: CoreError::AllProvidersFailed }
+            Decision::Fail {
+                reason: CoreError::AllProvidersFailed
+            }
         );
     }
 
@@ -566,7 +689,9 @@ mod tests {
         let mut c = cfg();
         assert_eq!(
             plan(&LoopState::start(), &OutcomeClass::ContentPolicy, &c, 0.0),
-            Decision::Fail { reason: CoreError::ContentPolicy }
+            Decision::Fail {
+                reason: CoreError::ContentPolicy
+            }
         );
         c.fallback_on_content_policy = true;
         assert!(matches!(
@@ -602,33 +727,56 @@ mod tests {
         ));
         // Auth no ultimo (2) -> Fail (sem mais ninguem).
         assert_eq!(
-            plan(&LoopState { step_index: 2, attempt: 0 }, &OutcomeClass::Auth, &c, 0.0),
-            Decision::Fail { reason: CoreError::Auth }
+            plan(
+                &LoopState {
+                    step_index: 2,
+                    attempt: 0
+                },
+                &OutcomeClass::Auth,
+                &c,
+                0.0
+            ),
+            Decision::Fail {
+                reason: CoreError::Auth
+            }
         );
     }
 
     #[test]
     fn three_provider_chain_exhausts_transient_through_all_three() {
         let c = cfg(); // max_retries_per_step = 2, step_count = 3
-        let out = OutcomeClass::Transient { retry_after_ms: None };
+        let out = OutcomeClass::Transient {
+            retry_after_ms: None,
+        };
 
         // Provider 0 esgota retries -> fallback para o 1.
-        let exhausted0 = LoopState { step_index: 0, attempt: c.max_retries_per_step };
+        let exhausted0 = LoopState {
+            step_index: 0,
+            attempt: c.max_retries_per_step,
+        };
         assert!(matches!(
             plan(&exhausted0, &out, &c, 0.0),
             Decision::Fallback { next } if next.step_index == 1
         ));
         // Provider 1 esgota -> fallback para o 2.
-        let exhausted1 = LoopState { step_index: 1, attempt: c.max_retries_per_step };
+        let exhausted1 = LoopState {
+            step_index: 1,
+            attempt: c.max_retries_per_step,
+        };
         assert!(matches!(
             plan(&exhausted1, &out, &c, 0.0),
             Decision::Fallback { next } if next.step_index == 2
         ));
         // Provider 2 (ultimo) esgota -> Fail AllProvidersFailed.
-        let exhausted2 = LoopState { step_index: 2, attempt: c.max_retries_per_step };
+        let exhausted2 = LoopState {
+            step_index: 2,
+            attempt: c.max_retries_per_step,
+        };
         assert_eq!(
             plan(&exhausted2, &out, &c, 0.0),
-            Decision::Fail { reason: CoreError::AllProvidersFailed }
+            Decision::Fail {
+                reason: CoreError::AllProvidersFailed
+            }
         );
     }
 }

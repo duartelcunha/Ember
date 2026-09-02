@@ -31,7 +31,10 @@ AGENTS.md resume o mesmo para outras ferramentas.
    `[EMBER_PROJECT_SOURCE]` embrulham texto de repos alheios com preâmbulo anti-injeção. A
    destilação de um brief nunca faz fallback para o conteúdo cru do ficheiro.
 6. **Nunca gastar dinheiro que o utilizador não escolheu.** Fallbacks de modelo só entre
-   modelos gratuitos; caminhos pagos são escolha explícita.
+   modelos gratuitos; caminhos pagos são escolha explícita. E **nunca pagar duas vezes o mesmo
+   texto**: interromper (Esc, segunda tecla, tecla durante o preview, clipboard ocupado, fechar
+   a app) esconde a overlay mas a chamada segue e o refinado fica guardado (`refine_cache.rs`,
+   puro e testado). Dois atalhos sobre o mesmo texto juntam-se à mesma chamada.
 7. **Resiliência**: retry com backoff no transitório, família diferente só no esgotamento,
    erros não-transitórios (auth, payload, content-policy) propagam sem máscara. O control flow
    é puro (`retry.rs`) e testado sem rede.
@@ -51,6 +54,9 @@ O build queixa-se de `TAURI_SIGNING_PRIVATE_KEY` em builds locais; o instalador 
 ## Onde vive o quê em runtime
 
 - Config: `%APPDATA%\com.deleg8lab.ember\config.json` (nunca segredos).
+- Refinados ja pagos: `refine_cache.json`, ao lado da config. Existe para uma interrupcao nunca
+  custar dinheiro: o mesmo texto nao se paga duas vezes. Guarda texto do utilizador, e por isso
+  ha o `keep_results` nas settings (default ON, desligar apaga o ficheiro).
 - Segredos: Windows Credential Manager.
 - Logs: `%LOCALAPPDATA%\com.deleg8lab.ember\logs\Ember.log`. Debugging começa SEMPRE aqui: o
   código loga decisões (gate, picker, retry, geometria) precisamente para não se adivinhar.

@@ -19,7 +19,9 @@ use thiserror::Error;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OutcomeClass {
     Success,
-    Transient { retry_after_ms: Option<u64> },
+    Transient {
+        retry_after_ms: Option<u64>,
+    },
     /// O MODELO esta sem capacidade agora (o Gemini responde 503 "high demand"). Parece um
     /// transitorio mas nao e: insistir no mesmo modelo da o mesmo 503, porque a fila e daquele
     /// modelo e nao da conta nem da rede. Visto em producao a queimar tres tentativas e tres

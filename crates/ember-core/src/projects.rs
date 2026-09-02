@@ -134,14 +134,54 @@ pub struct Accent {
 /// do Ember e TEM de ser identica a de hoje (`globals.css`), para "sem projeto" continuar a
 /// mostrar exatamente o orb que sempre mostrou.
 pub const ACCENTS: [Accent; 8] = [
-    Accent { raw: "#b4512a", mid: "#fd8c3c", glow: "#ffd9a8", label: "Ember" },
-    Accent { raw: "#9c2a3f", mid: "#f2536e", glow: "#ffc9d2", label: "Rose" },
-    Accent { raw: "#4b2a9c", mid: "#8b5cf6", glow: "#dcd0ff", label: "Violet" },
-    Accent { raw: "#1e4a8c", mid: "#3b82f6", glow: "#cfe0ff", label: "Blue" },
-    Accent { raw: "#0f5f5a", mid: "#14b8a6", glow: "#c2f5ee", label: "Teal" },
-    Accent { raw: "#2a6b2a", mid: "#4ade80", glow: "#d3f8dd", label: "Green" },
-    Accent { raw: "#8a6a12", mid: "#eab308", glow: "#ffeaa8", label: "Gold" },
-    Accent { raw: "#3f4653", mid: "#8b95a7", glow: "#dfe4ec", label: "Slate" },
+    Accent {
+        raw: "#b4512a",
+        mid: "#fd8c3c",
+        glow: "#ffd9a8",
+        label: "Ember",
+    },
+    Accent {
+        raw: "#9c2a3f",
+        mid: "#f2536e",
+        glow: "#ffc9d2",
+        label: "Rose",
+    },
+    Accent {
+        raw: "#4b2a9c",
+        mid: "#8b5cf6",
+        glow: "#dcd0ff",
+        label: "Violet",
+    },
+    Accent {
+        raw: "#1e4a8c",
+        mid: "#3b82f6",
+        glow: "#cfe0ff",
+        label: "Blue",
+    },
+    Accent {
+        raw: "#0f5f5a",
+        mid: "#14b8a6",
+        glow: "#c2f5ee",
+        label: "Teal",
+    },
+    Accent {
+        raw: "#2a6b2a",
+        mid: "#4ade80",
+        glow: "#d3f8dd",
+        label: "Green",
+    },
+    Accent {
+        raw: "#8a6a12",
+        mid: "#eab308",
+        glow: "#ffeaa8",
+        label: "Gold",
+    },
+    Accent {
+        raw: "#3f4653",
+        mid: "#8b95a7",
+        glow: "#dfe4ec",
+        label: "Slate",
+    },
 ];
 
 /// A cor de um indice, com o indice fora de gama a cair na do Ember em vez de rebentar. Uma
@@ -154,8 +194,18 @@ pub fn accent(index: u8) -> &'static Accent {
 /// versao futura cai no default, em vez de rebentar a desserializacao da config INTEIRA e levar
 /// atras as chaves e os atalhos do utilizador.
 pub const ICONS: [&str; 12] = [
-    "sparkle", "lightning", "atom", "code", "briefcase", "flask", "rocket", "compass", "cube",
-    "target", "book", "gear",
+    "sparkle",
+    "lightning",
+    "atom",
+    "code",
+    "briefcase",
+    "flask",
+    "rocket",
+    "compass",
+    "cube",
+    "target",
+    "book",
+    "gear",
 ];
 
 pub fn icon_or_default(name: &str) -> &str {
@@ -206,7 +256,11 @@ pub fn sanitize_projects(projects: Vec<Project>) -> Vec<Project> {
             continue;
         }
         seen.push(p.id.clone());
-        p.accent = if (p.accent as usize) < ACCENTS.len() { p.accent } else { 0 };
+        p.accent = if (p.accent as usize) < ACCENTS.len() {
+            p.accent
+        } else {
+            0
+        };
         p.icon = icon_or_default(p.icon.trim()).to_string();
         p.brief = cap_brief(p.brief.trim());
         out.push(p);
@@ -312,7 +366,10 @@ pub const PICKER_HINT_H: u32 = 20;
 /// Tamanho da janela para `rows` linhas (o chamador ja incluiu a linha "sem projeto").
 pub fn picker_size(rows: usize) -> (u32, u32) {
     let visiveis = rows.clamp(1, PICKER_MAX_VISIBLE) as u32;
-    (PICKER_W, PICKER_PAD * 2 + PICKER_ITEM_H * visiveis + PICKER_HINT_H)
+    (
+        PICKER_W,
+        PICKER_PAD * 2 + PICKER_ITEM_H * visiveis + PICKER_HINT_H,
+    )
 }
 
 /// Sobre que linha esta o ponteiro, dadas as coordenadas do rato e a geometria da janela, tudo em
@@ -435,7 +492,9 @@ mod tests {
         // produto para quem chega, um AGENTS.md diz como se escreve ali dentro.
         let readme = "# Doto
 
-".to_string() + &"Uma frase de prosa sobre o produto. ".repeat(40);
+"
+        .to_string()
+            + &"Uma frase de prosa sobre o produto. ".repeat(40);
         let cands = vec![
             cand(ContextKind::ReadmeMd, &readme),
             cand(
@@ -517,9 +576,9 @@ Testes antes do codigo.",
     fn sanitize_drops_what_cannot_be_referenced_and_keeps_the_rest() {
         let lista = vec![
             proj("a", "Ember"),
-            proj("", "Sem id"),          // sem id nao ha como o tornar ativo
-            proj("b", "   "),            // nome vazio da uma linha invisivel no picker
-            proj("a", "Duplicado"),      // id repetido faria o ativo apontar para dois
+            proj("", "Sem id"),     // sem id nao ha como o tornar ativo
+            proj("b", "   "),       // nome vazio da uma linha invisivel no picker
+            proj("a", "Duplicado"), // id repetido faria o ativo apontar para dois
             proj("c", "Sintra"),
         ];
         let out = sanitize_projects(lista);
@@ -626,8 +685,14 @@ Testes antes do codigo.",
         assert!(out.starts_with("Escreve em portugues"));
 
         // Duas palavras nao sao uma convencao, sao um custo por refine sem retorno.
-        assert_eq!(validate_brief("ok", &redact_fake), Err(BriefError::TooShort));
-        assert_eq!(validate_brief("   ", &redact_fake), Err(BriefError::TooShort));
+        assert_eq!(
+            validate_brief("ok", &redact_fake),
+            Err(BriefError::TooShort)
+        );
+        assert_eq!(
+            validate_brief("   ", &redact_fake),
+            Err(BriefError::TooShort)
+        );
     }
 
     #[test]

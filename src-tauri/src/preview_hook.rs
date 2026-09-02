@@ -338,15 +338,11 @@ mod imp {
     }
 
     /// Wrapper async: spawna a thread do gate e espera o resultado por oneshot (race-free).
-    pub async fn gate(app: tauri::AppHandle) -> Decision {
+    pub async fn gate(app: tauri::AppHandle, run_id: u64) -> Decision {
         use tauri::Manager;
         let (tx, rx) = tokio::sync::oneshot::channel();
         std::thread::spawn(move || {
-            let d = run_gate_blocking(|| {
-                app.state::<crate::state::AppState>()
-                    .cancel
-                    .load(Ordering::SeqCst)
-            });
+            let d = run_gate_blocking(|| app.state::<crate::state::AppState>().dismissed(run_id));
             let _ = tx.send(d); // se o lado async caiu (app a sair), o send falha inofensivamente
         });
         rx.await.unwrap_or(Decision::Reject)
@@ -425,9 +421,15 @@ mod imp {
     }
 
     /// Instala o watcher numa thread propria (o LL hook entrega na thread que instala e bombeia)
-    /// e devolve o handle. Ao apanhar um Esc fresco aciona o caminho de cancelamento QUE JA
-    /// EXISTE (`state.cancel` + `cancel_notify`): zero logica nova de cancelar.
-    pub fn spawn_esc_watcher(app: tauri::AppHandle) -> EscWatcher {
+    /// e devolve o handle. Ao apanhar um Esc fresco aciona o caminho QUE JA EXISTE
+    /// (`request_dismiss` + `cancel_notify`): zero logica nova.
+    ///
+    /// Nota sobre o que "dispensar" quer dizer desde 2026-09: o Esc tira a espera do caminho do
+    /// utilizador, mas NAO mata a chamada ao modelo. Ela segue ate ao fim numa tarefa propria e o
+    /// refinado fica guardado. Antes o Esc largava o future a meio: o provider cobrava na mesma e
+    /// o resultado ia para o lixo, portanto carregar em Esc custava exatamente o mesmo que
+    /// esperar, sem se ficar com nada.
+    pub fn spawn_esc_watcher(app: tauri::AppHandle, run_id: u64) -> EscWatcher {
         use tauri::Manager;
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let stop2 = stop.clone();
@@ -469,10 +471,9 @@ mod imp {
                 }
                 if WATCH_DECIDED.load(Ordering::SeqCst) != 0 && !notified {
                     notified = true;
-                    log::info!("esc-watch: Esc consumido, a cancelar o refine");
-                    let st = app.state::<crate::state::AppState>();
-                    st.cancel.store(true, Ordering::SeqCst);
-                    st.cancel_notify.notify_waiters();
+                    log::info!("[run {run_id}] esc-watch: Esc consumido, a dispensar a espera");
+                    app.state::<crate::state::AppState>()
+                        .request_dismiss(run_id);
                 }
                 // Depois de decidir, o hook so vive para engolir a cauda da pressao; visto o
                 // key-up, ja nao ha nada a proteger.
@@ -880,7 +881,7 @@ impl EscWatcher {
     pub fn stop_and_join(self) {}
 }
 #[cfg(not(windows))]
-pub fn spawn_esc_watcher(_app: tauri::AppHandle) -> EscWatcher {
+pub fn spawn_esc_watcher(_app: tauri::AppHandle, _run_id: u64) -> EscWatcher {
     EscWatcher
 }
 
@@ -915,7 +916,7 @@ pub fn run_picker_blocking(
 /// Non-Windows: nao ha hook. Ember e Windows-first; aqui degrada para o comportamento antigo
 /// (cola direto), sem hook, sem descarte silencioso, sem meio-event-tap de macOS.
 #[cfg(not(windows))]
-pub async fn gate(_app: tauri::AppHandle) -> Decision {
+pub async fn gate(_app: tauri::AppHandle, _run_id: u64) -> Decision {
     Decision::Accept
 }
 

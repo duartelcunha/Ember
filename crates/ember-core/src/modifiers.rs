@@ -86,13 +86,20 @@ mod tests {
 
     #[test]
     fn waits_inside_timeout() {
-        let s = ModifierState { ctrl: true, ..Default::default() };
+        let s = ModifierState {
+            ctrl: true,
+            ..Default::default()
+        };
         assert_eq!(decide_neutralize(&s, 50, 200), NeutralizeDecision::WaitMore);
     }
 
     #[test]
     fn force_releases_on_timeout() {
-        let s = ModifierState { ctrl: true, alt: true, ..Default::default() };
+        let s = ModifierState {
+            ctrl: true,
+            alt: true,
+            ..Default::default()
+        };
         assert_eq!(
             decide_neutralize(&s, 200, 200),
             NeutralizeDecision::ForceRelease(vec![Modifier::Ctrl, Modifier::Alt])

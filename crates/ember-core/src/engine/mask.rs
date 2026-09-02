@@ -82,7 +82,10 @@ fn find_urls(input: &str) -> Vec<Span> {
             let mut end = input.len();
             for (off, ch) in rest.char_indices() {
                 if ch.is_whitespace()
-                    || matches!(ch, '<' | '>' | '"' | '\'' | '`' | '|' | '\\' | '^' | '{' | '}')
+                    || matches!(
+                        ch,
+                        '<' | '>' | '"' | '\'' | '`' | '|' | '\\' | '^' | '{' | '}'
+                    )
                 {
                     end = start + off;
                     break;

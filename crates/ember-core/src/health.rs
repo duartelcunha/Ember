@@ -194,7 +194,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn a_valid_primary_with_a_rejected_fallback_is_degraded() {
         // Com dois slots, "degradado" e exatamente isto: o primario serve, o fallback foi

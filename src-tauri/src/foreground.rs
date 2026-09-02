@@ -196,3 +196,34 @@ fn foreground_exe() -> Option<String> {
         Some(String::from_utf16_lossy(&buf[..len as usize]))
     }
 }
+
+/// Identidade da janela em foco: (HWND, pid). E o alvo de um refine, capturado quando o atalho
+/// dispara e verificado outra vez mesmo antes de colar.
+///
+/// Sem esta verificacao, uma chamada de dezenas de segundos seguida de dez de preview podia
+/// acabar a colar o texto de uma app dentro de outra: entre a captura e o paste ninguem
+/// perguntava se o alvo ainda era o mesmo.
+#[cfg(windows)]
+pub fn foreground_target() -> Option<(u64, u32)> {
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.0.is_null() {
+            return None;
+        }
+        let mut pid: u32 = 0;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        Some((hwnd.0 as u64, pid))
+    }
+}
+
+#[cfg(not(windows))]
+pub fn foreground_target() -> Option<(u64, u32)> {
+    None
+}
+
+/// A janela em foco ainda e a do inicio do ciclo? A regra e pura e testada
+/// (`ember_core::selection::paste_allowed`); aqui so se le o estado do SO.
+pub fn same_target(target: Option<(u64, u32)>) -> bool {
+    ember_core::selection::paste_allowed(target, foreground_target())
+}

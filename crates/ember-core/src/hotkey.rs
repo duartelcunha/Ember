@@ -140,7 +140,12 @@ pub fn canonical(accel: &str) -> Option<String> {
         }
     }
     let key = key?;
-    mods.sort_by_key(|m| MODIFIER_ORDER.iter().position(|x| x == m).unwrap_or(usize::MAX));
+    mods.sort_by_key(|m| {
+        MODIFIER_ORDER
+            .iter()
+            .position(|x| x == m)
+            .unwrap_or(usize::MAX)
+    });
     let mut out = mods.join("+");
     if !out.is_empty() {
         out.push('+');
@@ -248,8 +253,14 @@ mod tests {
         // O bug real da primeira utilizacao: `Shift+Up` abre a lista, mas como o Shift continua
         // premido o `Up` seguinte volta a disparar o atalho e fecha-a, em vez de navegar.
         assert_eq!(picker_key_clash("Shift+Up").as_deref(), Some("up"));
-        assert_eq!(picker_key_clash("CmdOrCtrl+Alt+Down").as_deref(), Some("down"));
-        assert_eq!(picker_key_clash("CmdOrCtrl+Enter").as_deref(), Some("enter"));
+        assert_eq!(
+            picker_key_clash("CmdOrCtrl+Alt+Down").as_deref(),
+            Some("down")
+        );
+        assert_eq!(
+            picker_key_clash("CmdOrCtrl+Enter").as_deref(),
+            Some("enter")
+        );
         assert_eq!(picker_key_clash("Alt+Escape").as_deref(), Some("escape"));
         // Uma combinacao normal passa: depois de disparar, nada fica a ouvir estas teclas.
         assert!(picker_key_clash("CmdOrCtrl+Shift+P").is_none());
@@ -264,7 +275,11 @@ mod tests {
             canonical("Shift+CmdOrCtrl+Space"),
             canonical("CmdOrCtrl+Shift+Space")
         );
-        assert!(same_hotkey("Shift+CmdOrCtrl+Space", "CmdOrCtrl+Shift+Space", Os::Windows));
+        assert!(same_hotkey(
+            "Shift+CmdOrCtrl+Space",
+            "CmdOrCtrl+Shift+Space",
+            Os::Windows
+        ));
     }
 
     #[test]
@@ -291,16 +306,34 @@ mod tests {
         // queixar, e a partir dai o Enter deixa de funcionar em qualquer sitio enquanto o Ember
         // estiver aberto. O estrago so aparece longe daqui, o que o torna dificil de ligar a
         // causa; por isso a recusa e no ponto onde se escolhe.
-        for key in ["Enter", "Space", "Tab", "Backspace", "A", "1", "Up", "Delete", "-"] {
+        for key in [
+            "Enter",
+            "Space",
+            "Tab",
+            "Backspace",
+            "A",
+            "1",
+            "Up",
+            "Delete",
+            "-",
+        ] {
             assert_eq!(
                 evaluate(key, Os::Windows, &[]),
-                HotkeyVerdict::NeedsModifier { key: key.to_ascii_lowercase() },
+                HotkeyVerdict::NeedsModifier {
+                    key: key.to_ascii_lowercase()
+                },
                 "{key} sozinho devia ter sido recusado"
             );
         }
         // Com um modificador, as mesmas teclas sao atalhos perfeitamente normais.
-        assert_eq!(evaluate("CmdOrCtrl+Enter", Os::Windows, &[]), HotkeyVerdict::Available);
-        assert_eq!(evaluate("CmdOrCtrl+Shift+A", Os::Windows, &[]), HotkeyVerdict::Available);
+        assert_eq!(
+            evaluate("CmdOrCtrl+Enter", Os::Windows, &[]),
+            HotkeyVerdict::Available
+        );
+        assert_eq!(
+            evaluate("CmdOrCtrl+Shift+A", Os::Windows, &[]),
+            HotkeyVerdict::Available
+        );
     }
 
     #[test]
@@ -315,7 +348,10 @@ mod tests {
     fn only_modifiers_is_incomplete_not_available() {
         // Enquanto so ha modificadores premidos ainda nao ha atalho nenhum para avaliar.
         assert_eq!(canonical("CmdOrCtrl+Shift"), None);
-        assert_eq!(evaluate("CmdOrCtrl+Shift", Os::Windows, &[]), HotkeyVerdict::Incomplete);
+        assert_eq!(
+            evaluate("CmdOrCtrl+Shift", Os::Windows, &[]),
+            HotkeyVerdict::Incomplete
+        );
         assert_eq!(evaluate("", Os::Windows, &[]), HotkeyVerdict::Incomplete);
     }
 
@@ -324,11 +360,15 @@ mod tests {
         // "Invalido" nao ajuda ninguem; "o Gestor de Tarefas ja usa isto" ajuda.
         assert_eq!(
             evaluate("CmdOrCtrl+Shift+Escape", Os::Windows, &[]),
-            HotkeyVerdict::ReservedByOs { owner: "Task Manager".into() }
+            HotkeyVerdict::ReservedByOs {
+                owner: "Task Manager".into()
+            }
         );
         assert_eq!(
             evaluate("Super+L", Os::Windows, &[]),
-            HotkeyVerdict::ReservedByOs { owner: "Windows lock screen".into() }
+            HotkeyVerdict::ReservedByOs {
+                owner: "Windows lock screen".into()
+            }
         );
     }
 
@@ -338,11 +378,15 @@ mod tests {
         // em silencio. Sem esta lista, o utilizador gravava um atalho morto sem saber porque.
         assert_eq!(
             evaluate("CmdOrCtrl+Space", Os::MacOs, &[]),
-            HotkeyVerdict::ReservedByOs { owner: "Spotlight".into() }
+            HotkeyVerdict::ReservedByOs {
+                owner: "Spotlight".into()
+            }
         );
         assert_eq!(
             evaluate("Control+Up", Os::MacOs, &[]),
-            HotkeyVerdict::ReservedByOs { owner: "Mission Control".into() }
+            HotkeyVerdict::ReservedByOs {
+                owner: "Mission Control".into()
+            }
         );
     }
 
@@ -353,7 +397,10 @@ mod tests {
         // No macOS sao teclas diferentes, e tratar-lhes como iguais recusaria um atalho valido.
         assert!(!same_hotkey("Control+Space", "CmdOrCtrl+Space", Os::MacOs));
         // E por isso que o Control+Espaco do macOS (troca de teclado) nao acusa no Windows.
-        assert_eq!(evaluate("Control+Space", Os::Windows, &[]), HotkeyVerdict::Available);
+        assert_eq!(
+            evaluate("Control+Space", Os::Windows, &[]),
+            HotkeyVerdict::Available
+        );
     }
 
     #[test]
@@ -361,7 +408,9 @@ mod tests {
         let taken = [("main", "CmdOrCtrl+Shift+Space"), ("turbo", "CmdOrCtrl+F9")];
         assert_eq!(
             evaluate("Shift+CmdOrCtrl+Space", Os::Windows, &taken),
-            HotkeyVerdict::UsedByEmber { slot: "main".into() }
+            HotkeyVerdict::UsedByEmber {
+                slot: "main".into()
+            }
         );
         assert_eq!(
             evaluate("CmdOrCtrl+F10", Os::Windows, &taken),
@@ -402,7 +451,10 @@ mod tests {
         // Um duplicado gastava uma tentativa a testar algo que ja tinha falhado.
         for (i, a) in DEFAULT_HOTKEY_CANDIDATES.iter().enumerate() {
             for b in &DEFAULT_HOTKEY_CANDIDATES[i + 1..] {
-                assert!(!same_hotkey(a, b, Os::Windows), "{a} e {b} sao o mesmo atalho");
+                assert!(
+                    !same_hotkey(a, b, Os::Windows),
+                    "{a} e {b} sao o mesmo atalho"
+                );
             }
         }
     }

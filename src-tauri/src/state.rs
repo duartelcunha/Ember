@@ -5,7 +5,7 @@ use ember_core::model::Provider;
 use ember_core::models::ModelInfo;
 use reqwest::Client;
 use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 use tokio::sync::Notify;
@@ -37,14 +37,34 @@ pub struct AppState {
     /// a mesma, a pilula do preview ficava colada ao sitio onde o cursor estava quando o refine
     /// acabou, e quem entretanto mexeu o rato ficava com uma pergunta esquecida a meio do ecra.
     pub follow_cursor: AtomicBool,
-    /// `true` enquanto um ciclo de refinamento decorre (do hotkey ate esconder o orb).
-    /// Uma segunda tecla enquanto isto e `true` cancela o ciclo em curso (ver `cancel`).
+    /// `true` enquanto um ciclo de refinamento decorre (do hotkey ate a pilula de resultado
+    /// aparecer). E a guarda da CAPTURA: dois ciclos a mexer no clipboard ao mesmo tempo
+    /// corrompiam-no. Liberta antes da pilula esconder, para o atalho seguinte nao ser engolido.
     pub busy: AtomicBool,
-    /// Pedido de cancelamento do ciclo em curso. Posto a `true` pela segunda tecla; o fluxo
-    /// verifica-o entre fases e no `select!` do refine. Reposto a `false` no arranque do ciclo.
-    pub cancel: AtomicBool,
-    /// Acorda o `select!` do refine quando um cancelamento e pedido a meio da chamada HTTP.
+    /// Numero do ciclo atual. Cresce a cada hotkey e prefixa todas as linhas de log do ciclo:
+    /// sem ele, com ciclos a sobrepor-se (um a mostrar a pilula, outro ja a capturar), o log
+    /// nao dava para desemaranhar.
+    pub run_seq: AtomicU64,
+    /// Ciclo cujo utilizador pediu para dispensar (Esc ou segunda tecla). Zero = nenhum.
+    ///
+    /// E um numero de ciclo, e nao um booleano, porque os ciclos se sobrepoem: um `true` posto
+    /// para o ciclo N ficava a espera do N+1 e cancelava-o a nascenca.
+    pub cancel_run: AtomicU64,
+    /// Acorda quem espera (o `select!` do refine, a espera pela chamada em curso) quando o
+    /// utilizador dispensa.
     pub cancel_notify: Notify,
+    /// Ciclo dono da pilula que esta no ecra. Um `hide_after` de um ciclo antigo compara com
+    /// isto e nao faz nada se ja houver um ciclo novo: senao escondia a orb do ciclo seguinte.
+    pub hide_gen: AtomicU64,
+    /// Refinados ja pagos, por texto normalizado. E o que garante que uma interrupcao nao custa
+    /// dinheiro: o resultado fica aqui e o atalho seguinte sobre o mesmo texto nao paga.
+    pub store: Mutex<ember_core::RefineCache>,
+    /// Sobe a cada escrita no `store`. Quem espera por uma chamada em curso subscreve ANTES de
+    /// consultar a cache e so depois espera, que e o que evita perder o sinal.
+    pub store_gen: tokio::sync::watch::Sender<u64>,
+    /// A chamada ao modelo que esta a decorrer, se houver. Um ciclo novo com a MESMA chave
+    /// junta-se a esta em vez de fazer (e pagar) a mesma chamada outra vez.
+    pub inflight: Mutex<Option<InFlight>>,
     /// O access token da sessao ChatGPT, em memoria, e o mutex que serializa a sua renovacao.
     ///
     /// Duas coisas no mesmo sitio porque sao a mesma seccao critica:
@@ -83,6 +103,35 @@ pub struct AppState {
     pub last_state: Mutex<Option<serde_json::Value>>,
 }
 
+/// Uma chamada ao modelo a decorrer.
+#[derive(Debug, Clone)]
+pub struct InFlight {
+    pub key: ember_core::CacheKey,
+    pub run_id: u64,
+}
+
+impl AppState {
+    /// Pede para dispensar o ciclo `run_id`. NAO mata a chamada ao modelo: ela segue ate ao fim
+    /// e o resultado fica guardado. Antes matava, e o dinheiro ja gasto ia com ela.
+    pub fn request_dismiss(&self, run_id: u64) {
+        self.cancel_run.store(run_id, Ordering::SeqCst);
+        self.cancel_notify.notify_waiters();
+    }
+
+    /// O ciclo `run_id` foi dispensado?
+    pub fn dismissed(&self, run_id: u64) -> bool {
+        self.cancel_run.load(Ordering::SeqCst) == run_id
+    }
+
+    /// Guarda um refinado pago e acorda quem estava a espera dele.
+    pub fn remember(&self, key: ember_core::CacheKey, entry: ember_core::CacheEntry, now_ms: u64) {
+        if let Ok(mut store) = self.store.lock() {
+            store.insert(key, entry, now_ms);
+        }
+        let _ = self.store_gen.send_modify(|v| *v += 1);
+    }
+}
+
 /// O que uma renovacao devolve e vale a pena guardar ate expirar.
 #[derive(Debug, Clone)]
 pub struct CachedAccess {
@@ -111,8 +160,13 @@ impl AppState {
             orb_visible: AtomicBool::new(true),
             follow_cursor: AtomicBool::new(true),
             busy: AtomicBool::new(false),
-            cancel: AtomicBool::new(false),
+            run_seq: AtomicU64::new(0),
+            cancel_run: AtomicU64::new(0),
             cancel_notify: Notify::new(),
+            hide_gen: AtomicU64::new(0),
+            store: Mutex::new(ember_core::RefineCache::default()),
+            store_gen: tokio::sync::watch::channel(0).0,
+            inflight: Mutex::new(None),
             oauth_access: tokio::sync::Mutex::new(None),
             orb_accent: Mutex::new(None),
             orb_project: Mutex::new(None),

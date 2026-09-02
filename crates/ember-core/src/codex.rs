@@ -278,12 +278,7 @@ pub const CODEX_MODELS_URLS: [&str; 2] = [
 /// Ordem = preferencia, e para refinar texto o mais rapido ganha: um refine e um pedido pequeno e
 /// o utilizador esta a olhar para o ecra a espera dele. O `sol` fica no fim de proposito, porque
 /// gasta mais quota do plano para um trabalho que nao precisa dela.
-pub const CODEX_MODELS: [&str; 4] = [
-    "gpt-5.6-luna",
-    "gpt-5.6-terra",
-    "gpt-5.5",
-    "gpt-5.6-sol",
-];
+pub const CODEX_MODELS: [&str; 4] = ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.5", "gpt-5.6-sol"];
 
 pub const DEFAULT_CODEX_MODEL: &str = "gpt-5.6-luna";
 
@@ -294,12 +289,8 @@ pub const DEFAULT_CODEX_MODEL: &str = "gpt-5.6-luna";
 ///
 /// `gpt-5.2` esta aqui porque foi o default com que este modo nasceu: sem a migracao, quem fez
 /// login nesses dias ficava com um modelo morto gravado e a culpa parecia ser do login.
-pub const CODEX_RETIRED_MODELS: [&str; 4] = [
-    "gpt-5.2",
-    "gpt-5.2-codex",
-    "gpt-5.3-codex",
-    "gpt-5.1",
-];
+pub const CODEX_RETIRED_MODELS: [&str; 4] =
+    ["gpt-5.2", "gpt-5.2-codex", "gpt-5.3-codex", "gpt-5.1"];
 
 /// Le uma listagem de modelos deste backend, seja qual for a forma em que venha.
 ///
@@ -388,7 +379,9 @@ pub enum CodexStreamEvent {
         incomplete_reason: Option<String>,
     },
     /// `response.failed` (ou um evento `error`): o backend desistiu a meio do stream.
-    Failed { message: String },
+    Failed {
+        message: String,
+    },
     /// O modelo recusou. Chega como um evento proprio, e nao como erro: sem um ramo para isto, a
     /// recusa dava um stream sem texto nenhum e era reportada como falha transitoria, o que
     /// gastava as tentativas todas e a familia seguinte a repetir um pedido que vai ser recusado
@@ -531,7 +524,8 @@ mod tests {
             codex_stream_event(&text),
             CodexStreamEvent::TextDelta("Ola".into())
         );
-        let reasoning = json!({ "type": "response.reasoning_summary_text.delta", "delta": "a pensar" });
+        let reasoning =
+            json!({ "type": "response.reasoning_summary_text.delta", "delta": "a pensar" });
         assert_eq!(
             codex_stream_event(&reasoning),
             CodexStreamEvent::ReasoningDelta("a pensar".into())
@@ -569,7 +563,8 @@ mod tests {
         assert!(parse_codex_models(&json!({ "detail": "unauthorized" })).is_empty());
         assert!(parse_codex_models(&json!({})).is_empty());
         // E um array de outra coisa qualquer nao enche o seletor de lixo.
-        let junk = json!({ "data": [{ "message": "hello there friend" }, { "id": "com espacos" }] });
+        let junk =
+            json!({ "data": [{ "message": "hello there friend" }, { "id": "com espacos" }] });
         assert!(parse_codex_models(&junk).is_empty());
     }
 
@@ -601,7 +596,10 @@ mod tests {
             }
         });
         match codex_stream_event(&ev) {
-            CodexStreamEvent::Completed { status, incomplete_reason } => {
+            CodexStreamEvent::Completed {
+                status,
+                incomplete_reason,
+            } => {
                 assert!(codex_is_truncated(&status, incomplete_reason.as_deref()));
             }
             other => panic!("esperava Completed, veio {other:?}"),
@@ -609,7 +607,10 @@ mod tests {
         // Uma resposta normal NAO e truncada (senao nunca se colava nada).
         let ok = json!({ "type": "response.completed", "response": { "status": "completed" } });
         match codex_stream_event(&ok) {
-            CodexStreamEvent::Completed { status, incomplete_reason } => {
+            CodexStreamEvent::Completed {
+                status,
+                incomplete_reason,
+            } => {
                 assert!(!codex_is_truncated(&status, incomplete_reason.as_deref()));
             }
             other => panic!("esperava Completed, veio {other:?}"),
@@ -624,7 +625,9 @@ mod tests {
         });
         assert_eq!(
             codex_stream_event(&ev),
-            CodexStreamEvent::Failed { message: "rate limit reached for your plan".into() }
+            CodexStreamEvent::Failed {
+                message: "rate limit reached for your plan".into()
+            }
         );
         // Sem mensagem nenhuma continua a ser um Failed com texto util, e nao um panico nem um
         // Other que deixava o stream acabar em silencio.
@@ -703,7 +706,10 @@ mod tests {
         // Com folga suficiente, nao se toca.
         assert!(!token_needs_refresh(now + REFRESH_MARGIN_MS + 1_000, now));
 
-        assert_eq!(expires_at_ms(&json!({ "expires_in": 3600 }), now), now + 3_600_000);
+        assert_eq!(
+            expires_at_ms(&json!({ "expires_in": 3600 }), now),
+            now + 3_600_000
+        );
         // Sem `expires_in`, assume uma hora em vez de tratar como expirado (o que daria uma
         // renovacao em cada pedido) ou como eterno (que daria 401 sem renovar nunca).
         assert_eq!(expires_at_ms(&json!({}), now), now + 3_600_000);

@@ -20,16 +20,20 @@ pub mod project;
 pub mod projects;
 pub mod prompt;
 pub mod providers;
+pub mod refine_cache;
 pub mod retry;
 pub mod selection;
 
-pub use engine::{postprocess, precondition, DegradeReason, EngineResult, Prepared, is_worth_refining};
+pub use engine::{
+    is_worth_refining, postprocess, precondition, DegradeReason, EngineResult, Prepared,
+};
 pub use error::{CoreError, OutcomeClass};
 pub use health::{assess_providers, KeyCheck, ProviderStatus, Readiness, SystemHealth};
 pub use hotkey::{evaluate as evaluate_hotkey, HotkeyVerdict, Os};
 pub use model::{LlmRequest, LlmResponse, Profile, ProfileSource, Provider, RefineMode};
 pub use models::{pick_default, rank, reconcile, ModelInfo};
 pub use modifiers::{decide_neutralize, Modifier, ModifierState, NeutralizeDecision};
-pub use prompt::{build_llm_request, build_system_prompt};
 pub use overlay_geom::{overlay_geometry, Layout, Rect, DEFAULT_LAYOUT};
+pub use prompt::{build_llm_request, build_system_prompt};
+pub use refine_cache::{CacheEntry, CacheKey, Hit, RefineCache};
 pub use retry::{backoff_ms, classify, plan, Decision, LoopState, RetryConfig};
