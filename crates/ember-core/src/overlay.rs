@@ -39,6 +39,26 @@ pub enum FlowOutcome {
     /// `RefineUnclean`, porque a accao util e diferente e concreta: quase sempre e o perfil a
     /// pedir uma lingua. Um "couldn't refine cleanly" generico nao levava ninguem la.
     RefineTranslated,
+    /// O utilizador dispensou a espera (Esc ou segunda tecla) DEPOIS de a chamada ao modelo ter
+    /// arrancado. Distingue-se de `Cancelled`, que e o aborto antes de haver chamada: aqui ja ha
+    /// dinheiro gasto, a chamada segue ate ao fim em segundo plano e o resultado fica guardado.
+    Dismissed,
+    /// A janela em foco mudou entre a captura e o paste. Nao se cola as cegas noutra app; o
+    /// resultado fica guardado para ser reaplicado.
+    ForegroundChanged,
+    /// Pediu-se para reaplicar e nao ha nada guardado.
+    NothingToReapply,
+    /// O refinado veio da cache: mesma seleccao ja refinada antes, sem nova chamada ao modelo.
+    ReusedFromCache,
+}
+
+/// A overlay segue o cursor nesta fase?
+///
+/// Regra unica: tudo o que esta visivel segue. Antes so o orb e o preview seguiam, e as pilulas
+/// de resultado ficavam onde tinham nascido; quem mexia o rato durante o refine encontrava a
+/// resposta a metros de onde estava a olhar, e o efeito lido era "a pilula nao segue o rato".
+pub fn follows_cursor(phase: &str) -> bool {
+    phase != "hidden"
 }
 
 /// O que mostrar no overlay e por quanto tempo, dado um `FlowOutcome`.
@@ -131,6 +151,30 @@ pub fn feedback_for(outcome: FlowOutcome) -> OverlayFeedback {
             message: Some("The model translated it. Kept your original.".into()),
             provider: None,
             hide_after_ms: 2000,
+        },
+        FlowOutcome::Dismissed => OverlayFeedback {
+            phase: "hint",
+            message: Some("Dismissed \u{00b7} result saved".into()),
+            provider: None,
+            hide_after_ms: 1400,
+        },
+        FlowOutcome::ForegroundChanged => OverlayFeedback {
+            phase: "hint",
+            message: Some("Window changed \u{00b7} result saved, reapply from the tray".into()),
+            provider: None,
+            hide_after_ms: 2200,
+        },
+        FlowOutcome::NothingToReapply => OverlayFeedback {
+            phase: "hint",
+            message: Some("Nothing to reapply".into()),
+            provider: None,
+            hide_after_ms: 1200,
+        },
+        FlowOutcome::ReusedFromCache => OverlayFeedback {
+            phase: "success",
+            message: Some("Refined \u{00b7} reused".into()),
+            provider: None,
+            hide_after_ms: 1600,
         },
         FlowOutcome::PreviewRejected => OverlayFeedback {
             phase: "hint",
@@ -226,5 +270,32 @@ mod tests {
         assert_eq!(fb.phase, "hint");
         assert!(fb.message.unwrap().contains("Kept your original"));
         assert!(fb.hide_after_ms <= 1000);
+    }
+
+    #[test]
+    fn every_visible_phase_follows_the_cursor_and_hidden_does_not() {
+        for phase in ["refining", "preview", "success", "error", "hint"] {
+            assert!(follows_cursor(phase), "{phase} devia seguir o cursor");
+        }
+        assert!(!follows_cursor("hidden"));
+    }
+
+    #[test]
+    fn dismiss_and_foreground_change_say_the_result_was_kept() {
+        // O ponto destes dois desfechos e exatamente esse: dizer que o dinheiro gasto nao se
+        // perdeu. Se a mensagem deixar de o dizer, o utilizador volta a carregar no atalho.
+        let d = feedback_for(FlowOutcome::Dismissed);
+        assert_eq!(d.phase, "hint");
+        assert!(d.message.unwrap().to_lowercase().contains("saved"));
+        let f = feedback_for(FlowOutcome::ForegroundChanged);
+        assert_eq!(f.phase, "hint");
+        let msg = f.message.unwrap().to_lowercase();
+        assert!(msg.contains("saved") && msg.contains("reapply"));
+    }
+
+    #[test]
+    fn a_cache_reuse_reads_as_success_not_as_a_warning() {
+        let fb = feedback_for(FlowOutcome::ReusedFromCache);
+        assert_eq!(fb.phase, "success");
     }
 }

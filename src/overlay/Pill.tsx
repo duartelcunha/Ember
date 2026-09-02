@@ -39,13 +39,15 @@ export function Pill({ kind, text }: { kind: Kind; text: string }) {
       // barato; o que continua proibido e transform CONTINUO na bolha (o seguimento do
       // cursor a 120fps re-amostrava o blur a cada frame).
       style={{ borderRadius: 12, willChange: "opacity, transform", transformOrigin: "left center" }}
-      initial={{ opacity: 0, scale: 0.55, x: -14 }}
-      animate={{ opacity: 1, scale: 1, x: 0 }}
+      // Sem deslize lateral (`x: -14 -> 0`) desde que TODAS as fases seguem o cursor: a propria
+      // janela ja traz o movimento, e os dois somados liam-se como a pilula a escorregar para
+      // um sitio onde nao ficava. Fica so o acender: opacidade + escala a partir do ponteiro.
+      initial={{ opacity: 0, scale: 0.55 }}
+      animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, transition: { duration: 0.3, ease: [0.22, 1, 0.36, 1] } }}
       transition={{
         opacity: { duration: 0.16, ease: "easeOut" },
         scale: { type: "spring", stiffness: 520, damping: 30 },
-        x: { type: "spring", stiffness: 520, damping: 30 },
       }}
     >
       <m.span

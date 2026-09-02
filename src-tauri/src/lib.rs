@@ -29,86 +29,102 @@ use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewWindow, Webvie
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
-/// Lado do quadrado da faisca, em px logicos. ESPELHADO em `SPARK_SIZE` (Orb.tsx); muda um,
-/// muda o outro, senao a orbita descentra-se do ponteiro.
-const SPARK_SIZE: f64 = 40.0;
-/// Caixa a garantir visivel: a faisca mais a folga do estado de retry, onde o rotor cresce
-/// ~32% (ver `VARIANT` em Orb.tsx).
-const SPARK_CLAMP: f64 = 56.0;
-/// Largura reservada a direita da faisca para a etiqueta do projeto (max 120) e a legenda de
-/// retry (max 170), com as folgas entre elas.
-const ORB_LABELS_W: f64 = 310.0;
-/// Centro visual do ponteiro em relacao ao hotspot, em px logicos. Uma seta padrao do Windows
-/// ocupa ~12x19 para baixo e para a direita do hotspot; o meio do corpo dela cai aqui.
-const POINTER_CENTER: (f64, f64) = (6.0, 9.0);
+/// Medidas do overlay (faisca, pilula, padding, tamanho da janela) vivem em
+/// `ember_core::overlay_geom::DEFAULT_LAYOUT`, com os testes de geometria ao lado delas. Estao
+/// ESPELHADAS no frontend: `SPARK_SIZE` (Orb.tsx), `p-2` (Overlay.tsx), `ml-10` (Pill.tsx) e o
+/// `width`/`height` da janela "overlay" (tauri.conf.json). Muda uma, muda a outra, senao a
+/// orbita descentra-se do ponteiro.
+use ember_core::overlay_geom::{self as geom, DEFAULT_LAYOUT as LAYOUT};
 
-/// Caixa da PILULA dentro da janela, em px logicos. `PILL_MARGIN_X` e o desvio lateral,
-/// espelhado no `ml-10` do Pill.tsx (Tailwind: 40px); muda um, muda o outro.
+/// Um monitor como o SO o descreve: retangulo completo (para saber onde o cursor esta), area
+/// util (para clampar sem meter a pilula por baixo da barra de tarefas) e a ESCALA DELE.
 ///
-/// `PILL_BOX` e a area que garantimos visivel ao clampar, e tem de cobrir a mensagem mais
-/// LONGA, nao a tipica: "Clipboard holds files Ember can't preserve. Copy your text first."
-/// tem 65 caracteres, e um erro de provider pode ser maior ainda. Com os 300 de antes, essas
-/// eram cortadas pela borda direita do ecra, que e precisamente quando ha algo importante a
-/// dizer. 460 cobre-as com folga, e nao custa nada: a janela ja e maior do que isso.
-const PILL_MARGIN_X: f64 = 40.0;
-const PILL_BOX: (f64, f64) = (460.0, 44.0);
+/// A escala e por monitor e nao da janela de proposito. Perguntar `w.scale_factor()` era o bug:
+/// isso descreve o ecra onde a janela ESTA, e o Windows so a corrige no WM_DPICHANGED seguinte.
+/// Durante a travessia, os offsets sairiam a escala do ecra anterior.
+struct MonitorInfo {
+    full: geom::Rect,
+    work: geom::Rect,
+    scale: f64,
+}
 
-/// Onde esta o conteudo visivel dentro da janela, e que tamanho tem, para a fase atual. Tudo em
-/// px fisicos.
+fn monitors_of(w: &WebviewWindow) -> Vec<MonitorInfo> {
+    let Ok(list) = w.available_monitors() else {
+        return Vec::new();
+    };
+    list.iter()
+        .map(|m| {
+            let p = m.position();
+            let s = m.size();
+            let wa = m.work_area();
+            MonitorInfo {
+                full: geom::Rect::new(p.x, p.y, s.width as i32, s.height as i32),
+                work: geom::Rect::new(
+                    wa.position.x,
+                    wa.position.y,
+                    wa.size.width as i32,
+                    wa.size.height as i32,
+                ),
+                scale: m.scale_factor(),
+            }
+        })
+        .collect()
+}
+
+/// Monitor (area util) e escala a usar para um ponto, tipicamente o cursor.
 ///
-/// Existe porque havia DUAS maneiras de clampar (caixa pequena para o orb, janela inteira para
-/// a pilula) e a mudanca de fase saltava de uma para a outra: ao aprovar o preview, a janela
-/// que estava colocada pela caixa do orb era subitamente contida pela regra da janela inteira e
-/// a pilula saltava de sitio. Agora ha uma regra so, e o que muda entre fases e apenas o
-/// tamanho da caixa.
-fn content_box(is_orb: bool, wh: i32, pad: i32, scale: f64) -> (i32, i32, i32, i32) {
-    let px = |v: f64| (v * scale).round() as i32;
-    if is_orb {
-        // A caixa clampada e MAIOR que a faisca (SPARK_CLAMP vs SPARK_SIZE) porque o rotor
-        // cresce no estado de retry: sem esta folga, junto a borda do ecra a orbita inchada
-        // saia por fora do que garantimos visivel. O `dx` recua metade da folga para o CENTRO
-        // da caixa continuar a ser o mesmo ponto, que e o que ancora a orbita no ponteiro.
-        let side = px(SPARK_CLAMP);
-        let folga = (px(SPARK_CLAMP) - px(SPARK_SIZE)) / 2;
-        // A largura leva tambem a etiqueta do projeto e a legenda de retry, que vivem A DIREITA
-        // da faisca (ver Overlay.tsx). Clampar so pela faisca punha-as a comecar exatamente na
-        // borda do ecra, invisiveis, e a etiqueta do projeto e a resposta a "com que contexto e
-        // que este refine esta a ser feito".
-        (pad - folga, (wh - side) / 2, side + px(ORB_LABELS_W), side)
-    } else {
-        let (bw, bh) = PILL_BOX;
-        let (bw, bh) = (px(bw), px(bh));
-        (pad + px(PILL_MARGIN_X), (wh - bh) / 2, bw, bh)
+/// A deteccao usa o retangulo COMPLETO (o cursor pode estar por cima da barra de tarefas) e o
+/// clamp usa a area util. Quando o ponto nao cai em monitor nenhum - acontece a serio: com um
+/// 1920x1080 encostado a um 2560x1440 o secundario comeca 87px mais abaixo, e a faixa acima dele
+/// nao pertence a ecra nenhum - vai-se ao mais PROXIMO. Antes caia-se no monitor da JANELA, que
+/// durante o seguimento e o de onde ela veio: o cursor passava para o outro ecra e a orb ficava
+/// colada a fronteira do anterior, que e exatamente o "a orb nao passa para o segundo monitor".
+pub(crate) fn monitor_at_point(w: &WebviewWindow, px: i32, py: i32) -> (geom::Rect, f64) {
+    let mons = monitors_of(w);
+    let rects: Vec<geom::Rect> = mons.iter().map(|m| m.full).collect();
+    match geom::monitor_for_point(px, py, &rects) {
+        Some((r, from_fallback)) => {
+            let idx = rects.iter().position(|m| *m == r).unwrap_or(0);
+            if from_fallback {
+                warn_monitor_fallback(px, py, &rects, idx);
+            }
+            (mons[idx].work, mons[idx].scale)
+        }
+        // O SO nao soube listar monitores. Ultimo recurso: o monitor da janela, com a escala
+        // dela. Nao ha melhor palpite, e sem isto a janela ficava sem clamp nenhum.
+        None => {
+            log::warn!("overlay: available_monitors() vazio; a usar o monitor da janela");
+            let r = match w.current_monitor() {
+                Ok(Some(m)) => {
+                    let p = m.position();
+                    let s = m.size();
+                    geom::Rect::new(p.x, p.y, s.width as i32, s.height as i32)
+                }
+                _ => geom::Rect::new(0, 0, 1920, 1080),
+            };
+            (r, w.scale_factor().unwrap_or(1.0))
+        }
     }
 }
 
-/// Clampa a janela ao monitor mantendo a CAIXA VISIVEL dentro do ecra (a janela pode ficar
-/// pendurada de fora; ninguem a ve, e transparente e ignora cliques). Fonte unica para o
-/// seguimento e para a saida do ciclo, que e onde a divergencia dava o salto.
-fn clamp_visible(
-    w: &WebviewWindow,
-    is_orb: bool,
-    win_x: i32,
-    win_y: i32,
-    cursor: (i32, i32),
-) -> (i32, i32) {
-    let wh = match w.outer_size() {
-        Ok(s) => s.height as i32,
-        Err(_) => OVERLAY_FALLBACK_SIZE.1,
-    };
-    let scale = w.scale_factor().unwrap_or(1.0);
-    let pad = (8.0 * scale).round() as i32;
-    let (dx, dy, cw, ch) = content_box(is_orb, wh, pad, scale);
-    let (ax, ay, aw, ah) = monitor_at_point(w, cursor.0, cursor.1);
-    ember_core::selection::clamp_window_for_content(win_x, win_y, dx, dy, cw, ch, ax, ay, aw, ah)
+/// Avisa (no maximo uma vez por 2s, isto corre a 120fps) que o ponto nao caiu em monitor nenhum.
+/// Antes este caminho era mudo e o sintoma so aparecia no ecra.
+fn warn_monitor_fallback(px: i32, py: i32, rects: &[geom::Rect], chosen: usize) {
+    use std::sync::atomic::AtomicU64;
+    static LAST: AtomicU64 = AtomicU64::new(0);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let prev = LAST.load(Ordering::Relaxed);
+    if now.saturating_sub(prev) < 2000 {
+        return;
+    }
+    LAST.store(now, Ordering::Relaxed);
+    log::warn!(
+        "overlay: ponto ({px}, {py}) fora de todos os monitores {rects:?}; usado o mais proximo (idx {chosen})"
+    );
 }
-
-/// Tamanho da janela do overlay, espelhando a declaracao em `tauri.conf.json` (label
-/// "overlay"). So usado como fallback se `w.outer_size()` falhar (raro); nomeado para nao
-/// ter o mesmo par de numeros duplicado sem explicacao em dois ficheiros.
-/// Espelha `width`/`height` da janela `overlay` no tauri.conf.json. So e usado quando o SO nao
-/// consegue dizer o tamanho real; divergir daria um clamping errado junto as bordas do ecra.
-const OVERLAY_FALLBACK_SIZE: (i32, i32) = (520, 140);
 
 /// Obtem (ou cria) uma janela declarada com `create:false`. NAO a mostra (o caller decide
 /// posicao/foco antes de `show`, para o orb nao piscar na posicao errada).
@@ -148,76 +164,20 @@ pub(crate) fn get_or_create_window(app: &AppHandle, label: &str) -> Option<Webvi
     Some(w)
 }
 
-/// Geometria do monitor atual da janela (para clampar o orb ao ecra).
-fn monitor_work_area(w: &WebviewWindow) -> (i32, i32, i32, i32) {
-    if let Ok(Some(mon)) = w.current_monitor() {
-        let p = mon.position();
-        let s = mon.size();
-        (p.x, p.y, s.width as i32, s.height as i32)
-    } else {
-        (0, 0, 1920, 1080)
-    }
-}
-
-/// Geometria do monitor que contem o ponto (px,py), tipicamente o cursor. Ao contrario
-/// de `monitor_work_area`, nao depende de onde a janela esta agora, por isso o orb
-/// consegue atravessar para outro ecra em vez de ficar preso na borda do monitor de
-/// origem quando o cursor muda de ecra a meio do seguimento.
-pub(crate) fn monitor_at_point(w: &WebviewWindow, px: i32, py: i32) -> (i32, i32, i32, i32) {
-    let monitors: Vec<(i32, i32, i32, i32)> = w
-        .available_monitors()
-        .map(|ms| {
-            ms.iter()
-                .map(|m| {
-                    let p = m.position();
-                    let s = m.size();
-                    (p.x, p.y, s.width as i32, s.height as i32)
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    ember_core::selection::monitor_containing(px, py, &monitors)
-        .unwrap_or_else(|| monitor_work_area(w))
-}
-
-/// Top-left desejado da janela do overlay para o cursor atual. O conteudo esta alinhado a
-/// esquerda e centrado na vertical (ver Overlay.tsx), com o padding `p-2` (8px logicos) a
-/// separar do canto. Ancoramos o BORDO ESQUERDO do conteudo (nao o centro) junto ao cursor
-/// + offset, para o conteudo crescer para a direita: a pilula e larga e, centrada, cairia
-/// por cima do rato em vez de aparecer ao lado como o orb.
-fn orb_target(app: &AppHandle, w: &WebviewWindow) -> Option<(i32, i32)> {
+/// Top-left desejado da janela do overlay para o cursor atual, no monitor onde o cursor esta.
+///
+/// So resolve o CONTEXTO (onde esta o cursor, em que monitor, a que escala); a matematica e
+/// pura e vive em `ember_core::overlay_geom`, com testes para o layout de dois ecras.
+fn orb_target(app: &AppHandle, w: &WebviewWindow) -> Option<((i32, i32), f64)> {
     let c = app.cursor_position().ok()?;
-    let (_, wh) = match w.outer_size() {
-        Ok(s) => (s.width as i32, s.height as i32),
-        Err(_) => OVERLAY_FALLBACK_SIZE,
-    };
-    let scale = w.scale_factor().unwrap_or(1.0);
-    let pad = (8.0 * scale).round() as i32;
     let is_orb = app
         .state::<state::AppState>()
         .orb_visible
         .load(Ordering::SeqCst);
-    // UMA ancora para as duas fases: o centro visual do ponteiro. Antes havia duas (faisca
-    // centrada no cursor, pilulas ao lado) e elas discordavam, porque a janela NAO se
-    // reposiciona quando a fase muda (mexe-la ai dava o salto visivel que se via ao carregar
-    // em Esc). A pilula herdava entao o centro da faisca e nascia por cima do cursor. Agora a
-    // janela fica onde esta e e o CSS da pilula que a afasta para o lado (ver Pill.tsx), o que
-    // tambem mantem o morph coerente: a faisca colapsa no ponteiro e a pilula abre a direita.
-    //
-    // O centro NAO e o cursor em si: o `cursor_position` devolve o hotspot, que numa seta e a
-    // pontinha de cima-esquerda. `POINTER_CENTER` empurra-o para o meio do corpo da seta
-    // (~12x19 logicos a 100%), senao o anel abracava so a ponta.
-    let (dx, dy) = POINTER_CENTER;
-    let anchor_x = c.x as i32 + ((dx - SPARK_SIZE / 2.0) * scale).round() as i32;
-    let anchor_y = c.y as i32 + (dy * scale).round() as i32;
-    let win_x = anchor_x - pad;
-    let win_y = anchor_y - wh / 2;
-    Some(clamp_visible(
-        w,
-        is_orb,
-        win_x,
-        win_y,
-        (c.x as i32, c.y as i32),
+    let (mon, scale) = monitor_at_point(w, c.x as i32, c.y as i32);
+    Some((
+        geom::overlay_geometry((c.x, c.y), mon, scale, is_orb, &LAYOUT),
+        scale,
     ))
 }
 
@@ -237,8 +197,13 @@ pub(crate) fn show_orb_at_cursor(app: &AppHandle) {
     let _ = w.set_always_on_top(true);
     // Transparente sobre outras apps: nunca intercetar cliques.
     let _ = w.set_ignore_cursor_events(true);
-    if let Some((x, y)) = orb_target(app, &w) {
+    if let Some(((x, y), scale)) = orb_target(app, &w) {
+        // Tamanho ANTES da posicao: se o ciclo anterior acabou noutro monitor, a janela ainda
+        // tem o tamanho fisico da escala de la, e um clamp contra o tamanho errado punha o orb
+        // ao lado do ponteiro no primeiro frame.
+        apply_scale(&w, scale);
         let _ = w.set_position(PhysicalPosition::new(x, y));
+        log_overlay_placement(&w, (x, y), scale);
     }
     let _ = w.show();
     // NB: nao chamamos set_focus. O paste tem de aterrar na app em foco, nao na nossa.
@@ -246,6 +211,39 @@ pub(crate) fn show_orb_at_cursor(app: &AppHandle) {
     // Loop de seguimento: corre enquanto o orb estiver visivel, colado ao cursor.
     let app2 = app.clone();
     tauri::async_runtime::spawn(async move { orb_follow_loop(app2).await });
+}
+
+/// Poe a janela com o tamanho fisico que a escala pede. Idempotente (o tao ja redimensiona no
+/// WM_DPICHANGED); esta chamada existe porque o WebView2 numa janela transparente as vezes fica
+/// com a superficie do tamanho antigo depois de mudar de DPI e a pintura sai cortada.
+fn apply_scale(w: &WebviewWindow, scale: f64) {
+    let (ew, eh) = geom::expected_window_physical(scale, &LAYOUT);
+    if let Ok(cur) = w.outer_size() {
+        if cur.width == ew && cur.height == eh {
+            return;
+        }
+    }
+    let _ = w.set_size(tauri::PhysicalSize::new(ew, eh));
+}
+
+/// Uma linha por exibicao com TUDO o que decide a posicao. Sem isto, um relato de "a orb nao
+/// passa para o segundo monitor" nao tinha como ser diagnosticado a posteriori: o log nao tinha
+/// uma unica linha de geometria.
+fn log_overlay_placement(w: &WebviewWindow, target: (i32, i32), scale: f64) {
+    let mons: Vec<String> = monitors_of(w)
+        .iter()
+        .map(|m| {
+            format!(
+                "[{},{} {}x{} @{}]",
+                m.full.x, m.full.y, m.full.w, m.full.h, m.scale
+            )
+        })
+        .collect();
+    log::info!(
+        "overlay: mostrada em {target:?} escala {scale} (janela {:?}, monitores {})",
+        w.outer_size().map(|s| (s.width, s.height)).ok(),
+        mons.join(" ")
+    );
 }
 
 /// Segue o cursor com suavizacao exponencial (lerp) enquanto o orb esta visivel, para um
@@ -267,6 +265,9 @@ async fn orb_follow_loop(app: AppHandle) {
     const PILL_TAU: f64 = 0.12;
     let mut current: Option<(f64, f64)> = None;
     let mut last = tokio::time::Instant::now();
+    // Escala do monitor onde o cursor estava no frame anterior, para detetar a travessia entre
+    // ecras com DPI diferente (o unico momento em que a janela precisa de mudar de tamanho).
+    let mut last_scale = w.scale_factor().unwrap_or(1.0);
 
     // Reacao da estrela ao movimento: emitimos o vetor de "puxao" (cursor - estrela) para o
     // overlay, que inclina/estica a estrela na direcao do movimento. ADAPTATIVO: numa maquina
@@ -327,19 +328,15 @@ async fn orb_follow_loop(app: AppHandle) {
                         .state::<state::AppState>()
                         .orb_visible
                         .load(Ordering::SeqCst);
-                    let (nx, ny) = clamp_visible(
-                        &w,
-                        is_orb,
-                        cx.round() as i32,
-                        cy.round() as i32,
-                        (cx.round() as i32, cy.round() as i32),
-                    );
+                    let (mon, scale) =
+                        monitor_at_point(&w, cx.round() as i32, cy.round() as i32);
+                    let (nx, ny) = geom::clamp_window(cx, cy, mon, scale, is_orb, &LAYOUT);
                     let _ = w.set_position(PhysicalPosition::new(nx, ny));
                 }
                 // Nunca chegou a haver posicao suavizada (saiu no primeiro frame): ai o alvo do
                 // cursor e a unica referencia que existe.
                 None => {
-                    if let Some((x, y)) = orb_target(&app, &w) {
+                    if let Some(((x, y), _)) = orb_target(&app, &w) {
                         let _ = w.set_position(PhysicalPosition::new(x, y));
                     }
                 }
@@ -349,7 +346,24 @@ async fn orb_follow_loop(app: AppHandle) {
         let now = tokio::time::Instant::now();
         let dt = (now - last).as_secs_f64();
         last = now;
-        if let Some((tx, ty)) = orb_target(&app, &w) {
+        if let Some(((tx, ty), scale)) = orb_target(&app, &w) {
+            // Travessia de monitor com DPI diferente: a janela ainda tem o tamanho fisico do
+            // ecra anterior e o WebView2 pode ficar com a superficie cortada. Redimensiona-se
+            // para o tamanho que a escala nova pede e re-emite-se o estado, que forca o webview
+            // a repintar. Sem isto, o orb atravessava e ficava um retangulo meio pintado.
+            if (scale - last_scale).abs() > f64::EPSILON {
+                log::info!(
+                    "overlay: escala {last_scale} -> {scale} ao atravessar de monitor; a redimensionar"
+                );
+                apply_scale(&w, scale);
+                crate::flow::re_emit_state(&app);
+                last_scale = scale;
+                // O alvo foi calculado com a escala nova mas com a janela ainda com o tamanho
+                // velho: recalcula-se no frame seguinte, ja com o tamanho certo.
+                current = None;
+                tick.tick().await;
+                continue;
+            }
             let (tx, ty) = (tx as f64, ty as f64);
             let (nx, ny) = match current {
                 // Primeiro frame: snap ao alvo (sem arrasto a partir do canto).

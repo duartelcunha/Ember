@@ -74,6 +74,13 @@ pub struct AppState {
     pub picker_opened_at: Mutex<Option<std::time::Instant>>,
     /// Pedido de fecho do picker (segunda pressao do atalho dele, ou um refine a arrancar).
     pub picker_cancel: AtomicBool,
+    /// O ultimo payload emitido para o overlay, para o poder re-emitir sem inventar estado.
+    ///
+    /// Existe para a travessia entre monitores com DPI diferente: ao redimensionar a janela, o
+    /// WebView2 pode ficar com a superficie meio pintada, e re-emitir o estado forca o repaint.
+    /// Guardar o payload (em vez de reconstruir) garante que a re-emissao nao muda nada do que
+    /// esta no ecra: mesma fase, mesma mensagem, mesma cor.
+    pub last_state: Mutex<Option<serde_json::Value>>,
 }
 
 /// O que uma renovacao devolve e vale a pena guardar ate expirar.
@@ -112,6 +119,7 @@ impl AppState {
             picker_open: AtomicBool::new(false),
             picker_opened_at: Mutex::new(None),
             picker_cancel: AtomicBool::new(false),
+            last_state: Mutex::new(None),
         }
     }
 }

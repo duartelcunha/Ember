@@ -14,6 +14,7 @@ pub mod model;
 pub mod models;
 pub mod modifiers;
 pub mod overlay;
+pub mod overlay_geom;
 pub mod profile_path;
 pub mod project;
 pub mod projects;
@@ -30,4 +31,5 @@ pub use model::{LlmRequest, LlmResponse, Profile, ProfileSource, Provider, Refin
 pub use models::{pick_default, rank, reconcile, ModelInfo};
 pub use modifiers::{decide_neutralize, Modifier, ModifierState, NeutralizeDecision};
 pub use prompt::{build_llm_request, build_system_prompt};
+pub use overlay_geom::{overlay_geometry, Layout, Rect, DEFAULT_LAYOUT};
 pub use retry::{backoff_ms, classify, plan, Decision, LoopState, RetryConfig};

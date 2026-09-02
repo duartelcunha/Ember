@@ -138,21 +138,31 @@ pub async fn open_picker(app: AppHandle) {
 
     // Tamanho pela lista, posicao pelo cursor, UMA vez: um menu que segue o rato e inutilizavel.
     let (lw, lh) = core::picker_size(rows.len());
-    let scale = w.scale_factor().unwrap_or(1.0);
+    let cursor = app.cursor_position().ok();
+    // A escala vem do monitor DO CURSOR, nao da janela: e onde o picker vai abrir. Perguntar a
+    // janela dava a escala do ecra onde ela estava da vez anterior, e num setup com dois DPIs a
+    // lista abria com o tamanho errado e os cliques caiam na linha errada.
+    let scale = match cursor {
+        Some(c) => crate::monitor_at_point(&w, c.x as i32, c.y as i32).1,
+        None => w.scale_factor().unwrap_or(1.0),
+    };
     let _ = w.set_size(tauri::LogicalSize::new(lw, lh));
-    let (pw, ph) = ((lw as f64 * scale) as i32, (lh as f64 * scale) as i32);
+    let (pw, ph) = (
+        (lw as f64 * scale).round() as i32,
+        (lh as f64 * scale).round() as i32,
+    );
     let mut win = (0i32, 0i32);
-    if let Ok(c) = app.cursor_position() {
-        let (ax, ay, aw, ah) = crate::monitor_at_point(&w, c.x as i32, c.y as i32);
+    if let Some(c) = cursor {
+        let (area, _) = crate::monitor_at_point(&w, c.x as i32, c.y as i32);
         let (x, y) = ember_core::selection::clamp_pos(
             c.x as i32 + OFFSET.0,
             c.y as i32 + OFFSET.1,
             pw,
             ph,
-            ax,
-            ay,
-            aw,
-            ah,
+            area.x,
+            area.y,
+            area.w,
+            area.h,
         );
         win = (x, y);
         let _ = w.set_position(PhysicalPosition::new(x, y));
@@ -174,8 +184,8 @@ pub async fn open_picker(app: AppHandle) {
         x: real.0,
         y: real.1,
         w: pw,
-        pad: (core::PICKER_PAD as f64 * scale) as i32,
-        item_h: (core::PICKER_ITEM_H as f64 * scale) as i32,
+        pad: (core::PICKER_PAD as f64 * scale).round() as i32,
+        item_h: (core::PICKER_ITEM_H as f64 * scale).round() as i32,
         visible: rows.len().min(core::PICKER_MAX_VISIBLE),
     };
     log::info!(

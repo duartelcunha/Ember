@@ -54,26 +54,37 @@ fn emit(app: &AppHandle, phase: &str, message: Option<String>, provider: Option<
     state
         .orb_visible
         .store(phase == "refining", Ordering::SeqCst);
-    // Segue o cursor enquanto ha trabalho a decorrer E enquanto o preview espera resposta: nos
-    // dois casos o utilizador ainda esta no meio da accao, e a overlay tem de estar onde ele
-    // esta a olhar. As pilulas de resultado ficam onde nasceram: sao passageiras e persegui-las
-    // com os olhos custava mais do que valia.
+    // Tudo o que esta visivel segue o cursor (a regra vive em `ember_core::overlay::follows_cursor`).
+    // Antes so o orb e o preview seguiam e as pilulas de resultado ficavam onde tinham nascido:
+    // quem mexia o rato durante o refine ia buscar a resposta ao sitio onde tinha comecado, e o
+    // efeito lido era "as pilulas nao seguem o rato".
     state
         .follow_cursor
-        .store(phase == "refining" || phase == "preview", Ordering::SeqCst);
+        .store(ember_core::overlay::follows_cursor(phase), Ordering::SeqCst);
     // A cor do projeto ativo viaja com o estado: e o unico sinal que diz, em cada refine, com que
     // projeto ele esta a ser feito. Sem isto, um projeto ativo e invisivel e da para refinar uma
     // semana com o contexto errado sem dar por nada.
     let accent = state.orb_accent.lock().ok().and_then(|a| a.clone());
     let project = state.orb_project.lock().ok().and_then(|a| a.clone());
-    let _ = app.emit_to(
-        "overlay",
-        STATE_EVENT,
-        serde_json::json!({
-            "phase": phase, "message": message, "provider": provider,
-            "accent": accent, "project": project
-        }),
-    );
+    let payload = serde_json::json!({
+        "phase": phase, "message": message, "provider": provider,
+        "accent": accent, "project": project
+    });
+    if let Ok(mut slot) = state.last_state.lock() {
+        *slot = Some(payload.clone());
+    }
+    let _ = app.emit_to("overlay", STATE_EVENT, payload);
+}
+
+/// Re-emite o ultimo estado, sem o alterar. Usado quando a janela muda de DPI a meio do
+/// seguimento: o WebView2 numa janela transparente as vezes fica com a superficie meio pintada
+/// depois do redimensionamento, e uma emissao nova forca o React a repintar.
+pub(crate) fn re_emit_state(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let payload = state.last_state.lock().ok().and_then(|s| s.clone());
+    if let Some(p) = payload {
+        let _ = app.emit_to("overlay", STATE_EVENT, p);
+    }
 }
 
 /// Resultado da captura: a seleccao sequenciada, um snapshot de imagem a repor (quando o
