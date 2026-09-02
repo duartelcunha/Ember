@@ -154,7 +154,10 @@ pub fn feedback_for(outcome: FlowOutcome) -> OverlayFeedback {
         },
         FlowOutcome::Dismissed => OverlayFeedback {
             phase: "hint",
-            message: Some("Dismissed \u{00b7} result saved".into()),
+            // "still running" e nao "saved": no instante em que isto aparece a chamada ainda esta
+            // a decorrer e pode falhar. Prometer que ficou guardado seria mentir num terco dos
+            // casos, e uma promessa dessas so se percebe que era falsa quando ja custou trabalho.
+            message: Some("Dismissed \u{00b7} still running".into()),
             provider: None,
             hide_after_ms: 1400,
         },
@@ -286,7 +289,9 @@ mod tests {
         // perdeu. Se a mensagem deixar de o dizer, o utilizador volta a carregar no atalho.
         let d = feedback_for(FlowOutcome::Dismissed);
         assert_eq!(d.phase, "hint");
-        assert!(d.message.unwrap().to_lowercase().contains("saved"));
+        // Dispensar nao promete que ficou guardado: nesse instante a chamada ainda decorre.
+        let msg = d.message.unwrap().to_lowercase();
+        assert!(msg.contains("running") && !msg.contains("saved"));
         let f = feedback_for(FlowOutcome::ForegroundChanged);
         assert_eq!(f.phase, "hint");
         let msg = f.message.unwrap().to_lowercase();

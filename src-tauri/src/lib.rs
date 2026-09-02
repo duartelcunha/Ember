@@ -165,19 +165,27 @@ pub(crate) fn get_or_create_window(app: &AppHandle, label: &str) -> Option<Webvi
     Some(w)
 }
 
+/// O que a overlay mostra agora, para a geometria saber que caixa manter visivel.
+fn overlay_phase(app: &AppHandle) -> geom::Phase {
+    let st = app.state::<state::AppState>();
+    if st.orb_visible.load(Ordering::SeqCst) {
+        geom::Phase::Orb {
+            labels: st.orb_labels.load(Ordering::SeqCst),
+        }
+    } else {
+        geom::Phase::Pill
+    }
+}
+
 /// Top-left desejado da janela do overlay para o cursor atual, no monitor onde o cursor esta.
 ///
 /// So resolve o CONTEXTO (onde esta o cursor, em que monitor, a que escala); a matematica e
 /// pura e vive em `ember_core::overlay_geom`, com testes para o layout de dois ecras.
 fn orb_target(app: &AppHandle, w: &WebviewWindow) -> Option<((i32, i32), f64)> {
     let c = app.cursor_position().ok()?;
-    let is_orb = app
-        .state::<state::AppState>()
-        .orb_visible
-        .load(Ordering::SeqCst);
     let (mon, scale) = monitor_at_point(w, c.x as i32, c.y as i32);
     Some((
-        geom::overlay_geometry((c.x, c.y), mon, scale, is_orb, &LAYOUT),
+        geom::overlay_geometry((c.x, c.y), mon, scale, overlay_phase(app), &LAYOUT),
         scale,
     ))
 }
@@ -210,8 +218,17 @@ pub(crate) fn show_orb_at_cursor(app: &AppHandle) {
     // NB: nao chamamos set_focus. O paste tem de aterrar na app em foco, nao na nossa.
 
     // Loop de seguimento: corre enquanto o orb estiver visivel, colado ao cursor.
+    //
+    // A geracao aposenta o ciclo anterior. Sem isto, com dois refines sobrepostos (a pilula de
+    // um ainda no ecra, o outro ja a arrancar) ficavam dois loops vivos a disputar a mesma
+    // janela a 120fps, cada um com a sua suavizacao.
+    let gen = app
+        .state::<state::AppState>()
+        .follow_gen
+        .fetch_add(1, Ordering::SeqCst)
+        + 1;
     let app2 = app.clone();
-    tauri::async_runtime::spawn(async move { orb_follow_loop(app2).await });
+    tauri::async_runtime::spawn(async move { orb_follow_loop(app2, gen).await });
 }
 
 /// Poe a janela com o tamanho fisico que a escala pede. Idempotente (o tao ja redimensiona no
@@ -252,7 +269,7 @@ fn log_overlay_placement(w: &WebviewWindow, target: (i32, i32), scale: f64) {
 /// `interval` a 120fps (nao `sleep`, que acumula deriva). A suavizacao usa o dt REAL via
 /// `alpha = 1 - exp(-dt/tau)`: assim mantem a mesma sensacao mesmo que um tick atrase (um
 /// factor fixo por frame mudava de velocidade com o frame-rate, um bug subtil de engasgo).
-async fn orb_follow_loop(app: AppHandle) {
+async fn orb_follow_loop(app: AppHandle, gen: u64) {
     let Some(w) = app.get_webview_window("overlay") else {
         return;
     };
@@ -292,6 +309,15 @@ async fn orb_follow_loop(app: AppHandle) {
     const SHOW_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
 
     loop {
+        // Nasceu um ciclo de seguimento mais novo: a janela e dele.
+        if app
+            .state::<state::AppState>()
+            .follow_gen
+            .load(Ordering::SeqCst)
+            != gen
+        {
+            return;
+        }
         match w.is_visible() {
             Ok(true) => seen_visible = true,
             _ if seen_visible => break,
@@ -321,16 +347,20 @@ async fn orb_follow_loop(app: AppHandle) {
         {
             match current {
                 Some((cx, cy)) => {
-                    // MESMA regra de clamp do seguimento (`clamp_visible`), e nao a da janela
-                    // inteira. Eram duas: a posicao vinha calculada pela caixa visivel e a
-                    // saida continha a janela toda, portanto ao aprovar o preview a pilula
-                    // saltava de sitio no instante em que se carregava em Enter.
-                    let is_orb = app
-                        .state::<state::AppState>()
-                        .orb_visible
-                        .load(Ordering::SeqCst);
-                    let (mon, scale) = monitor_at_point(&w, cx.round() as i32, cy.round() as i32);
-                    let (nx, ny) = geom::clamp_window(cx, cy, mon, scale, is_orb, &LAYOUT);
+                    // MESMA regra de clamp do seguimento, e nao a da janela inteira. Eram duas:
+                    // a posicao vinha calculada pela caixa visivel e a saida continha a janela
+                    // toda, portanto ao aprovar o preview a pilula saltava de sitio no instante
+                    // em que se carregava em Enter.
+                    let phase = overlay_phase(&app);
+                    // O monitor e o do CURSOR. Passar aqui o canto da janela era um erro
+                    // silencioso: junto a borda esquerda ou de cima, esse canto cai no monitor
+                    // do lado e a pilula era clampada ao ecra errado.
+                    let point = app
+                        .cursor_position()
+                        .map(|c| (c.x as i32, c.y as i32))
+                        .unwrap_or((cx.round() as i32, cy.round() as i32));
+                    let (mon, scale) = monitor_at_point(&w, point.0, point.1);
+                    let (nx, ny) = geom::clamp_window(cx, cy, mon, scale, phase, &LAYOUT);
                     let _ = w.set_position(PhysicalPosition::new(nx, ny));
                 }
                 // Nunca chegou a haver posicao suavizada (saiu no primeiro frame): ai o alvo do
@@ -542,7 +572,7 @@ pub(crate) fn finalize_quit_now(app: &AppHandle) {
                     .state::<state::AppState>()
                     .inflight
                     .lock()
-                    .map(|f| f.is_some())
+                    .map(|f| !f.is_empty())
                     .unwrap_or(false);
                 if !busy {
                     break;
@@ -752,12 +782,19 @@ fn register_one(app: &AppHandle, hotkey: &str, action: HotkeyAction) -> Result<(
             let app = app.clone();
             tauri::async_runtime::spawn(async move {
                 flow::run(app.clone(), opts).await;
-                // Rede de seguranca: o `finish` ja liberta a guarda antes da pilula (para o
-                // atalho seguinte nao ser engolido durante os ~2s dela), mas um caminho de saida
-                // que nao passe pelo `finish` nao pode deixar a app presa em "ocupada".
-                app.state::<state::AppState>()
-                    .busy
-                    .store(false, Ordering::SeqCst);
+                // Rede de seguranca para um caminho de saida que nao passe pelo `finish`, mas
+                // SO se este ciclo ainda for o dono.
+                //
+                // Incondicional era um bug a serio: o `finish` liberta a guarda e so depois
+                // espera pela pilula (~2s), portanto quando o `run` termina ja pode haver outro
+                // ciclo a decorrer. Libertar ai punha a `false` a guarda DELE, e a tecla
+                // seguinte arrancava um terceiro refine em paralelo: dois hooks LL de teclado
+                // vivos ao mesmo tempo (regra 3 do CLAUDE.md) e dois a armar o clipboard.
+                let st = app.state::<state::AppState>();
+                let current = st.hide_gen.load(Ordering::SeqCst);
+                if ember_core::may_release_guard(current, run_id) {
+                    st.busy.store(false, Ordering::SeqCst);
+                }
             });
         }
     })

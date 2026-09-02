@@ -53,6 +53,15 @@ pub struct AppState {
     /// Acorda quem espera (o `select!` do refine, a espera pela chamada em curso) quando o
     /// utilizador dispensa.
     pub cancel_notify: Notify,
+    /// Geracao do ciclo de seguimento do cursor. Cada exibicao da overlay incrementa-a e o
+    /// ciclo anterior reforma-se ao ver que mudou: dois refines sobrepostos deixavam dois loops
+    /// vivos a disputar a mesma janela a 120fps, cada um com a sua suavizacao.
+    pub follow_gen: AtomicU64,
+    /// A overlay tem etiquetas a direita da brasa (nome do projeto, legenda de retry)?
+    ///
+    /// Muda o que e preciso garantir visivel: sem etiquetas, reservar-lhes espaco afastava a
+    /// brasa do ponteiro em centenas de pixeis junto a borda direita do ecra.
+    pub orb_labels: AtomicBool,
     /// Ciclo dono da pilula que esta no ecra. Um `hide_after` de um ciclo antigo compara com
     /// isto e nao faz nada se ja houver um ciclo novo: senao escondia a orb do ciclo seguinte.
     pub hide_gen: AtomicU64,
@@ -62,9 +71,14 @@ pub struct AppState {
     /// Sobe a cada escrita no `store`. Quem espera por uma chamada em curso subscreve ANTES de
     /// consultar a cache e so depois espera, que e o que evita perder o sinal.
     pub store_gen: tokio::sync::watch::Sender<u64>,
-    /// A chamada ao modelo que esta a decorrer, se houver. Um ciclo novo com a MESMA chave
-    /// junta-se a esta em vez de fazer (e pagar) a mesma chamada outra vez.
-    pub inflight: Mutex<Option<InFlight>>,
+    /// As chamadas ao modelo que estao a decorrer. Um ciclo novo com a MESMA chave junta-se a
+    /// uma delas em vez de fazer (e pagar) a mesma chamada outra vez.
+    ///
+    /// Lista e nao um slot unico: dispensar um refine e comecar outro com texto diferente deixa
+    /// os dois a decorrer, e com um slot so o segundo apagava o registo do primeiro. O terceiro
+    /// atalho sobre o texto do primeiro deixava de o encontrar e pagava-o de novo, que e
+    /// exatamente o que isto existe para evitar. Sao no maximo um punhado de entradas.
+    pub inflight: Mutex<Vec<InFlight>>,
     /// O access token da sessao ChatGPT, em memoria, e o mutex que serializa a sua renovacao.
     ///
     /// Duas coisas no mesmo sitio porque sao a mesma seccao critica:
@@ -111,6 +125,34 @@ pub struct InFlight {
 }
 
 impl AppState {
+    /// Ha uma chamada a decorrer com esta chave?
+    pub fn inflight_with(&self, key: &ember_core::CacheKey) -> Option<InFlight> {
+        self.inflight
+            .lock()
+            .ok()?
+            .iter()
+            .find(|f| f.key == *key)
+            .cloned()
+    }
+
+    /// Regista uma chamada a decorrer.
+    pub fn inflight_add(&self, entry: InFlight) {
+        if let Ok(mut list) = self.inflight.lock() {
+            list.push(entry);
+        }
+    }
+
+    /// Tira uma chamada do registo e acorda quem esperava por ela.
+    ///
+    /// O acordar TEM de acontecer aqui e nao no caminho feliz: se a tarefa morresse sem isto
+    /// (um panico, um erro), quem se juntou a ela ficava a espera de um sinal que nunca chegava.
+    pub fn inflight_done(&self, run_id: u64) {
+        if let Ok(mut list) = self.inflight.lock() {
+            list.retain(|f| f.run_id != run_id);
+        }
+        self.store_gen.send_modify(|v| *v += 1);
+    }
+
     /// Pede para dispensar o ciclo `run_id`. NAO mata a chamada ao modelo: ela segue ate ao fim
     /// e o resultado fica guardado. Antes matava, e o dinheiro ja gasto ia com ela.
     pub fn request_dismiss(&self, run_id: u64) {
@@ -163,10 +205,12 @@ impl AppState {
             run_seq: AtomicU64::new(0),
             cancel_run: AtomicU64::new(0),
             cancel_notify: Notify::new(),
+            follow_gen: AtomicU64::new(0),
+            orb_labels: AtomicBool::new(false),
             hide_gen: AtomicU64::new(0),
             store: Mutex::new(ember_core::RefineCache::default()),
             store_gen: tokio::sync::watch::channel(0).0,
-            inflight: Mutex::new(None),
+            inflight: Mutex::new(Vec::new()),
             oauth_access: tokio::sync::Mutex::new(None),
             orb_accent: Mutex::new(None),
             orb_project: Mutex::new(None),

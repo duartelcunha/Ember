@@ -13,6 +13,14 @@ use ember_core::selection as seq;
 
 const STATE_EVENT: &str = "ember://state";
 
+/// Teto para esperar pela chamada de outro ciclo antes de fazer a sua.
+const JOIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+/// Ritmo a que se reconfirma o pedido de dispensar, para nao depender so do aviso (que se pode
+/// perder entre voltas de um `select!`).
+const DISMISS_POLL: std::time::Duration = std::time::Duration::from_millis(250);
+/// Acima disto nao se procura por semelhanca (ver `lookup_cache`).
+const FUZZY_MAX_CHARS: usize = 4000;
+
 /// Quanto tempo esperar pela libertacao natural dos modificadores antes de forcar os key-ups
 /// (ver `ember_core::selection::capture`). Curto: nao confiamos no `GetAsyncKeyState` como sinal
 /// de libertacao (com o hotkey global registado, ele reporta Ctrl+Shift em baixo durante ~1.5s
@@ -60,6 +68,15 @@ fn emit(app: &AppHandle, phase: &str, message: Option<String>, provider: Option<
     state
         .orb_visible
         .store(phase == "refining", Ordering::SeqCst);
+    // Ha texto a direita da brasa? So entao vale a pena reservar-lhe espaco ao clampar.
+    let has_labels = message.is_some()
+        || state
+            .orb_project
+            .lock()
+            .ok()
+            .map(|p| p.is_some())
+            .unwrap_or(false);
+    state.orb_labels.store(has_labels, Ordering::SeqCst);
     // Tudo o que esta visivel segue o cursor (a regra vive em `ember_core::overlay::follows_cursor`).
     // Antes so o orb e o preview seguiam e as pilulas de resultado ficavam onde tinham nascido:
     // quem mexia o rato durante o refine ia buscar a resposta ao sitio onde tinha comecado, e o
@@ -397,9 +414,12 @@ pub async fn run(app: AppHandle, opts: RunOpts) {
                 // sao precisamente a edicao que a pessoa acabou de fazer, e aplicar por cima sem
                 // avisar revertia-a em silencio.
                 let msg = match from_cache {
-                    Reuse::Similar(score) => format!(
-                        "From a similar refine ({score}%) \u{00b7} Enter to apply \u{00b7} Esc to keep original"
-                    ),
+                    // Curta de proposito: a caixa que garantimos visivel tem 460px logicos, e
+                    // uma frase mais longa era cortada pela borda do ecra precisamente quando
+                    // tem algo importante a dizer.
+                    Reuse::Similar(score) => {
+                        format!("Similar refine ({score}%) \u{00b7} Enter to apply")
+                    }
                     _ => "Enter to apply \u{00b7} Esc to keep original".into(),
                 };
                 emit(&app, "preview", Some(msg), None);
@@ -562,25 +582,30 @@ async fn obtain_refined(
     // Ha uma chamada IGUAL a decorrer (o ciclo anterior, que o utilizador dispensou ou que ainda
     // espera): junta-te a ela em vez de fazer a mesma pergunta ao modelo outra vez.
     let mut joined_log = false;
-    loop {
-        let joining = state
-            .inflight
-            .lock()
-            .ok()
-            .and_then(|f| f.clone())
-            .filter(|f| f.key == key);
-        let Some(f) = joining else { break };
+    let joined_at = std::time::Instant::now();
+    while let Some(f) = state.inflight_with(&key) {
         if !joined_log {
             log::info!("[run {run_id}] a juntar-se a chamada do ciclo {}", f.run_id);
             joined_log = true;
         }
+        // Teto de espera. A chamada a que nos juntamos ja tem os seus proprios limites (stall de
+        // 60s por tentativa, retry, fallback), mas esperar por ela NAO pode ser eterno: se algo
+        // do outro lado ficar preso, mais vale pagar uma chamada do que deixar o utilizador com
+        // uma brasa acesa para sempre.
+        if joined_at.elapsed() > JOIN_TIMEOUT {
+            log::warn!("[run {run_id}] a chamada a que se juntou demorou de mais; a fazer a sua");
+            break;
+        }
         tokio::select! {
             _ = gen.changed() => {}
-            _ = state.cancel_notify.notified() => {
-                if state.dismissed(run_id) {
-                    return Obtained::Dismissed;
-                }
-            }
+            _ = state.cancel_notify.notified() => {}
+            // O `notified()` e recriado a cada volta, portanto um aviso que chegue ENTRE voltas
+            // perde-se. Esta batida fecha essa janela: o dispensar e reconfirmado pelo estado,
+            // que nao se perde, em vez de depender so do aviso.
+            _ = tokio::time::sleep(DISMISS_POLL) => {}
+        }
+        if state.dismissed(run_id) {
+            return Obtained::Dismissed;
         }
         if let Some((entry, reuse)) = lookup_cache(app, &key, preview) {
             log::info!("[run {run_id}] resultado da chamada a que se juntou: reaproveitado");
@@ -594,14 +619,15 @@ async fn obtain_refined(
     let done = loop {
         tokio::select! {
             r = &mut rx => break r.ok(),
-            _ = state.cancel_notify.notified() => {
-                if state.dismissed(run_id) {
-                    // Larga-se o RECETOR, nao a tarefa: ela segue ate ao fim e guarda o
-                    // refinado. Antes largava-se o future da chamada HTTP, o provider cobrava
-                    // na mesma e o resultado ia para o lixo.
-                    break None;
-                }
-            }
+            _ = state.cancel_notify.notified() => {}
+            // Ver a nota na juncao: a batida cobre o aviso que chegue entre voltas do `select!`.
+            _ = tokio::time::sleep(DISMISS_POLL) => {}
+        }
+        if state.dismissed(run_id) {
+            // Larga-se o RECETOR, nao a tarefa: ela segue ate ao fim e guarda o refinado. Antes
+            // largava-se o future da chamada HTTP, o provider cobrava na mesma e o resultado ia
+            // para o lixo.
+            break None;
         }
     };
     match done {
@@ -625,7 +651,10 @@ fn lookup_cache(
     let state = app.state::<AppState>();
     let mut store = state.store.lock().ok()?;
     let now = now_ms();
-    if preview {
+    // A comparacao por semelhanca e quadratica no comprimento e corre com o cadeado da cache
+    // na mao. Num paragrafo nao se mede; num documento inteiro apanhado por select-all mediria.
+    // Acima do teto so se procura o acerto exato, que e uma comparacao de strings.
+    if preview && key.text.chars().count() <= FUZZY_MAX_CHARS {
         match store.lookup_fuzzy(key, now, ember_core::refine_cache::SIMILAR_MIN)? {
             ember_core::Hit::Exact(e) => Some((e, Reuse::Exact)),
             ember_core::Hit::Similar(e, score) => Some((e, Reuse::Similar(score))),
@@ -656,13 +685,20 @@ fn spawn_refine(
     let (tx, rx) = tokio::sync::oneshot::channel();
     // O registo e SINCRONO, antes de a tarefa arrancar: se ficasse la dentro, um ciclo novo
     // podia consultar o registo antes de a tarefa lhe chegar e pagar a mesma chamada.
-    if let Ok(mut slot) = app.state::<AppState>().inflight.lock() {
-        *slot = Some(crate::state::InFlight {
+    app.state::<AppState>()
+        .inflight_add(crate::state::InFlight {
             key: prep.key.clone(),
             run_id,
         });
-    }
     tauri::async_runtime::spawn(async move {
+        // A saida do registo corre no Drop e nao no fim do corpo, e isso e a diferenca entre um
+        // erro e um bloqueio: se a tarefa morresse a meio (um panico), o registo ficava la para
+        // sempre e todos os ciclos seguintes com aquele texto esperavam por um sinal que nunca
+        // vinha. Com a guarda, o desenrolar da pilha limpa e acorda quem esperava.
+        let _guard = InFlightGuard {
+            app: app.clone(),
+            run_id,
+        };
         let started = std::time::Instant::now();
         // Feedback de progresso honesto: torna visivel o retry e o fallback (nao a cauda do
         // texto a ser gerado, que sao tokens internos e nao o que sera colado).
@@ -709,8 +745,11 @@ fn spawn_refine(
                         now,
                     );
                     if prep.keep_results {
-                        if let Ok(store) = state.store.lock() {
-                            crate::refine_store::save(&app, &store);
+                        // Copia-se e SO DEPOIS se grava: escrever o ficheiro com o cadeado da
+                        // cache na mao parava qualquer outro ciclo durante o I/O.
+                        let snapshot = state.store.lock().ok().map(|c| c.clone());
+                        if let Some(c) = snapshot {
+                            crate::refine_store::save(&app, &c);
                         }
                     }
                     log::info!(
@@ -723,19 +762,26 @@ fn spawn_refine(
             Err(e) => RefineDone::Failed(e),
         };
 
-        // Sai do registo SEMPRE (mesmo em erro) e acorda quem esperava: senao um ciclo que se
-        // juntou a esta chamada ficava a espera de um resultado que nunca vem.
-        if let Ok(mut slot) = state.inflight.lock() {
-            if slot.as_ref().map(|f| f.run_id) == Some(run_id) {
-                *slot = None;
-            }
-        }
-        state.store_gen.send_modify(|v| *v += 1);
         // O recetor pode ja nao existir (o utilizador dispensou): o resultado ja esta guardado,
-        // portanto perder o envio nao perde nada.
+        // portanto perder o envio nao perde nada. A saida do registo fica para o `_guard`, que
+        // corre logo a seguir e acorda quem esperava.
         let _ = tx.send(done);
     });
     rx
+}
+
+/// Tira a chamada do registo de "a decorrer" e acorda quem esperava por ela, aconteca o que
+/// acontecer a tarefa. E uma guarda e nao uma linha no fim do corpo porque o fim do corpo nao
+/// corre num panico, e ai quem se juntou a chamada ficava pendurado.
+struct InFlightGuard {
+    app: AppHandle,
+    run_id: u64,
+}
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        self.app.state::<AppState>().inflight_done(self.run_id);
+    }
 }
 
 /// Cola outra vez o ultimo refinado guardado, na janela que estiver em foco. E a saida para tudo
@@ -789,7 +835,8 @@ async fn hide_after(app: &AppHandle, run_id: u64, ms: u64) {
     tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
     // Um ciclo novo comecou entretanto: a orb que esta no ecra e dele, nao a nossa pilula.
     // Esconde-la aqui apagava o feedback do ciclo em curso a meio.
-    if app.state::<AppState>().hide_gen.load(Ordering::SeqCst) != run_id {
+    let current = app.state::<AppState>().hide_gen.load(Ordering::SeqCst);
+    if !ember_core::may_hide(current, run_id) {
         return;
     }
     hide_orb(app);

@@ -6,6 +6,7 @@
 //! deterministica com `cargo test -p ember-core`.
 
 pub mod codex;
+pub mod cycle;
 pub mod engine;
 pub mod error;
 pub mod health;
@@ -24,6 +25,7 @@ pub mod refine_cache;
 pub mod retry;
 pub mod selection;
 
+pub use cycle::{hotkey_action, may_hide, may_release_guard, owns_overlay, HotkeyAction};
 pub use engine::{
     is_worth_refining, postprocess, precondition, DegradeReason, EngineResult, Prepared,
 };

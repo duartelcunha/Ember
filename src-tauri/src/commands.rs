@@ -1395,10 +1395,23 @@ pub(crate) async fn prepare_refine(
         step_providers: chain.iter().map(|s| s.provider).collect(),
         ..RetryConfig::default()
     };
-    // A chave leva o system prompt inteiro (por impressao digital): mudar o perfil, o nivel de
-    // thinking ou o brief do projeto TEM de dar um miss, senao a cache servia um refine feito
-    // com outras regras. O projeto ativo tambem entra, porque muda o contexto sem mudar o texto.
-    let key = ember_core::CacheKey::new(input, mode, cfg.active_project.as_deref(), &req.system);
+    // A chave tem de cobrir TUDO o que muda a resposta, e nao so o texto. O system prompt entra
+    // por impressao digital (leva o perfil e o brief do projeto), mas ele sozinho nao chega: o
+    // MODELO e as definicoes de thinking nao vivem la dentro, e sem eles trocar de modelo servia
+    // o refine do modelo anterior, que e precisamente a experiencia que faria alguem desistir da
+    // funcionalidade. O projeto ativo tambem entra, porque muda o contexto sem mudar o texto.
+    let fingerprint_src = format!(
+        "{}\n\u{001e}model={}\u{001e}thinking={}:{}",
+        req.system,
+        chain
+            .first()
+            .map(|s| s.model.as_str())
+            .unwrap_or("desconhecido"),
+        cfg.thinking_enabled,
+        cfg.thinking_level
+    );
+    let key =
+        ember_core::CacheKey::new(input, mode, cfg.active_project.as_deref(), &fingerprint_src);
     Ok(PreparedRefine {
         chain,
         req,

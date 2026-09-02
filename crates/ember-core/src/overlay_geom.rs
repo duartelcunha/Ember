@@ -78,6 +78,15 @@ pub const DEFAULT_LAYOUT: Layout = Layout {
     win_logical: (520.0, 140.0),
 };
 
+/// O que a overlay esta a mostrar, que e o que decide a caixa a manter visivel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Phase {
+    /// A brasa. `labels` diz se ha texto a direita dela (nome do projeto, legenda de retry).
+    Orb { labels: bool },
+    /// Uma pilula de texto (preview, sucesso, erro, hint).
+    Pill,
+}
+
 /// Tamanho fisico esperado da janela para uma escala. Substitui o `outer_size()`, que na
 /// travessia entre monitores com DPI diferente ainda reporta o tamanho do ecra anterior.
 pub fn expected_window_physical(scale: f64, l: &Layout) -> (u32, u32) {
@@ -94,10 +103,10 @@ pub fn expected_window_physical(scale: f64, l: &Layout) -> (u32, u32) {
 /// pilula) e a mudanca de fase saltava de uma para a outra: ao aprovar o preview, a janela que
 /// estava colocada pela caixa do orb era subitamente contida pela regra da janela inteira e a
 /// pilula saltava de sitio. Ha uma regra so, e o que muda entre fases e apenas o tamanho da caixa.
-fn content_box(is_orb: bool, scale: f64, l: &Layout) -> (f64, f64, f64, f64) {
+fn content_box(phase: Phase, scale: f64, l: &Layout) -> (f64, f64, f64, f64) {
     let win_h = l.win_logical.1 * scale;
     let pad = l.pad * scale;
-    if is_orb {
+    if let Phase::Orb { labels } = phase {
         // A caixa clampada e MAIOR que a faisca (spark_clamp vs spark) porque o rotor cresce no
         // estado de retry: sem esta folga, junto a borda do ecra a orbita inchada saia por fora
         // do que garantimos visivel. O `dx` recua metade da folga para o CENTRO da caixa
@@ -108,12 +117,12 @@ fn content_box(is_orb: bool, scale: f64, l: &Layout) -> (f64, f64, f64, f64) {
         // da faisca (ver Overlay.tsx). Clampar so pela faisca punha-as a comecar exatamente na
         // borda do ecra, invisiveis, e a etiqueta do projeto e a resposta a "com que contexto e
         // que este refine esta a ser feito".
-        (
-            pad - folga,
-            (win_h - side) / 2.0,
-            side + l.labels_w * scale,
-            side,
-        )
+        //
+        // SO quando elas existem, e isto foi um defeito real: reservar-lhes 310px sempre fazia a
+        // brasa descolar do ponteiro mais de 300px junto a borda direita, num refine sem projeto
+        // e sem retry, onde nao havia rigorosamente nada para proteger.
+        let extra = if labels { l.labels_w * scale } else { 0.0 };
+        (pad - folga, (win_h - side) / 2.0, side + extra, side)
     } else {
         let (bw, bh) = (l.pill_box.0 * scale, l.pill_box.1 * scale);
         (pad + l.pill_margin_x * scale, (win_h - bh) / 2.0, bw, bh)
@@ -128,10 +137,10 @@ pub fn clamp_window(
     win_y: f64,
     monitor: Rect,
     scale: f64,
-    is_orb: bool,
+    phase: Phase,
     l: &Layout,
 ) -> (i32, i32) {
-    let (dx, dy, cw, ch) = content_box(is_orb, scale, l);
+    let (dx, dy, cw, ch) = content_box(phase, scale, l);
     let (cx, cy) = (win_x + dx, win_y + dy);
     let (ax, ay) = (monitor.x as f64, monitor.y as f64);
     let max_x = ax + (monitor.w as f64 - cw).max(0.0);
@@ -155,7 +164,7 @@ pub fn overlay_geometry(
     cursor: (f64, f64),
     monitor: Rect,
     scale: f64,
-    is_orb: bool,
+    phase: Phase,
     l: &Layout,
 ) -> (i32, i32) {
     // O centro NAO e o cursor em si: o `cursor_position` devolve o hotspot, que numa seta e a
@@ -164,7 +173,7 @@ pub fn overlay_geometry(
     let anchor_y = cursor.1 + l.pointer_center.1 * scale;
     let win_x = anchor_x - l.pad * scale;
     let win_y = anchor_y - l.win_logical.1 * scale / 2.0;
-    clamp_window(win_x, win_y, monitor, scale, is_orb, l)
+    clamp_window(win_x, win_y, monitor, scale, phase, l)
 }
 
 /// Centro fisico da faisca para uma janela colocada em `win`. Usado nos testes e em logs de
@@ -223,7 +232,7 @@ mod tests {
     fn spark_center_lands_on_the_pointer_center_at_every_scale() {
         for scale in [1.0, 1.25, 1.5, 2.0] {
             let cursor = (1200.0, 700.0);
-            let win = overlay_geometry(cursor, PRIMARY, scale, true, L);
+            let win = overlay_geometry(cursor, PRIMARY, scale, Phase::Orb { labels: true }, L);
             let (sx, sy) = spark_center(win, scale, L);
             // A meio do ecra nada e clampado: o centro da faisca tem de cair exatamente no
             // centro visual do ponteiro, a menos do arredondamento unico.
@@ -240,7 +249,7 @@ mod tests {
 
     #[test]
     fn cursor_on_the_second_monitor_stays_on_the_second_monitor() {
-        let win = overlay_geometry((3500.0, 600.0), SECOND, 1.0, true, L);
+        let win = overlay_geometry((3500.0, 600.0), SECOND, 1.0, Phase::Orb { labels: true }, L);
         assert!(
             win.0 >= SECOND.x,
             "a janela caiu para o monitor primario: {win:?}"
@@ -253,8 +262,8 @@ mod tests {
     fn second_monitor_uses_its_own_scale_not_the_primary_one() {
         // Mesmo cursor, escalas diferentes: os offsets crescem com a escala do monitor do
         // CURSOR. Se o shell passar a escala da janela (o bug), a faisca descentra-se.
-        let a = overlay_geometry((3500.0, 600.0), SECOND, 1.0, true, L);
-        let b = overlay_geometry((3500.0, 600.0), SECOND, 1.5, true, L);
+        let a = overlay_geometry((3500.0, 600.0), SECOND, 1.0, Phase::Orb { labels: true }, L);
+        let b = overlay_geometry((3500.0, 600.0), SECOND, 1.5, Phase::Orb { labels: true }, L);
         assert_ne!(a, b);
         let (ax, _) = spark_center(a, 1.0, L);
         let (bx, _) = spark_center(b, 1.5, L);
@@ -265,8 +274,14 @@ mod tests {
     #[test]
     fn orb_box_stays_visible_at_the_right_edge_of_the_second_monitor() {
         let scale = 1.0;
-        let win = overlay_geometry((4479.0, 600.0), SECOND, scale, true, L);
-        let (dx, _, cw, _) = content_box(true, scale, L);
+        let win = overlay_geometry(
+            (4479.0, 600.0),
+            SECOND,
+            scale,
+            Phase::Orb { labels: true },
+            L,
+        );
+        let (dx, _, cw, _) = content_box(Phase::Orb { labels: true }, scale, L);
         let right = win.0 as f64 + dx + cw;
         assert!(
             right <= (SECOND.x + SECOND.w) as f64 + 0.5,
@@ -277,8 +292,8 @@ mod tests {
     #[test]
     fn pill_box_stays_visible_at_the_bottom_right_corner() {
         let scale = 1.0;
-        let win = overlay_geometry((2540.0, 1430.0), PRIMARY, scale, false, L);
-        let (dx, dy, cw, ch) = content_box(false, scale, L);
+        let win = overlay_geometry((2540.0, 1430.0), PRIMARY, scale, Phase::Pill, L);
+        let (dx, dy, cw, ch) = content_box(Phase::Pill, scale, L);
         assert!(win.0 as f64 + dx + cw <= (PRIMARY.x + PRIMARY.w) as f64 + 0.5);
         assert!(win.1 as f64 + dy + ch <= (PRIMARY.y + PRIMARY.h) as f64 + 0.5);
     }
@@ -288,9 +303,23 @@ mod tests {
         // Guarda contra o duplo arredondamento: com o `pad` e cada offset da caixa arredondados
         // em separado, a 125% havia saltos de 2px a cada poucos pixeis de rato.
         for scale in [1.0, 1.25, 1.5] {
-            let mut prev = overlay_geometry((1000.0, 500.0), PRIMARY, scale, true, L).0;
+            let mut prev = overlay_geometry(
+                (1000.0, 500.0),
+                PRIMARY,
+                scale,
+                Phase::Orb { labels: true },
+                L,
+            )
+            .0;
             for i in 1..200 {
-                let win = overlay_geometry((1000.0 + i as f64, 500.0), PRIMARY, scale, true, L).0;
+                let win = overlay_geometry(
+                    (1000.0 + i as f64, 500.0),
+                    PRIMARY,
+                    scale,
+                    Phase::Orb { labels: true },
+                    L,
+                )
+                .0;
                 let d = win - prev;
                 assert!((0..=1).contains(&d), "scale {scale}: salto de {d}px");
                 prev = win;
@@ -331,11 +360,45 @@ mod tests {
     }
 
     #[test]
+    fn reserving_label_width_with_no_labels_tore_the_ember_off_the_pointer() {
+        // O defeito: reservava-se sempre a largura das etiquetas, e junto a borda direita isso
+        // empurrava a janela centenas de pixeis para a esquerda mesmo sem etiqueta nenhuma para
+        // proteger. A brasa aparecia longe do rato, que e o unico sitio onde ela faz sentido.
+        let cursor = (2400.0, 700.0);
+        let sem = overlay_geometry(cursor, PRIMARY, 1.0, Phase::Orb { labels: false }, L);
+        let com = overlay_geometry(cursor, PRIMARY, 1.0, Phase::Orb { labels: true }, L);
+        let (sx, _) = spark_center(sem, 1.0, L);
+        assert!(
+            (sx - (cursor.0 + L.pointer_center.0)).abs() <= 1.0,
+            "sem etiquetas a brasa devia estar no ponteiro, esta em {sx}"
+        );
+        assert!(
+            com.0 <= sem.0 - 150,
+            "com etiquetas TEM de recuar para as manter visiveis: sem={sem:?} com={com:?}"
+        );
+    }
+
+    #[test]
+    fn at_the_very_edge_the_ember_still_recedes_enough_to_stay_on_screen() {
+        // O recuo nao desaparece, so deixa de ser gratuito: com o cursor colado a borda, a
+        // propria brasa nao cabe e tem de vir para dentro.
+        let win = overlay_geometry(
+            (2556.0, 700.0),
+            PRIMARY,
+            1.0,
+            Phase::Orb { labels: false },
+            L,
+        );
+        let (dx, _, cw, _) = content_box(Phase::Orb { labels: false }, 1.0, L);
+        assert!(win.0 as f64 + dx + cw <= (PRIMARY.x + PRIMARY.w) as f64 + 0.5);
+    }
+
+    #[test]
     fn clamp_window_is_idempotent() {
         // O ciclo de seguimento re-clampa a posicao que ele proprio ja clampou (na saida). Se
         // isto nao fosse idempotente, cada saida deslocava a pilula um bocado.
-        let once = clamp_window(-500.0, -500.0, PRIMARY, 1.0, false, L);
-        let twice = clamp_window(once.0 as f64, once.1 as f64, PRIMARY, 1.0, false, L);
+        let once = clamp_window(-500.0, -500.0, PRIMARY, 1.0, Phase::Pill, L);
+        let twice = clamp_window(once.0 as f64, once.1 as f64, PRIMARY, 1.0, Phase::Pill, L);
         assert_eq!(once, twice);
     }
 }

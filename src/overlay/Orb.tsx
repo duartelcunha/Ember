@@ -1,4 +1,5 @@
 import { m } from "motion/react";
+import { useSyncExternalStore } from "react";
 
 /**
  * A brasa junto ao ponteiro enquanto um refine decorre.
@@ -55,8 +56,24 @@ const VARIANT = {
   retry: { scale: 1.24, breath: 1.3 },
 } as const;
 
+/** O `MotionConfig reducedMotion="user"` do Overlay.tsx cobre o motion, mas NAO o SMIL do SVG:
+ *  um `<animate>` continua a correr por baixo dele. Quem pediu ao sistema para parar as
+ *  animacoes ficava com a unica coisa animada do ecra a respirar na mesma. */
+function usePrefersReducedMotion() {
+  return useSyncExternalStore(
+    (onChange) => {
+      const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+      mq.addEventListener("change", onChange);
+      return () => mq.removeEventListener("change", onChange);
+    },
+    () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+    () => false,
+  );
+}
+
 export function Orb({ variant = "work" }: { variant?: keyof typeof VARIANT }) {
   const v = VARIANT[variant];
+  const still = usePrefersReducedMotion();
   return (
     <m.div
       className="relative shrink-0"
@@ -106,15 +123,17 @@ export function Orb({ variant = "work" }: { variant?: keyof typeof VARIANT }) {
                 animaveis por CSS, e a alternativa (duas formas sobrepostas com opacidade a
                 alternar) custa uma camada composta a mais por frame enquanto a janela ja
                 persegue o cursor a 120fps. */}
-            <animate
-              attributeName="r"
-              values="0.5;0.72;0.5"
-              dur={`${v.breath}s`}
-              repeatCount="indefinite"
-              calcMode="spline"
-              keyTimes="0;0.5;1"
-              keySplines="0.4 0 0.6 1; 0.4 0 0.6 1"
-            />
+            {!still && (
+              <animate
+                attributeName="r"
+                values="0.5;0.72;0.5"
+                dur={`${v.breath}s`}
+                repeatCount="indefinite"
+                calcMode="spline"
+                keyTimes="0;0.5;1"
+                keySplines="0.4 0 0.6 1; 0.4 0 0.6 1"
+              />
+            )}
           </radialGradient>
         </defs>
         {/* A crosta escura fica por BAIXO do preenchimento (`paint-order`) e e o que faz a brasa
@@ -137,26 +156,30 @@ export function Orb({ variant = "work" }: { variant?: keyof typeof VARIANT }) {
           style={{ mixBlendMode: "screen" }}
         >
           <path d={FISSURE_MAIN} strokeWidth="1" opacity="0.9">
-            <animate
-              attributeName="opacity"
-              values="0.9;0.45;0.9"
-              dur={`${v.breath}s`}
-              repeatCount="indefinite"
-              calcMode="spline"
-              keyTimes="0;0.5;1"
-              keySplines="0.4 0 0.6 1; 0.4 0 0.6 1"
-            />
+            {!still && (
+              <animate
+                attributeName="opacity"
+                values="0.9;0.45;0.9"
+                dur={`${v.breath}s`}
+                repeatCount="indefinite"
+                calcMode="spline"
+                keyTimes="0;0.5;1"
+                keySplines="0.4 0 0.6 1; 0.4 0 0.6 1"
+              />
+            )}
           </path>
           <path d={FISSURE_BRANCH} strokeWidth="0.7" opacity="0.6">
-            <animate
-              attributeName="opacity"
-              values="0.6;0.28;0.6"
-              dur={`${v.breath}s`}
-              repeatCount="indefinite"
-              calcMode="spline"
-              keyTimes="0;0.5;1"
-              keySplines="0.4 0 0.6 1; 0.4 0 0.6 1"
-            />
+            {!still && (
+              <animate
+                attributeName="opacity"
+                values="0.6;0.28;0.6"
+                dur={`${v.breath}s`}
+                repeatCount="indefinite"
+                calcMode="spline"
+                keyTimes="0;0.5;1"
+                keySplines="0.4 0 0.6 1; 0.4 0 0.6 1"
+              />
+            )}
           </path>
         </g>
       </svg>
