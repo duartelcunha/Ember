@@ -39,7 +39,9 @@ pub struct Layout {
     /// Lado do quadrado da faisca.
     pub spark: f64,
     /// Caixa a garantir visivel na fase de orb: a faisca mais a folga do estado de retry, onde
-    /// o rotor cresce ~32% (ver `VARIANT` em Orb.tsx).
+    /// a marca cresce (ver `VARIANT` em Orb.tsx) e o halo estatico pinta alguns px para fora.
+    /// Ha margem de sobra sobre o crescimento atual, de proposito: e mais barato garantir 56px
+    /// visiveis do que descobrir junto a borda do ecra que faltavam dois.
     pub spark_clamp: f64,
     /// Largura reservada a direita da faisca para a etiqueta do projeto (max 120) e a legenda
     /// de retry (max 170), com as folgas entre elas.
