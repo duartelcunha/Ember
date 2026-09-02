@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.9.2](https://github.com/duartelcunha/Ember/compare/v0.9.1...v0.9.2) (2026-09-02)
+
+
+### Features
+
+* **overlay:** a brasa, que e o que o nome diz ([0a25c3f](https://github.com/duartelcunha/Ember/commit/0a25c3f8fe664a1d8536c9885018c03970387b64))
+* **overlay:** a costura de luz em vez da brasa desenhada ([9c2b305](https://github.com/duartelcunha/Ember/commit/9c2b305f3ed5e310dd6a67cce6371ac48d51db63))
+* **overlay:** a marca do Ember em vez de tres pontos em orbita ([b721f06](https://github.com/duartelcunha/Ember/commit/b721f06e25de81dea2d888309659ed059b70c5c6))
+* **overlay:** o losango de pixels ao lado do ponteiro ([e782d3e](https://github.com/duartelcunha/Ember/commit/e782d3e3f2ecf70c8211c89b65d1a771e660af61))
+* **overlay:** o ponto respira, ganha volume e le o tempo de espera ([2e7197c](https://github.com/duartelcunha/Ember/commit/2e7197c882da6848ad6af7439dcde9cb85e70264))
+* **overlay:** um ponto a piscar devagar ao lado do ponteiro ([777d66f](https://github.com/duartelcunha/Ember/commit/777d66f8f34f3aec0b175bd3e97fa113ccd8c5c6))
+* **refine:** interromper deixa de custar dinheiro ([c292704](https://github.com/duartelcunha/Ember/commit/c292704fa653b2063772e9a332cf0ff2452f490a))
+
+
+### Bug Fixes
+
+* **overlay:** geometria por monitor do cursor e pills que seguem o rato ([ed4ad58](https://github.com/duartelcunha/Ember/commit/ed4ad584b0c3db5c038eead08f2a83ea98914b7a))
+* **refine:** guarda de reentrancia por ciclo, e o resto da revisao adversarial ([538766a](https://github.com/duartelcunha/Ember/commit/538766ac8cd0580af26ee096b45f6223ada1587f))
+* **security:** sanitize project delimiters, use ShellExecuteW, and polish README ([cd47527](https://github.com/duartelcunha/Ember/commit/cd47527eb8e448483bdda21f8a82b4db3668a898))
+* use supported Codex reasoning efforts ([131b87e](https://github.com/duartelcunha/Ember/commit/131b87e5061efd8ae0e397fb5436c6ccd90e01f9))
+
+
+### Miscellaneous Chores
+
+* release 0.9.2 ([02e84a2](https://github.com/duartelcunha/Ember/commit/02e84a20e4fdb9090bea7f9cbc8a15827fc93723))
+
 ## [0.9.1](https://github.com/duartelcunha/Ember/compare/v0.9.0...v0.9.1) (2026-08-31)
 
 
