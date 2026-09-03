@@ -63,6 +63,19 @@ pub struct SettingsDto {
     /// mesma verdade nos dois lados, e duplica-las era garantir que um dia divergiam.
     accents: Vec<AccentDto>,
     icons: Vec<&'static str>,
+    /// The band the colour wheel picks inside, so the frontend paints exactly the colours the
+    /// derivation can produce without keeping its own copy of these numbers.
+    accent_wheel: WheelDto,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WheelDto {
+    lightness: f64,
+    max_chroma: f64,
+    /// Hue ring, first stop repeated at the end so the conic gradient closes without a seam.
+    ring: Vec<String>,
+    centre: String,
 }
 
 #[derive(Serialize, Clone)]
@@ -170,6 +183,14 @@ fn build_dto(app: &AppHandle, cfg: &config::Config) -> SettingsDto {
             })
             .collect(),
         icons: ember_core::projects::ICONS.to_vec(),
+        accent_wheel: WheelDto {
+            lightness: ember_core::projects::WHEEL_LIGHTNESS,
+            max_chroma: ember_core::projects::WHEEL_MAX_CHROMA,
+            // 36 stops: ten degrees apart is below what the eye resolves in a 176px disc, and the
+            // gradient interpolates the rest.
+            ring: ember_core::projects::wheel_ring(36),
+            centre: ember_core::projects::wheel_centre(),
+        },
     }
 }
 
@@ -858,9 +879,42 @@ pub fn set_active_project(app: AppHandle, id: Option<String>) -> Result<Settings
 ///
 /// `None` for an unparseable hex, which is what lets the field show "not a colour" while the user
 /// is still typing instead of flashing an error at every keystroke.
+/// The three stops plus where the colour sits on the wheel, so opening the picker puts its marker
+/// on the current colour instead of at the centre. The frontend has no colour conversion of its
+/// own by design, so the position has to come from here with the stops.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccentPreview {
+    #[serde(flatten)]
+    stops: ember_core::projects::ResolvedAccent,
+    chroma: f64,
+    hue: f64,
+}
+
 #[tauri::command]
-pub fn preview_accent(hex: String) -> Option<ember_core::projects::ResolvedAccent> {
-    ember_core::projects::derive_accent(&hex)
+pub fn preview_accent(hex: String) -> Option<AccentPreview> {
+    let stops = ember_core::projects::derive_accent(&hex)?;
+    let v = ember_core::oklch::to_oklch(ember_core::oklch::parse_hex(&hex)?);
+    Some(AccentPreview {
+        stops,
+        chroma: v.c,
+        hue: v.h,
+    })
+}
+
+/// The stops for a point on the colour wheel. The wheel knows an angle and a radius; turning that
+/// into a colour is the same conversion the derivation already owns, so it stays on this side.
+#[tauri::command]
+pub fn accent_from_wheel(chroma: f64, hue: f64) -> AccentPreview {
+    AccentPreview {
+        stops: ember_core::projects::accent_from_oklch(
+            ember_core::projects::WHEEL_LIGHTNESS,
+            chroma,
+            hue,
+        ),
+        chroma,
+        hue,
+    }
 }
 
 #[tauri::command]

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { toast } from "sonner";
 import {
@@ -36,7 +36,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { open } from "@tauri-apps/plugin-dialog";
-import { ipc, type EmberSettings, type Project, type ProjectScan } from "@/lib/ipc";
+import { ipc, type AccentPreview, type EmberSettings, type Project, type ProjectScan } from "@/lib/ipc";
 
 /**
  * Os nomes dos ícones vêm do Rust (`ember_core::projects::ICONS`); aqui só se mapeia cada nome ao
@@ -74,6 +74,155 @@ function iconOf(name: string): Icon {
   return ICON_BY_NAME[name] ?? Sparkle;
 }
 
+/**
+ * O anel de tons do DISCO, pelo angulo. A primeira e a ultima paragem sao o mesmo tom (0 e 360
+ * graus), o que fecha o circulo sem costura.
+ *
+ * A lista de recurso so serve o primeiro render, antes de as settings chegarem do Rust.
+ */
+function wheelRing(wheel: EmberSettings["accentWheel"]) {
+  const ring = wheel.ring.length
+    ? [...wheel.ring].reverse().join(", ")
+    : "#ef4444, #eab308, #4ade80, #06b6d4, #6366f1, #d946ef, #ef4444";
+  return `conic-gradient(from 90deg, ${ring})`;
+}
+
+/**
+ * A bolinha que abre o disco: gradiente LINEAR, e nao conico.
+ *
+ * Levou tres tentativas e a culpa nunca foi das cores. Um `conic-gradient` de 28px e um problema
+ * de renderizacao, nao de paleta: o Chromium desenha-o com banda visivel nesse tamanho e deixa uma
+ * costura de um pixel onde o circulo fecha, mesmo com a primeira e a ultima paragem iguais. Um
+ * gradiente linear nao tem onde fechar, portanto nao tem costura, e a 28px le-se limpo.
+ *
+ * Quatro paragens vivas e nao os tons do disco: isto e um ICONE cujo trabalho e dizer "cor" de
+ * relance, nao uma pre-visualizacao fiel do que a roda serve.
+ */
+const RAINBOW =
+  "linear-gradient(135deg, #ff3b30 0%, #ff9500 20%, #ffcc00 38%, #34c759 56%, #0a84ff 74%, #bf5af2 100%)";
+
+/**
+ * O disco completo: o anel de tons, com o neutro a apagar a saturacao para o centro.
+ *
+ * O fim do gradiente central e a MESMA cor com alpha zero, e nao `transparent`. Sao coisas
+ * diferentes: `transparent` e preto transparente, e o CSS interpola por ele, o que mete uma banda
+ * suja no meio da transicao. Era o "corte" que se via.
+ */
+function wheelBackground(wheel: EmberSettings["accentWheel"]) {
+  const c = wheel.centre;
+  return `radial-gradient(circle at 50% 50%, ${c} 0%, ${c}00 72%), ${wheelRing(wheel)}`;
+}
+
+/**
+ * Roda de cores: o angulo e o hue, o raio e o chroma, e a luminosidade e fixa.
+ *
+ * Fixa de proposito, e nao por preguica de nao ter um terceiro eixo: a cor escolhida e a paragem
+ * do MEIO de um gradiente de tres, e a derivacao conta com ela numa faixa de luminosidade (a media
+ * das oito fixas). Deixar escolher uma cor quase preta dava um orb sem gradiente. O que a roda
+ * mostra e exatamente o que a app consegue pintar, e quem tem um codigo de marca fora desta faixa
+ * cola-o no campo ao lado.
+ *
+ * As cores do anel vem do Rust, ja convertidas. Escrever `oklch()` no CSS dependia do WebView e um
+ * disco sem cor era um falhanco silencioso.
+ *
+ * O marcador vive em estado LOCAL e segue o rato sem esperar por ninguem. A primeira versao usava
+ * a posicao que voltava do Rust, e isso dava exactamente o defeito que se via a arrastar: um
+ * pedido por movimento, respostas a chegar fora de ordem, e o marcador a saltar para onde o rato
+ * ja nao estava. O Rust continua a decidir a COR; a posicao e do rato.
+ */
+function ColourWheel({
+  wheel,
+  chroma,
+  hue,
+  onPreview,
+  onCommit,
+}: {
+  wheel: EmberSettings["accentWheel"];
+  chroma: number;
+  hue: number;
+  /** Enquanto arrasta: so para as tres paragens acompanharem. Nao grava nada. */
+  onPreview: (chroma: number, hue: number) => void;
+  /** Ao largar: e aqui que a cor entra no projeto. */
+  onCommit: (chroma: number, hue: number) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const dragging = useRef(false);
+  const [pos, setPos] = useState({ chroma, hue });
+
+  // Reacerta com o que vem de fora (ao abrir, e depois de gravar), nunca a meio de um arraste:
+  // ali a verdade e o rato, e deixar a resposta do Rust reposicionar o marcador era o salto.
+  useEffect(() => {
+    if (!dragging.current) setPos({ chroma, hue });
+  }, [chroma, hue]);
+
+  // Um unico handler para o clique e para o arraste: `setPointerCapture` mantem os eventos nesta
+  // div mesmo quando o ponteiro sai do disco, que e o que faz o arraste continuar a funcionar ao
+  // passar por fora da borda em vez de ficar preso no ultimo valor.
+  const at = (e: React.PointerEvent<HTMLDivElement>) => {
+    const box = ref.current?.getBoundingClientRect();
+    if (!box) return null;
+    const r = box.width / 2;
+    const dx = e.clientX - (box.left + r);
+    const dy = e.clientY - (box.top + r);
+    const dist = Math.min(Math.hypot(dx, dy) / r, 1);
+    // `atan2` cresce no sentido dos ponteiros do relogio no ecra (y para baixo) e o hue do OKLCH
+    // cresce ao contrario: o sinal negativo e o que alinha a cor debaixo do cursor com a cor que
+    // sai. Sem ele, a roda pinta o oposto do que devolve.
+    const deg = (-Math.atan2(dy, dx) * 180) / Math.PI;
+    return { chroma: dist * wheel.maxChroma, hue: (deg + 360) % 360 };
+  };
+
+  const r = pos.chroma / (wheel.maxChroma || 1);
+  const rad = (pos.hue * Math.PI) / 180;
+  const cursor = {
+    left: `${50 + Math.cos(rad) * r * 50}%`,
+    top: `${50 - Math.sin(rad) * r * 50}%`,
+  };
+
+  return (
+    <div
+      ref={ref}
+      role="application"
+      aria-label="Colour wheel"
+      onPointerDown={(e) => {
+        e.currentTarget.setPointerCapture(e.pointerId);
+        dragging.current = true;
+        const p = at(e);
+        if (p) {
+          setPos(p);
+          onPreview(p.chroma, p.hue);
+        }
+      }}
+      onPointerMove={(e) => {
+        if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+        const p = at(e);
+        if (!p) return;
+        setPos(p);
+        onPreview(p.chroma, p.hue);
+      }}
+      onPointerUp={(e) => {
+        dragging.current = false;
+        const p = at(e) ?? pos;
+        setPos(p);
+        onCommit(p.chroma, p.hue);
+      }}
+      onPointerCancel={() => {
+        dragging.current = false;
+      }}
+      className="relative h-44 w-44 shrink-0 cursor-crosshair rounded-full shadow-[0_1px_2px_rgba(0,0,0,0.18),0_8px_24px_-8px_rgba(0,0,0,0.35)]"
+      style={{ background: wheelBackground(wheel) }}
+    >
+      {/* O marcador nao leva a cor escolhida por dentro: durante o arraste ela so chega do Rust um
+          instante depois, e um marcador que pisca a cor errada le-se pior do que um anel vazio. */}
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.35)]"
+        style={cursor}
+      />
+    </div>
+  );
+}
+
 /** Teto do brief, espelhado do Rust (`MAX_BRIEF_CHARS`) só para o contador. Quem corta é o Rust. */
 const MAX_BRIEF = 1200;
 
@@ -101,6 +250,7 @@ function ChoiceGrid({
 function ProjectEditor({
   draft,
   accents,
+  wheel,
   icons,
   onChange,
   onSave,
@@ -109,6 +259,7 @@ function ProjectEditor({
 }: {
   draft: Project;
   accents: EmberSettings["accents"];
+  wheel: EmberSettings["accentWheel"];
   icons: string[];
   onChange: (p: Project) => void;
   onSave: () => void;
@@ -124,7 +275,43 @@ function ProjectEditor({
   // Os tres tons vem do Rust (`preview_accent`), e nao de uma segunda copia da conversao OKLCH
   // aqui: duas implementacoes da mesma rampa divergiam e a pre-visualizacao passaria a mostrar
   // uma cor que o orb nunca pinta.
-  const [preview, setPreview] = useState<{ raw: string; mid: string; glow: string } | null>(null);
+  const [preview, setPreview] = useState<AccentPreview | null>(null);
+  const [picking, setPicking] = useState(false);
+  // Contador de pedidos. Sao chamadas locais e rapidas, mas nada garante que voltem na ordem em
+  // que sairam, e uma resposta atrasada a sobrescrever uma recente era metade do defeito que se
+  // via a arrastar na roda. Quem nao e o ultimo pedido nao escreve.
+  const askSeq = useRef(0);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const swatchRef = useRef<HTMLDivElement>(null);
+  const askStops = (chroma: number, hue: number, commit: boolean) => {
+    const mine = ++askSeq.current;
+    ipc
+      .accentFromWheel(chroma, hue)
+      .then((p) => {
+        if (mine !== askSeq.current) return;
+        setPreview(p);
+        // Gravar no projeto SO ao largar. A escrever a cada movimento, cada uma disparava o efeito
+        // que rebusca o preview do hex, e os dois pedidos passavam a competir um com o outro.
+        if (commit) onChange({ ...draft, accentCustom: p.mid });
+      })
+      .catch(() => {});
+  };
+  useEffect(() => {
+    // O painel cresce para baixo e a janela e pequena: aberto, metade dele ficava por baixo do
+    // que se ve. `nearest` desloca o minimo para o mostrar, em vez de saltar a pagina inteira.
+    panelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, []);
+
+  useEffect(() => {
+    if (!picking) return;
+    // O disco abre para baixo e para a direita da bolinha; junto ao fundo da janela abria fora do
+    // que se ve e parecia que nao tinha acontecido nada. Centra-se ao abrir.
+    swatchRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setPicking(false);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [picking]);
+
   useEffect(() => {
     if (!custom) {
       setPreview(null);
@@ -141,7 +328,10 @@ function ProjectEditor({
   }, [custom]);
 
   return (
-    <div className="flex flex-col gap-5 border-t border-[color:var(--border-subtle)] px-5 py-5">
+    <div
+      ref={panelRef}
+      className="flex flex-col gap-5 border-t border-[color:var(--border-subtle)] px-5 py-5"
+    >
       <div className="flex flex-col gap-2">
         <Label htmlFor={`name-${draft.id || "novo"}`}>Name</Label>
         <Input
@@ -152,6 +342,10 @@ function ProjectEditor({
         />
       </div>
 
+      {/* Cor e icone lado a lado: a fila de cores tem nove elementos e deixava meia linha vazia
+          a seguir, com o painel a crescer sem necessidade. Abaixo de `sm` voltam a empilhar, que
+          e onde nao ha largura para os dois. */}
+      <div className="grid gap-5 sm:grid-cols-[auto_1fr]">
       <ChoiceGrid label="Colour">
         {accents.map((a, i) => (
           <button
@@ -172,65 +366,87 @@ function ProjectEditor({
             style={{ background: a.mid }}
           />
         ))}
-        <button
-          type="button"
-          role="radio"
-          aria-checked={!!custom}
-          aria-label="Custom colour"
-          title="A colour of your own"
-          onClick={() =>
-            onChange({
-              ...draft,
-              accentCustom: custom ?? accents[draft.accent]?.mid ?? "#4a90d9",
-            })
-          }
-          className={`h-7 w-7 rounded-full border-2 transition-transform hover:scale-110 ${
-            custom ? "border-[color:var(--border-accent)] scale-110" : "border-transparent"
-          }`}
-          style={
-            custom
-              ? { background: preview?.mid ?? custom }
-              : {
-                  background:
-                    "conic-gradient(#ef4444, #eab308, #4ade80, #06b6d4, #6366f1, #d946ef, #ef4444)",
-                }
-          }
-        />
-      </ChoiceGrid>
-
-      {custom && (
-        <div className="flex flex-col gap-2">
-          <Label htmlFor={`accent-hex-${draft.id || "novo"}`}>Custom colour</Label>
-          <div className="flex items-center gap-2">
-            <Input
-              id={`accent-hex-${draft.id || "novo"}`}
-              value={custom}
-              onChange={(e) => onChange({ ...draft, accentCustom: e.target.value })}
-              placeholder="#4a90d9"
-              className="font-mono"
-              spellCheck={false}
+        <div className="relative" ref={swatchRef}>
+          <button
+            type="button"
+            aria-haspopup="dialog"
+            aria-expanded={picking}
+            aria-label="Custom colour"
+            title="A colour of your own"
+            onClick={() => {
+              if (!custom) {
+                onChange({
+                  ...draft,
+                  accentCustom: accents[draft.accent]?.mid ?? "#4a90d9",
+                });
+              }
+              setPicking((v) => !v);
+            }}
+            className={`grid h-7 w-7 place-items-center rounded-full border-2 transition-transform hover:scale-110 ${
+              custom ? "border-[color:var(--border-accent)] scale-110" : "border-transparent"
+            }`}
+          >
+            {/* O gradiente vive num elemento PROPRIO, e nao no fundo do botao.
+                Era essa a origem dos cantos estranhos: o fundo de um elemento pinta-se por baixo
+                da sua borda, e com uma borda de 2px o recorte redondo do fundo deixa de coincidir
+                com o circulo que se ve. Numa cor solida ninguem nota; num gradiente aparece nos
+                cantos. Aqui o gradiente tem o seu proprio `rounded-full` e nada por baixo. */}
+            <span
+              aria-hidden="true"
+              className="block h-full w-full rounded-full"
+              style={{ background: custom ? preview?.mid ?? custom : RAINBOW }}
             />
-            {preview ? (
-              <div
-                className="flex h-9 w-28 shrink-0 overflow-hidden rounded-sm border border-[color:var(--border-subtle)]"
-                title={`${preview.raw} / ${preview.mid} / ${preview.glow}`}
-              >
-                <span className="flex-1" style={{ background: preview.raw }} />
-                <span className="flex-1" style={{ background: preview.mid }} />
-                <span className="flex-1" style={{ background: preview.glow }} />
-              </div>
-            ) : (
-              <span className="w-28 shrink-0 text-xs text-[color:var(--color-error)]">
-                not a colour
-              </span>
+          </button>
+
+          <AnimatePresence>
+            {picking && (
+              <>
+                {/* Fechar ao clicar fora. Nao e um modal: escolher uma cor nao merece interromper
+                    a pagina nem proteger o foco, so precisa de sair do caminho quando se acaba. */}
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setPicking(false)}
+                  aria-hidden="true"
+                />
+                <motion.div
+                  role="dialog"
+                  aria-label="Pick a colour"
+                  // O momento: o painel ABRE DA PROPRIA BOLINHA, por um circulo de clip que
+                  // cresce a partir dela. E a mesma forma do que se vai escolher, e diz de onde
+                  // veio sem precisar de uma seta desenhada.
+                  initial={{ clipPath: "circle(14px at 14px 14px)", opacity: 0, scale: 0.96 }}
+                  animate={{ clipPath: "circle(150% at 14px 14px)", opacity: 1, scale: 1 }}
+                  exit={{ clipPath: "circle(14px at 14px 14px)", opacity: 0, scale: 0.96 }}
+                  transition={{ duration: 0.34, ease: [0.22, 1, 0.36, 1] }}
+                  style={{ transformOrigin: "14px 14px" }}
+                  className="absolute left-0 top-0 z-50 flex flex-col items-center gap-3 rounded-xl border border-[color:var(--border-subtle)] bg-surface-1 p-4 shadow-[0_2px_4px_rgba(0,0,0,0.14),0_18px_48px_-16px_rgba(0,0,0,0.45)]"
+                >
+                  <ColourWheel
+                    wheel={wheel}
+                    chroma={preview?.chroma ?? 0}
+                    hue={preview?.hue ?? 0}
+                    onPreview={(chroma, hue) => askStops(chroma, hue, false)}
+                    onCommit={(chroma, hue) => askStops(chroma, hue, true)}
+                  />
+                  <div className="flex w-44 items-center gap-2">
+                    <div
+                      className="flex h-7 flex-1 overflow-hidden rounded-sm border border-[color:var(--border-subtle)]"
+                      aria-hidden="true"
+                    >
+                      <span className="flex-1" style={{ background: preview?.raw }} />
+                      <span className="flex-1" style={{ background: preview?.mid }} />
+                      <span className="flex-1" style={{ background: preview?.glow }} />
+                    </div>
+                    <Button variant="ghost" size="sm" onClick={() => setPicking(false)}>
+                      Done
+                    </Button>
+                  </div>
+                </motion.div>
+              </>
             )}
-          </div>
-          <p className="text-xs text-fg-muted">
-            The orb is a gradient of three stops. Ember derives the dark and the pale one from this
-            colour, keeping its hue. What you see here is what the orb paints.
-          </p>
+          </AnimatePresence>
         </div>
-      )}
+      </ChoiceGrid>
 
       <ChoiceGrid label="Icon">
         {icons.map((name) => {
@@ -256,6 +472,7 @@ function ProjectEditor({
           );
         })}
       </ChoiceGrid>
+      </div>
 
       <div className="flex flex-col gap-2">
         <div className="flex items-baseline justify-between gap-2">
@@ -583,6 +800,7 @@ export function ProjectsTab({
           <ProjectEditor
             draft={draft}
             accents={s.accents}
+            wheel={s.accentWheel}
             icons={s.icons}
             onChange={setDraft}
             onSave={save}
@@ -599,10 +817,17 @@ export function ProjectsTab({
       )}
 
       {s.projects.map((p) => {
-        const I = iconOf(p.icon);
-        const a = s.accents[p.accent] ?? s.accents[0];
         const isActive = s.activeProject === p.id;
         const isOpen = openId === p.id;
+        // Com o painel aberto, o cabecalho mostra o RASCUNHO e nao o que esta gravado: escolher
+        // uma cor ou um icone e nao ver nada mudar ate carregar em Save nao diz se a escolha
+        // pegou. Continua a ser so pre-visualizacao; quem grava e o Save.
+        const shown = isOpen && draft?.id === p.id ? draft : p;
+        const I = iconOf(shown.icon);
+        // A cor a medida GANHA ao indice, como no Rust (`resolve_accent`). Sem esta linha,
+        // escolher uma cor, gravar, e ver o cartao com a cor antiga parecia que a gravacao nao
+        // tinha funcionado, quando o que estava errado era so o que se mostrava.
+        const dot = shown.accentCustom?.trim() || (s.accents[shown.accent] ?? s.accents[0])?.mid;
         return (
           <div
             key={p.id}
@@ -611,7 +836,7 @@ export function ProjectsTab({
             <div className="flex items-center gap-3 px-5 py-4">
               <span
                 className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
-                style={{ background: a?.mid ?? "var(--color-accent)", color: "#1a0e03" }}
+                style={{ background: dot ?? "var(--color-accent)", color: "#1a0e03" }}
               >
                 <I size={17} weight="bold" />
               </span>
@@ -624,8 +849,8 @@ export function ProjectsTab({
                     <span
                       className="shrink-0 whitespace-nowrap rounded-full px-2 py-1 text-[10px] font-semibold uppercase leading-none tracking-wider"
                       style={{
-                        color: a?.mid ?? "var(--color-accent)",
-                        border: `1px solid ${a?.mid ?? "var(--color-accent)"}`,
+                        color: dot ?? "var(--color-accent)",
+                        border: `1px solid ${dot ?? "var(--color-accent)"}`,
                       }}
                     >
                       Active
@@ -682,6 +907,7 @@ export function ProjectsTab({
                   <ProjectEditor
                     draft={draft}
                     accents={s.accents}
+                    wheel={s.accentWheel}
                     icons={s.icons}
                     onChange={setDraft}
                     onSave={save}

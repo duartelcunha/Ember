@@ -219,6 +219,58 @@ impl From<&Accent> for ResolvedAccent {
 /// `ACCENTS`, converted to OKLCH: the dark stop sits 0.241 below the mid in lightness and keeps 72%
 /// of its chroma, the pale stop sits 0.213 above and keeps 38%. Deriving a custom colour with the
 /// same ramp is what makes it sit next to the fixed palette without looking foreign.
+/// The band the colour wheel picks inside: one fixed lightness and the chroma its outer edge
+/// means. The lightness is the average of the eight fixed accents' mid stops (0.701), so a colour
+/// picked on the wheel lands in the same range as the palette and the derived ramp behaves.
+///
+/// These travel to the frontend in the settings DTO instead of being mirrored there by hand. A
+/// second copy would be one more pair of constants to keep in step, and the wheel would start
+/// painting colours the derivation never produces.
+pub const WHEEL_LIGHTNESS: f64 = 0.70;
+pub const WHEEL_MAX_CHROMA: f64 = 0.25;
+
+/// The colours of the wheel's outer ring, evenly spaced around the hue circle, plus the neutral
+/// its centre fades to.
+///
+/// Computed here and shipped to the frontend rather than written as `oklch()` in CSS: support for
+/// that colour function depends on the WebView build, and a disc that silently renders colourless
+/// is a worse failure than one extra field in the DTO. These are also exactly the colours the
+/// derivation produces, so what the wheel shows is what the orb paints.
+pub fn wheel_ring(steps: usize) -> Vec<String> {
+    (0..=steps.max(1))
+        .map(|i| {
+            let hue = 360.0 * (i as f64) / (steps.max(1) as f64);
+            crate::oklch::to_hex(crate::oklch::to_srgb_in_gamut(crate::oklch::Oklch {
+                l: WHEEL_LIGHTNESS,
+                c: WHEEL_MAX_CHROMA,
+                h: hue,
+            }))
+        })
+        .collect()
+}
+
+/// The neutral at the wheel's centre: the same lightness with no chroma at all.
+pub fn wheel_centre() -> String {
+    crate::oklch::to_hex(crate::oklch::to_srgb_in_gamut(crate::oklch::Oklch {
+        l: WHEEL_LIGHTNESS,
+        c: 0.0,
+        h: 0.0,
+    }))
+}
+
+/// The stops for a colour given directly in OKLCH, for the wheel: it knows an angle and a radius,
+/// not a hex. Out-of-gamut requests give up chroma, so the wheel's outer edge simply stops getting
+/// more saturated instead of banding.
+pub fn accent_from_oklch(l: f64, c: f64, h: f64) -> ResolvedAccent {
+    let hex = crate::oklch::to_hex(crate::oklch::to_srgb_in_gamut(crate::oklch::Oklch {
+        l,
+        c,
+        h,
+    }));
+    // Reuses the same derivation as a pasted hex: one ramp, one place.
+    derive_accent(&hex).unwrap_or_else(|| accent(0).into())
+}
+
 const RAW_DELTA_L: f64 = 0.241;
 const GLOW_DELTA_L: f64 = 0.213;
 const RAW_CHROMA: f64 = 0.72;

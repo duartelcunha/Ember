@@ -912,6 +912,7 @@ pub fn run() {
             commands::delete_project,
             commands::set_active_project,
             commands::preview_accent,
+            commands::accent_from_wheel,
             commands::scan_project_folder,
             commands::distill_project,
             commands::read_recent_logs,

@@ -67,6 +67,18 @@ export interface ModelCatalog {
   live: boolean;
 }
 
+/**
+ * Os tres tons de uma cor a medida, mais onde ela cai na roda. A posicao vem do Rust porque o
+ * frontend nao tem (nem deve ter) conversao de cor propria.
+ */
+export interface AccentPreview {
+  raw: string;
+  mid: string;
+  glow: string;
+  chroma: number;
+  hue: number;
+}
+
 /** Um projeto registado. O `brief` e o que entra no prompt; o ficheiro e so a semente. */
 export interface Project {
   id: string;
@@ -158,6 +170,12 @@ export interface EmberSettings {
   /** Paleta e icones vem do Rust para nao existirem duas verdades. */
   accents: Accent[];
   icons: string[];
+  /**
+   * A faixa em que a roda de cores escolhe: uma luminosidade fixa e o chroma que a borda de fora
+   * significa. Vem do Rust (`WHEEL_LIGHTNESS` / `WHEEL_MAX_CHROMA`) para a roda pintar exatamente
+   * as cores que a derivacao consegue produzir.
+   */
+  accentWheel: { lightness: number; maxChroma: number; ring: string[]; centre: string };
 }
 
 export const DEFAULT_SETTINGS: EmberSettings = {
@@ -203,6 +221,7 @@ export const DEFAULT_SETTINGS: EmberSettings = {
   activeProject: null,
   accents: [],
   icons: [],
+  accentWheel: { lightness: 0.7, maxChroma: 0.25, ring: [], centre: "#8b8b8b" },
 };
 
 /** Comandos Tauri das settings. Implementados no nucleo Rust. */
@@ -267,8 +286,10 @@ export const ipc = {
     invoke<EmberSettings>("set_active_project", { id }),
   /** Lê a pasta e diz que ficheiro serviria. Não envia nada para lado nenhum. */
   /** Os tres tons que uma cor a medida daria, para a pre-visualizacao. `null` se o hex nao presta. */
-  previewAccent: (hex: string) =>
-    invoke<{ raw: string; mid: string; glow: string } | null>("preview_accent", { hex }),
+  previewAccent: (hex: string) => invoke<AccentPreview | null>("preview_accent", { hex }),
+  /** Os tres tons de um ponto da roda de cores. Ver `accent_from_wheel`. */
+  accentFromWheel: (chroma: number, hue: number) =>
+    invoke<AccentPreview>("accent_from_wheel", { chroma, hue }),
   scanProjectFolder: (path: string) => invoke<ProjectScan>("scan_project_folder", { path }),
   /** Lê o ficheiro escolhido e devolve um brief. Não grava: volta como rascunho para rever. */
   distillProject: (path: string) => invoke<string>("distill_project", { path }),
