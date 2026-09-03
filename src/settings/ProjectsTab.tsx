@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { toast } from "sonner";
 import {
@@ -119,6 +119,27 @@ function ProjectEditor({
   // uma confirmação. O botão vira "Really delete?" e volta atrás sozinho.
   const [confirming, setConfirming] = useState(false);
 
+  // Uma cor a medida vale mais do que o indice: com ela preenchida, nenhuma das fixas esta ativa.
+  const custom = draft.accentCustom?.trim() ? draft.accentCustom : null;
+  // Os tres tons vem do Rust (`preview_accent`), e nao de uma segunda copia da conversao OKLCH
+  // aqui: duas implementacoes da mesma rampa divergiam e a pre-visualizacao passaria a mostrar
+  // uma cor que o orb nunca pinta.
+  const [preview, setPreview] = useState<{ raw: string; mid: string; glow: string } | null>(null);
+  useEffect(() => {
+    if (!custom) {
+      setPreview(null);
+      return;
+    }
+    let alive = true;
+    ipc
+      .previewAccent(custom)
+      .then((p) => alive && setPreview(p))
+      .catch(() => alive && setPreview(null));
+    return () => {
+      alive = false;
+    };
+  }, [custom]);
+
   return (
     <div className="flex flex-col gap-5 border-t border-[color:var(--border-subtle)] px-5 py-5">
       <div className="flex flex-col gap-2">
@@ -137,19 +158,79 @@ function ProjectEditor({
             key={a.label}
             type="button"
             role="radio"
-            aria-checked={draft.accent === i}
+            aria-checked={!custom && draft.accent === i}
             aria-label={a.label}
             title={a.label}
-            onClick={() => onChange({ ...draft, accent: i })}
+            // Escolher uma fixa apaga a cor a medida. O indice fica gravado por baixo enquanto a
+            // custom esta ligada, para desligar voltar a esta sem ter de a escolher outra vez.
+            onClick={() => onChange({ ...draft, accent: i, accentCustom: null })}
             className={`h-7 w-7 rounded-full border-2 transition-transform hover:scale-110 ${
-              draft.accent === i
+              !custom && draft.accent === i
                 ? "border-[color:var(--border-accent)] scale-110"
                 : "border-transparent"
             }`}
             style={{ background: a.mid }}
           />
         ))}
+        <button
+          type="button"
+          role="radio"
+          aria-checked={!!custom}
+          aria-label="Custom colour"
+          title="A colour of your own"
+          onClick={() =>
+            onChange({
+              ...draft,
+              accentCustom: custom ?? accents[draft.accent]?.mid ?? "#4a90d9",
+            })
+          }
+          className={`h-7 w-7 rounded-full border-2 transition-transform hover:scale-110 ${
+            custom ? "border-[color:var(--border-accent)] scale-110" : "border-transparent"
+          }`}
+          style={
+            custom
+              ? { background: preview?.mid ?? custom }
+              : {
+                  background:
+                    "conic-gradient(#ef4444, #eab308, #4ade80, #06b6d4, #6366f1, #d946ef, #ef4444)",
+                }
+          }
+        />
       </ChoiceGrid>
+
+      {custom && (
+        <div className="flex flex-col gap-2">
+          <Label htmlFor={`accent-hex-${draft.id || "novo"}`}>Custom colour</Label>
+          <div className="flex items-center gap-2">
+            <Input
+              id={`accent-hex-${draft.id || "novo"}`}
+              value={custom}
+              onChange={(e) => onChange({ ...draft, accentCustom: e.target.value })}
+              placeholder="#4a90d9"
+              className="font-mono"
+              spellCheck={false}
+            />
+            {preview ? (
+              <div
+                className="flex h-9 w-28 shrink-0 overflow-hidden rounded-sm border border-[color:var(--border-subtle)]"
+                title={`${preview.raw} / ${preview.mid} / ${preview.glow}`}
+              >
+                <span className="flex-1" style={{ background: preview.raw }} />
+                <span className="flex-1" style={{ background: preview.mid }} />
+                <span className="flex-1" style={{ background: preview.glow }} />
+              </div>
+            ) : (
+              <span className="w-28 shrink-0 text-xs text-[color:var(--color-error)]">
+                not a colour
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-fg-muted">
+            The orb is a gradient of three stops. Ember derives the dark and the pale one from this
+            colour, keeping its hue. What you see here is what the orb paints.
+          </p>
+        </div>
+      )}
 
       <ChoiceGrid label="Icon">
         {icons.map((name) => {

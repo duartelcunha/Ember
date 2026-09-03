@@ -849,6 +849,20 @@ pub fn set_active_project(app: AppHandle, id: Option<String>) -> Result<Settings
 /// Existe como comando separado do `distill_project` de proposito: a pessoa tem de conseguir ver
 /// o que seria enviado (que ficheiro, quantas linhas, e porque e que aquele ganhou aos outros)
 /// ANTES de um repo de cliente sair da maquina dela.
+/// The three stops a custom colour would paint with, for the preview next to the hex field.
+///
+/// A command rather than the same maths written again in TypeScript. The derivation is calibrated
+/// against the sixteen fixed accents and lives in one tested place; a second copy in the frontend
+/// would drift from it the first time either side is touched, and the user would be previewing a
+/// colour the orb never paints.
+///
+/// `None` for an unparseable hex, which is what lets the field show "not a colour" while the user
+/// is still typing instead of flashing an error at every keystroke.
+#[tauri::command]
+pub fn preview_accent(hex: String) -> Option<ember_core::projects::ResolvedAccent> {
+    ember_core::projects::derive_accent(&hex)
+}
+
 #[tauri::command]
 pub fn scan_project_folder(path: String) -> Result<crate::projects::Scan, String> {
     let p = std::path::Path::new(&path);
@@ -884,8 +898,10 @@ pub async fn distill_project(
 pub(crate) fn refresh_orb_accent(state: &AppState, cfg: &config::Config) {
     let ativo = ember_core::projects::active(&cfg.projects, cfg.active_project.as_deref());
     let cor = ativo.map(|p| {
-        let a = ember_core::projects::accent(p.accent);
-        [a.raw.to_string(), a.mid.to_string(), a.glow.to_string()]
+        // `resolve_accent` decides between the project's custom colour and its palette index; it
+        // is pure and tested, and this is the only place the orb colour is built.
+        let a = ember_core::projects::resolve_accent(p);
+        [a.raw, a.mid, a.glow]
     });
     if let Ok(mut slot) = state.orb_accent.lock() {
         *slot = cor;

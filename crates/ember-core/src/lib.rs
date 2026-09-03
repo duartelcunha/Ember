@@ -14,6 +14,7 @@ pub mod hotkey;
 pub mod model;
 pub mod models;
 pub mod modifiers;
+pub mod oklch;
 pub mod overlay;
 pub mod overlay_geom;
 pub mod profile_path;

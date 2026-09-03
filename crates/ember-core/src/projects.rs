@@ -243,6 +243,82 @@ pub fn accent(index: u8) -> &'static Accent {
     ACCENTS.get(index as usize).unwrap_or(&ACCENTS[0])
 }
 
+/// The three stops an accent resolves to, owned rather than `&'static str`.
+///
+/// `Accent` cannot serve here: its fields are `&'static str` because `ACCENTS` is a `const`, and a
+/// colour derived at runtime has no static lifetime. Widening `Accent` to `Cow` would touch all
+/// sixteen entries and the tests that pin them, for no gain: the shell already turns the stops
+/// into `String` on its way to the overlay.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ResolvedAccent {
+    pub raw: String,
+    pub mid: String,
+    pub glow: String,
+}
+
+impl From<&Accent> for ResolvedAccent {
+    fn from(a: &Accent) -> Self {
+        Self {
+            raw: a.raw.to_string(),
+            mid: a.mid.to_string(),
+            glow: a.glow.to_string(),
+        }
+    }
+}
+
+/// How far the dark and pale stops sit from the chosen colour, and how much chroma each keeps.
+///
+/// These are not invented. They are the averages measured across the sixteen hand-written accents
+/// in `ACCENTS`, converted to OKLCH: the dark stop sits 0.237 below the mid in lightness and keeps
+/// 73% of its chroma, the pale stop sits 0.229 above and keeps 35%. Deriving a custom colour with
+/// the same ramp is what makes it sit next to the fixed palette without looking foreign.
+const RAW_DELTA_L: f64 = 0.237;
+const GLOW_DELTA_L: f64 = 0.229;
+const RAW_CHROMA: f64 = 0.73;
+const GLOW_CHROMA: f64 = 0.35;
+
+/// Builds the three stops of an accent from one `#rrggbb` colour, keeping the hue.
+///
+/// `None` when the colour cannot be parsed, so a hand-edited config falls back to the indexed
+/// palette instead of painting the orb black.
+///
+/// The chosen colour is used as the mid stop untouched: it is what the user picked and what they
+/// see in the swatch. The other two are clamped into the bands the fixed palette occupies (the
+/// dark stops there run 0.36 to 0.55 in lightness, the pale ones 0.88 to 0.95), which is also what
+/// keeps the ramp from collapsing: even a near-black or near-white pick still leaves the dark and
+/// pale stops at least 0.37 apart in lightness, so the orb gradient never flattens into a blob.
+pub fn derive_accent(hex: &str) -> Option<ResolvedAccent> {
+    use crate::oklch::{self, Oklch};
+    let mid = oklch::to_oklch(oklch::parse_hex(hex)?);
+    let stop = |l: f64, c: f64| oklch::to_hex(oklch::to_srgb_in_gamut(Oklch { l, c, h: mid.h }));
+    Some(ResolvedAccent {
+        raw: stop(
+            (mid.l - RAW_DELTA_L).clamp(0.10, 0.60),
+            mid.c * RAW_CHROMA,
+        ),
+        mid: oklch::to_hex(oklch::to_srgb_in_gamut(mid)),
+        glow: stop(
+            (mid.l + GLOW_DELTA_L).clamp(0.85, 0.97),
+            mid.c * GLOW_CHROMA,
+        ),
+    })
+}
+
+/// The accent a project paints with: its custom colour when it has a usable one, otherwise the
+/// palette entry its index points at.
+///
+/// The decision lives here, pure and tested, and the shell only executes it (the same split as
+/// `project::choose_context`). A custom colour that fails to parse falls back rather than
+/// erroring: the accent is decoration, and no refine should stop because of it.
+pub fn resolve_accent(project: &Project) -> ResolvedAccent {
+    project
+        .accent_custom
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .and_then(derive_accent)
+        .unwrap_or_else(|| accent(project.accent).into())
+}
+
 /// Icones oferecidos, por nome. Strings e nao um enum de proposito: um icone que desapareca numa
 /// versao futura cai no default, em vez de rebentar a desserializacao da config INTEIRA e levar
 /// atras as chaves e os atalhos do utilizador.
@@ -306,6 +382,13 @@ pub struct Project {
     /// O ficheiro concreto que foi lido dessa pasta.
     #[serde(default)]
     pub source_path: Option<String>,
+    /// A custom `#rrggbb` accent, which wins over `accent` when it parses.
+    ///
+    /// Additive and optional on purpose: every config already on disk stays valid and needs no
+    /// migration, and a build that predates this field ignores it instead of failing to parse the
+    /// whole config, which would take the user's keys and shortcuts down with it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accent_custom: Option<String>,
 }
 
 /// Normaliza a lista vinda do disco (ou editada a mao).
@@ -323,6 +406,13 @@ pub fn sanitize_projects(projects: Vec<Project>) -> Vec<Project> {
             continue;
         }
         seen.push(p.id.clone());
+        // A custom colour that cannot be parsed is dropped here rather than at paint time: the
+        // same reason an unknown icon falls back to the default instead of breaking the whole
+        // config. `resolve_accent` would fall back anyway, but a value that can never work has no
+        // business staying on disk.
+        p.accent_custom = p
+            .accent_custom
+            .filter(|hex| crate::oklch::parse_hex(hex).is_some());
         p.accent = if (p.accent as usize) < ACCENTS.len() {
             p.accent
         } else {
@@ -624,6 +714,7 @@ Testes antes do codigo.",
             brief: "Escreve curto.".into(),
             folder: None,
             source_path: None,
+            accent_custom: None,
         }
     }
 
@@ -637,6 +728,100 @@ Testes antes do codigo.",
         // Um indice fora de gama (config editada a mao) cai no Ember em vez de rebentar.
         assert_eq!(accent(99), &ACCENTS[0]);
         assert_eq!(accent(2).label, "Violet");
+    }
+
+    fn lightness(hex: &str) -> f64 {
+        crate::oklch::to_oklch(crate::oklch::parse_hex(hex).expect("hex")).l
+    }
+
+    fn hue(hex: &str) -> f64 {
+        crate::oklch::to_oklch(crate::oklch::parse_hex(hex).expect("hex")).h
+    }
+
+    #[test]
+    fn a_derived_accent_is_a_ramp_around_the_chosen_colour() {
+        let a = derive_accent("#4a90d9").expect("valid hex");
+        // The chosen colour is the mid stop, untouched: it is what the user sees in the swatch.
+        assert_eq!(a.mid, "#4a90d9");
+        assert!(
+            lightness(&a.raw) < lightness(&a.mid) && lightness(&a.mid) < lightness(&a.glow),
+            "stops out of order: {} {} {}",
+            a.raw,
+            a.mid,
+            a.glow
+        );
+    }
+
+    #[test]
+    fn a_derived_accent_keeps_the_hue_across_the_three_stops() {
+        // The reason this module converts through OKLCH at all. Shifting lightness in HSL drags
+        // the hue with it, and three stops of drifting hue is not one colour, it is three.
+        for hex in ["#4a90d9", "#d94a90", "#90d94a", "#7a5230"] {
+            let a = derive_accent(hex).expect("valid hex");
+            let drift = |x: &str| {
+                let d = (hue(x) - hue(&a.mid)).abs();
+                d.min(360.0 - d)
+            };
+            assert!(drift(&a.raw) < 12.0, "{hex}: raw hue drifted {}", drift(&a.raw));
+            assert!(drift(&a.glow) < 12.0, "{hex}: glow hue drifted {}", drift(&a.glow));
+        }
+    }
+
+    #[test]
+    fn even_a_near_black_or_near_white_pick_still_gives_a_visible_gradient() {
+        // The orb is a three-stop gradient. If the dark and pale stops land close together the
+        // gradient flattens into a blob, and the accent stops telling the user anything. The
+        // clamps in `derive_accent` are what stop that, so this is the test that pins them.
+        for hex in ["#000000", "#050505", "#ffffff", "#fafafa", "#ff0000", "#00ff00", "#0000ff"] {
+            let a = derive_accent(hex).expect("valid hex");
+            let spread = lightness(&a.glow) - lightness(&a.raw);
+            assert!(
+                spread > 0.30,
+                "{hex} gave a flat ramp: spread {spread:.3} ({} -> {})",
+                a.raw,
+                a.glow
+            );
+        }
+    }
+
+    #[test]
+    fn garbage_never_becomes_a_colour() {
+        for bad in ["", "   ", "red", "#12", "#gggggg", "rgb(1,2,3)", "#1234567"] {
+            assert_eq!(derive_accent(bad), None, "should have refused {bad:?}");
+        }
+    }
+
+    #[test]
+    fn a_project_without_a_custom_colour_paints_exactly_as_it_does_today() {
+        // The test that protects everyone already using the app: adding this feature must not
+        // change a single pixel for a project that never asked for a custom colour.
+        for index in [0u8, 2, 7, 15] {
+            let mut p = proj("id", "Nome");
+            p.accent = index;
+            let resolved = resolve_accent(&p);
+            let fixed = accent(index);
+            assert_eq!(resolved.raw, fixed.raw);
+            assert_eq!(resolved.mid, fixed.mid);
+            assert_eq!(resolved.glow, fixed.glow);
+        }
+    }
+
+    #[test]
+    fn an_unusable_custom_colour_falls_back_instead_of_breaking_the_orb() {
+        // A hand-edited config, or one written by a newer build, must not leave the orb black.
+        let mut p = proj("id", "Nome");
+        p.accent = 3;
+        for bad in [Some("nao-e-cor".to_string()), Some("  ".to_string()), None] {
+            p.accent_custom = bad.clone();
+            assert_eq!(
+                resolve_accent(&p).mid,
+                accent(3).mid,
+                "should have fallen back for {bad:?}"
+            );
+        }
+        // And a usable one wins over the index.
+        p.accent_custom = Some("#4a90d9".into());
+        assert_eq!(resolve_accent(&p).mid, "#4a90d9");
     }
 
     #[test]

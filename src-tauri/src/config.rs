@@ -653,6 +653,7 @@ mod tests {
             brief: "Escreve curto.".into(),
             folder: None,
             source_path: None,
+            accent_custom: None,
         }];
         assert_eq!(c.sanitize().active_project.as_deref(), Some("fantasma"));
     }

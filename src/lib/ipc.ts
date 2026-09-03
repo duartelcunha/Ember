@@ -73,6 +73,11 @@ export interface Project {
   name: string;
   /** Indice na paleta que vem em `EmberSettings.accents`. */
   accent: number;
+  /**
+   * Cor `#rrggbb` a medida, que ganha ao `accent` quando esta preenchida. Opcional porque o Rust
+   * a omite quando nao existe (`skip_serializing_if`), para nao poluir a config em disco.
+   */
+  accentCustom?: string | null;
   icon: string;
   brief: string;
   folder: string | null;
@@ -261,6 +266,9 @@ export const ipc = {
   setActiveProject: (id: string | null) =>
     invoke<EmberSettings>("set_active_project", { id }),
   /** Lê a pasta e diz que ficheiro serviria. Não envia nada para lado nenhum. */
+  /** Os tres tons que uma cor a medida daria, para a pre-visualizacao. `null` se o hex nao presta. */
+  previewAccent: (hex: string) =>
+    invoke<{ raw: string; mid: string; glow: string } | null>("preview_accent", { hex }),
   scanProjectFolder: (path: string) => invoke<ProjectScan>("scan_project_folder", { path }),
   /** Lê o ficheiro escolhido e devolve um brief. Não grava: volta como rascunho para rever. */
   distillProject: (path: string) => invoke<string>("distill_project", { path }),
