@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.0](https://github.com/duartelcunha/Ember/compare/v0.10.0...v1.0.0) (2026-09-03)
+
+
+### Miscellaneous Chores
+
+* release 1.0.0 ([326d42c](https://github.com/duartelcunha/Ember/commit/326d42c8e24d879c74c4d5a867ab1e821c205a94))
+
 ## [0.10.0](https://github.com/duartelcunha/Ember/compare/v0.9.3...v0.10.0) (2026-09-03)
 
 
