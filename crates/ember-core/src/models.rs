@@ -251,19 +251,26 @@ fn parse_data_array(
 // Ordenacao e escolha do default
 // ---------------------------------------------------------------------------------------------
 
-/// Peso da familia dentro de um provider: o desempate depois do free tier e da geracao.
+/// Peso da familia dentro de um provider: no Gemini, quem responde de facto no free tier.
 ///
-/// As preferencias sao as que o projeto ja tinha tomado a mao e nao mudam aqui. No Gemini,
-/// `flash` a frente de `flash-lite` (mesma quota gratuita, mais qualidade). No Claude, `haiku` a
-/// frente de tudo, que foi a decisao explicita de custo quando o fallback foi escolhido.
+/// Esta ordem ja esteve ao contrario, com a justificacao de que `flash` e `flash-lite` tinham a
+/// "mesma quota gratuita" e o flash tinha mais qualidade. A premissa era falsa. Em uso real, o
+/// flash da geracao do momento devolve `503 UNAVAILABLE - high demand` em serie (num unico dia,
+/// 3 de 3 no `gemini-3.8-flash` e 2 de 3 no `3.7-flash`), enquanto a familia lite responde. A
+/// Google deixou de publicar as quotas por modelo, mas o comportamento observado chega: o topo
+/// de gama gratuito e o mais disputado, e um modelo melhor que nunca responde nao serve para
+/// nada num refine que tem de aterrar em segundos.
+///
+/// Fica portanto `flash-lite` > `flash` > `pro`. O `pro` nem costuma ser gratuito, e nesse caso
+/// ja cai pelo primeiro criterio do `sort_key`.
 fn family_rank(provider: Provider, id: &str) -> u8 {
     let l = id.to_ascii_lowercase();
     match provider {
         Provider::Gemini => {
             if l.contains("flash-lite") {
-                2
-            } else if l.contains("flash") {
                 3
+            } else if l.contains("flash") {
+                2
             } else if l.contains("pro") {
                 1
             } else {
@@ -282,14 +289,19 @@ fn family_rank(provider: Provider, id: &str) -> u8 {
 /// Chave de ordenacao, do melhor para o pior. Ordem dos criterios, e porque:
 /// 1. free tier primeiro (o pedido explicito: manter o Gemini em modelos gratuitos);
 /// 2. nao-preview antes de preview (um preview desaparece sem aviso);
-/// 3. geracao mais recente;
-/// 4. familia preferida do provider.
-fn sort_key(provider: Provider, m: &ModelInfo) -> (bool, bool, u32, u8) {
+/// 3. familia com capacidade real (ver `family_rank`);
+/// 4. geracao mais recente, DENTRO da familia.
+///
+/// A familia passou a pesar mais do que a geracao, e e essa a mudanca que interessa: com a
+/// geracao a mandar, o escolhido era sempre o flash acabado de sair, que e exactamente o mais
+/// concorrido do free tier. Dentro da familia a geracao continua a decidir, para nao acabarmos
+/// agarrados a modelos velhos que a Google descontinua (ja apanhamos um 404 num flash-lite 2.5).
+fn sort_key(provider: Provider, m: &ModelInfo) -> (bool, bool, u8, u32) {
     (
         m.free_tier,
         !m.preview,
-        m.generation,
         family_rank(provider, &m.id),
+        m.generation,
     )
 }
 
@@ -527,8 +539,9 @@ mod tests {
         ];
         let ranked = rank(Provider::Gemini, &models);
         let ids: Vec<&str> = ranked.iter().map(|x| x.id.as_str()).collect();
-        // O pro e mais capaz, mas nao e free tier: sai do topo, sem sair da lista.
-        assert_eq!(ids[0], "gemini-3.5-flash");
+        // O pro e mais capaz, mas nao e free tier: sai do topo, sem sair da lista. E o topo e o
+        // lite, mesmo sendo de geracao anterior: e a familia que responde de facto no free tier.
+        assert_eq!(ids[0], "gemini-3.1-flash-lite");
         assert_eq!(*ids.last().unwrap(), "gemini-3.5-pro");
         // Entre dois free da mesma geracao, o estavel ganha ao preview.
         assert!(
@@ -537,22 +550,55 @@ mod tests {
                     .iter()
                     .position(|i| *i == "gemini-3.5-flash-preview-01-01")
         );
-        // Geracao mais recente ganha a mais antiga.
+        // Geracao mais recente ganha a mais antiga DENTRO da mesma familia.
         assert!(
-            ids.iter().position(|i| *i == "gemini-3.1-flash-lite")
+            ids.iter().position(|i| *i == "gemini-3.5-flash")
                 < ids.iter().position(|i| *i == "gemini-2.5-flash")
         );
     }
 
     #[test]
-    fn ranking_prefers_flash_over_flash_lite_at_the_same_generation() {
+    fn ranking_prefers_flash_lite_because_the_flash_free_tier_has_no_capacity() {
+        // Esta regra ja foi ao contrario ("flash a frente do lite: mesma quota, mais qualidade").
+        // A premissa caiu com dados de uso real: num so dia, `gemini-3.8-flash` deu 503 "high
+        // demand" em 3 de 3 tentativas e o `3.7-flash` em 2 de 3, enquanto a familia lite
+        // respondia. Um modelo melhor que nunca responde vale menos do que um razoavel que
+        // responde sempre.
         let models = vec![
             m("gemini-3.5-flash-lite", true),
             m("gemini-3.5-flash", true),
         ];
         assert_eq!(
             pick_default(Provider::Gemini, &models).unwrap(),
-            "gemini-3.5-flash"
+            "gemini-3.5-flash-lite"
+        );
+    }
+
+    #[test]
+    fn a_lite_of_an_older_generation_beats_a_brand_new_flash() {
+        // A familia passa a pesar MAIS do que a geracao: era a geracao a mandar que punha o
+        // `3.8-flash` no topo, que e precisamente o mais concorrido de todos.
+        let models = vec![
+            m("gemini-3.8-flash", true),
+            m("gemini-3.5-flash-lite", true),
+        ];
+        assert_eq!(
+            pick_default(Provider::Gemini, &models).unwrap(),
+            "gemini-3.5-flash-lite"
+        );
+    }
+
+    #[test]
+    fn between_two_lites_the_newer_generation_still_wins() {
+        // A geracao continua a decidir DENTRO da familia: preferir capacidade nao e preferir
+        // modelos velhos, que acabam descontinuados (ja apanhamos um 404 de um flash-lite 2.5).
+        let models = vec![
+            m("gemini-3.5-flash-lite", true),
+            m("gemini-3.8-flash-lite", true),
+        ];
+        assert_eq!(
+            pick_default(Provider::Gemini, &models).unwrap(),
+            "gemini-3.8-flash-lite"
         );
     }
 
@@ -620,6 +666,7 @@ mod tests {
         vec![
             m("gemini-3.7-flash", true),
             m("gemini-3.6-flash", true),
+            m("gemini-3.5-flash-lite", true),
             m("gemini-2.5-flash", true),
             m("gemini-3-flash-preview", true),
             m("gemini-2.5-pro", false),
@@ -630,8 +677,10 @@ mod tests {
     fn alternates_are_the_next_best_free_models_of_the_same_family() {
         // O caso que motivou isto: o 3.7-flash e o mais recente e por isso o mais concorrido,
         // e devolvia 503 "high demand" em serie. Os outros flash da mesma chave estavam livres.
+        // E a rede de seguranca comeca pelo LITE: cair do modelo mais concorrido para o segundo
+        // mais concorrido era o que o log mostrava a fazer, 503 atras de 503.
         let alt = alternates(Provider::Gemini, "gemini-3.7-flash", &gemini_catalog(), 2);
-        assert_eq!(alt, vec!["gemini-3.6-flash", "gemini-2.5-flash"]);
+        assert_eq!(alt, vec!["gemini-3.5-flash-lite", "gemini-3.6-flash"]);
         // O escolhido nunca se repete a si proprio (seria gastar um pedido para apanhar o mesmo
         // 503), e o preview fica de fora (uma rede de seguranca nao pode desaparecer sem aviso).
         assert!(!alt.contains(&"gemini-3.7-flash".to_string()));
