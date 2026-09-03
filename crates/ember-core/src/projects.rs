@@ -133,7 +133,7 @@ pub struct Accent {
 /// uma cor arbitraria nao tem forma de gerar os tres tons de maneira legivel. A entrada 0 e a cor
 /// do Ember e TEM de ser identica a de hoje (`globals.css`), para "sem projeto" continuar a
 /// mostrar exatamente o orb que sempre mostrou.
-pub const ACCENTS: [Accent; 8] = [
+pub const ACCENTS: [Accent; 16] = [
     Accent {
         raw: "#b4512a",
         mid: "#fd8c3c",
@@ -182,6 +182,59 @@ pub const ACCENTS: [Accent; 8] = [
         glow: "#dfe4ec",
         label: "Slate",
     },
+    // Second row. Picked to fill the gaps the first eight leave on the colour wheel (pure red,
+    // amber, lime, cyan, indigo, magenta, clay and plum) rather than to add near-duplicates: with
+    // 24 projects allowed, two accents that look alike at orb size are worth nothing. Each one is
+    // three hand-written stops, like the originals, because the orb is a three-stop gradient and
+    // deriving them from a single colour gives a washed-out blur.
+    Accent {
+        raw: "#8c1d1d",
+        mid: "#ef4444",
+        glow: "#ffd0d0",
+        label: "Crimson",
+    },
+    Accent {
+        raw: "#92400e",
+        mid: "#f59e0b",
+        glow: "#ffe4b0",
+        label: "Amber",
+    },
+    Accent {
+        raw: "#4d7c0f",
+        mid: "#84cc16",
+        glow: "#e4f8c0",
+        label: "Lime",
+    },
+    Accent {
+        raw: "#155e75",
+        mid: "#06b6d4",
+        glow: "#c4f0fb",
+        label: "Cyan",
+    },
+    Accent {
+        raw: "#312e81",
+        mid: "#6366f1",
+        glow: "#d8dcff",
+        label: "Indigo",
+    },
+    Accent {
+        raw: "#86198f",
+        mid: "#d946ef",
+        glow: "#f5d0fe",
+        label: "Fuchsia",
+    },
+    Accent {
+        raw: "#7c3f2d",
+        mid: "#b06a4f",
+        glow: "#f2ddd2",
+        label: "Clay",
+    },
+    Accent {
+        raw: "#6b2154",
+        mid: "#c2649f",
+        glow: "#f6d8ec",
+        label: "Plum",
+    },
 ];
 
 /// A cor de um indice, com o indice fora de gama a cair na do Ember em vez de rebentar. Uma
@@ -193,7 +246,7 @@ pub fn accent(index: u8) -> &'static Accent {
 /// Icones oferecidos, por nome. Strings e nao um enum de proposito: um icone que desapareca numa
 /// versao futura cai no default, em vez de rebentar a desserializacao da config INTEIRA e levar
 /// atras as chaves e os atalhos do utilizador.
-pub const ICONS: [&str; 12] = [
+pub const ICONS: [&str; 24] = [
     "sparkle",
     "lightning",
     "atom",
@@ -206,6 +259,20 @@ pub const ICONS: [&str; 12] = [
     "target",
     "book",
     "gear",
+    // Second row. The first twelve leaned on "generic software project"; these cover the kinds of
+    // work that were missing a shape of their own: design, infrastructure, writing, money, people.
+    "palette",
+    "terminal",
+    "database",
+    "globe",
+    "chat",
+    "chart",
+    "shield",
+    "wrench",
+    "graduation-cap",
+    "heart",
+    "camera",
+    "money",
 ];
 
 pub fn icon_or_default(name: &str) -> &str {
@@ -570,6 +637,29 @@ Testes antes do codigo.",
         // Um indice fora de gama (config editada a mao) cai no Ember em vez de rebentar.
         assert_eq!(accent(99), &ACCENTS[0]);
         assert_eq!(accent(2).label, "Violet");
+    }
+
+    #[test]
+    fn no_two_accents_or_icons_are_duplicates() {
+        // Both lists are hand-written and grew in a second pass, which is exactly when a
+        // copy-paste slips through unnoticed. Two accents that share a colour are two projects
+        // the user cannot tell apart at orb size, and a duplicated icon name silently shadows the
+        // earlier entry in the frontend map. Derive the check from the list instead of restating
+        // its length: adding a colour must not mean remembering to update a number here.
+        let mids: std::collections::BTreeSet<&str> = ACCENTS.iter().map(|a| a.mid).collect();
+        assert_eq!(mids.len(), ACCENTS.len(), "two accents share a mid tone");
+        let labels: std::collections::BTreeSet<&str> = ACCENTS.iter().map(|a| a.label).collect();
+        assert_eq!(labels.len(), ACCENTS.len(), "two accents share a label");
+        let icons: std::collections::BTreeSet<&&str> = ICONS.iter().collect();
+        assert_eq!(icons.len(), ICONS.len(), "duplicated icon name");
+        // Every icon name has to be a plain slug: it crosses into the frontend as an object key
+        // and travels through the JSON config.
+        for name in ICONS {
+            assert!(
+                !name.is_empty() && name.chars().all(|c| c.is_ascii_lowercase() || c == '-'),
+                "icon name is not a lowercase slug: {name}"
+            );
+        }
     }
 
     #[test]
