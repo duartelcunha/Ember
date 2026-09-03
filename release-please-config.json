@@ -6,7 +6,6 @@
     ".": {
       "package-name": "ember",
       "changelog-path": "CHANGELOG.md",
-      "prerelease": true,
       "extra-files": [{ "type": "generic", "path": "Cargo.toml" }]
     }
   }
