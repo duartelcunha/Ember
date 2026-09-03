@@ -28,7 +28,7 @@ pub enum ContextKind {
     GeminiMd,
     CursorRules,
     CopilotInstructions,
-    /// So vale quando foi uma PESSOA a escolher a pasta (ver `PICKED_PRECEDENCE`).
+    /// Only counts when a PERSON picked the folder (see `PICKED_PRECEDENCE`).
     ReadmeMd,
 }
 
@@ -41,18 +41,18 @@ impl ContextKind {
         Self::CopilotInstructions,
     ];
 
-    /// O mesmo, mais o `README.md` no fim, para quando foi uma PESSOA a apontar a pasta.
+    /// The same list plus `README.md` at the end, for when a PERSON pointed at the folder.
     ///
-    /// O README nao entra na `PRECEDENCE` de proposito. Sao listas diferentes porque os dois
-    /// caminhos tem garantias diferentes: aqui a pessoa escolheu a pasta, ve o brief destilado na
-    /// caixa e so grava se lhe servir; no caminho automatico (`nearest_context`, adivinhado a
-    /// partir do titulo da janela) o conteudo entra CRU no prompt sem ninguem o ler. Um README e
-    /// escrito para humanos e traz instalacao, badges e licenca, coisas que nao querem dizer nada
-    /// a um refine; sob revisao isso e aceitavel, adivinhado nao e.
+    /// The README stays out of `PRECEDENCE` on purpose. These are two lists because the two paths
+    /// carry different guarantees: here the person chose the folder, sees the distilled brief in
+    /// the box and only saves it if it serves them; on the automatic path (`nearest_context`,
+    /// guessed from the window title) the content goes RAW into the prompt with nobody reading it.
+    /// A README is written for humans and carries install steps, badges and a licence, none of
+    /// which mean anything to a refine; under review that is acceptable, guessed it is not.
     ///
-    /// Fica em ULTIMO: um ficheiro de convencoes a serio ganha-lhe sempre que exista. O
-    /// `pick_source` ja trata um tipo fora da `PRECEDENCE` como o menos preferido, por isso nao
-    /// precisa de saber deste.
+    /// It sits LAST: a real conventions file beats it whenever one exists. `pick_source` already
+    /// treats a kind outside `PRECEDENCE` as the least preferred, so it needs no knowledge of
+    /// this one.
     pub const PICKED_PRECEDENCE: [ContextKind; 6] = [
         Self::ClaudeMd,
         Self::AgentsMd,
@@ -293,41 +293,42 @@ pub fn frame_project(content: &str) -> Option<String> {
     ))
 }
 
-/// Quem fornece o contexto de projeto deste refine.
+/// Who provides the project context for this refine.
 ///
-/// A decisao estava dentro do `refine_text` do shell, misturada com `AppHandle` e leituras de
-/// disco, e por isso nunca teve um unico teste. E logica pura: desce para aqui e o shell passa a
-/// EXECUTAR a escolha em vez de a tomar (regra 1 do CLAUDE.md).
+/// The decision used to live inside the shell's `refine_text`, tangled with `AppHandle` and disk
+/// reads, which is why it never had a single test. It is pure logic: it moves down here and the
+/// shell goes back to EXECUTING the choice instead of making it (rule 1 in CLAUDE.md).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContextChoice {
-    /// Usar o brief do projeto que o utilizador escolheu a mao. `block` ja vem enquadrado.
+    /// Use the brief of the project the user picked by hand. `block` arrives already framed.
     Project { block: String, name: String },
-    /// Nao ha projeto escolhido: vale a deteccao pelo titulo da janela em foco (I/O, no shell).
+    /// No project picked: detection from the foreground window title wins (I/O, in the shell).
     DetectFromWindow,
-    /// Este refine nao leva contexto de projeto nenhum, e porque.
+    /// This refine carries no project context at all, and why.
     NoContext(NoContext),
 }
 
-/// Porque e que um refine ficou sem contexto de projeto. Existe para o log poder dizer a verdade:
-/// "nao havia" e "havia e nao servia" mandam a pessoa procurar em sitios diferentes.
+/// Why a refine ended up with no project context. It exists so the log can tell the truth:
+/// "there was none" and "there was one and it was useless" send you looking in different places.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NoContext {
-    /// Ha projeto ativo, mas o brief nao da bloco nenhum: vazio, ou so ruido/segredos redigidos.
+    /// A project is active but its brief yields no block: empty, or only noise/redacted secrets.
     ActiveProjectHasNoBrief { name: String },
-    /// Sem projeto ativo e sem titulo de janela (deteccao desligada na config).
+    /// No active project and no window title (detection turned off in the config).
     NothingToGoOn,
 }
 
-/// Decide de onde vem o contexto de projeto. `active` e o `(nome, brief)` do projeto escolhido a
-/// mao; `window_title` vem preenchido so quando a deteccao esta ligada na config.
+/// Decides where the project context comes from. `active` is the `(name, brief)` of the project
+/// picked by hand; `window_title` is only populated when detection is enabled in the config.
 ///
-/// Precedencia: o projeto escolhido A MAO ganha sempre a deteccao pela janela. Ele disse em que
-/// projeto esta; adivinhar por cima disso seria ignora-lo.
+/// Precedence: the project picked BY HAND always beats window detection. The user said which
+/// project they are in; guessing over that would be ignoring them.
 ///
-/// O caso que custa a ver: projeto ativo com brief VAZIO nao cai para a deteccao pela janela.
-/// Fica sem contexto nenhum. E deliberado (a escolha dele continua a valer, e receber contexto de
-/// OUTRO projeto por adivinhacao seria pior do que nao receber nenhum), mas e silencioso do lado
-/// de fora, por isso o `NoContext::ActiveProjectHasNoBrief` leva o nome e o log di-lo.
+/// The case that is hard to see: an active project with an EMPTY brief does not fall through to
+/// window detection. It ends up with no context at all. That is deliberate (their choice still
+/// stands, and receiving context from ANOTHER project by guesswork would be worse than receiving
+/// none), but it is silent from the outside, so `NoContext::ActiveProjectHasNoBrief` carries the
+/// name and the log says it.
 pub fn choose_context(active: Option<(&str, &str)>, window_title: Option<&str>) -> ContextChoice {
     match active {
         Some((name, brief)) => match frame_project(brief) {
@@ -462,8 +463,8 @@ mod tests {
 
     #[test]
     fn a_readme_counts_when_the_person_picked_the_folder() {
-        // O caso que motivou isto: o projeto so tem README.md (nem CLAUDE.md nem AGENTS.md), e
-        // antes disto o "Read and write the brief" nao encontrava nada e o brief ficava vazio.
+        // The case behind this: the project only has README.md (no CLAUDE.md, no AGENTS.md), and
+        // before it "Read and write the brief" found nothing and the brief stayed empty.
         let exists = |p: &Path| p == Path::new("/proj/README.md");
         let found = candidates_in(Path::new("/proj"), &exists);
         assert_eq!(found.len(), 1);
@@ -472,8 +473,8 @@ mod tests {
 
     #[test]
     fn a_readme_never_counts_when_the_folder_was_only_guessed() {
-        // Caminho automatico (titulo da janela): o conteudo entra CRU no prompt sem ninguem o
-        // rever, por isso o README fica de fora. Ver `PICKED_PRECEDENCE`.
+        // Automatic path (window title): the content goes RAW into the prompt with nobody
+        // reviewing it, so the README stays out. See `PICKED_PRECEDENCE`.
         let exists = |p: &Path| p == Path::new("/proj/README.md");
         let found = nearest_context(Path::new("/proj"), &exists, &|_| false, None, false);
         assert!(found.is_empty());
@@ -535,15 +536,16 @@ mod tests {
                 assert_eq!(name, "Doto");
                 assert!(block.contains("Portuguese"));
             }
-            outro => panic!("esperava o projeto ativo, veio {outro:?}"),
+            other => panic!("expected the active project, got {other:?}"),
         }
     }
 
     #[test]
     fn an_active_project_with_an_empty_brief_gives_no_context_and_says_which() {
-        // O caso real que motivou a extracao: projeto ativo, brief por escrever, deteccao ligada.
-        // Nao cai para a janela DE PROPOSITO (a escolha do utilizador continua a valer), mas tem
-        // de sair identificado, senao ninguem percebe porque e que o refine nao levou contexto.
+        // The real case behind the extraction: active project, brief still unwritten, detection
+        // on. It does NOT fall through to the window, on purpose (the user's choice still stands),
+        // but it has to come out identified, or nobody can tell why the refine carried no
+        // context.
         let c = choose_context(
             Some((
                 "Doto", "   
@@ -561,8 +563,8 @@ mod tests {
 
     #[test]
     fn a_brief_that_is_only_a_secret_counts_as_empty() {
-        // Depois da redacao nao sobra nada, e o resultado tem de ser o mesmo do brief vazio: sem
-        // isto, um brief que so tinha uma chave passaria por "contexto valido" e ia vazio.
+        // After redaction nothing is left, and the result has to match the empty brief: without
+        // this, a brief that held only a key would pass as "valid context" and travel empty.
         let c = choose_context(Some(("Doto", "sk-ant-onlyasecret123456")), None);
         assert_eq!(
             c,
@@ -582,7 +584,8 @@ mod tests {
 
     #[test]
     fn no_project_and_no_title_means_only_the_global_profile() {
-        // Sem titulo = deteccao desligada na config; o refine segue so com o perfil global.
+        // No title = detection disabled in the config; the refine goes on with the global
+        // profile alone.
         assert_eq!(
             choose_context(None, None),
             ContextChoice::NoContext(NoContext::NothingToGoOn)

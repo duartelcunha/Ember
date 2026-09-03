@@ -1339,14 +1339,14 @@ pub(crate) async fn prepare_refine(
     let chain = build_chain(app, state, &cfg).await?;
 
     let resolved = profile::resolve(app, cfg.profile_override.as_deref(), cfg.ignore_claude_md);
-    // Contexto de projeto (best-effort, so quando ligado): junta as convencoes do projeto ao
-    // perfil global. Qualquer falha -> None -> segue so com o global (comportamento de sempre).
-    // O `foreground_title` so vem preenchido quando `config.project_context` esta on.
+    // Project context (best-effort, only when enabled): adds the project's conventions to the
+    // global profile. Any failure -> None -> carry on with the global one alone (the behaviour it
+    // always had). `foreground_title` is only populated when `config.project_context` is on.
     //
-    // Quem DECIDE de onde vem o contexto (e a precedencia, e o porque) e o `choose_context`, que
-    // e puro e testado; aqui so se EXECUTA a escolha, porque so a deteccao pela janela precisa de
-    // ler disco. Cada ramo loga o que ganhou: sem isso, ninguem consegue explicar depois porque e
-    // que o prompt saiu como saiu.
+    // What DECIDES where the context comes from (and the precedence, and why) is `choose_context`,
+    // which is pure and tested; here we only EXECUTE the choice, because only window detection
+    // needs to read disk. Each branch logs which path won: without that, nobody can explain
+    // afterwards why the prompt came out the way it did.
     let active = ember_core::projects::active(&cfg.projects, cfg.active_project.as_deref());
     let escolha = ember_core::project::choose_context(
         active.map(|p| (p.name.as_str(), p.brief.as_str())),
@@ -1354,7 +1354,7 @@ pub(crate) async fn prepare_refine(
     );
     let project_ctx = match escolha {
         ContextChoice::Project { block, name } => {
-            let source_path = format!("projeto \"{name}\"");
+            let source_path = format!("project \"{name}\"");
             log::info!("project context: {source_path} (brief)");
             Some(crate::project::ProjectContext { block, source_path })
         }
@@ -1371,7 +1371,7 @@ pub(crate) async fn prepare_refine(
             detetado
         }
         ContextChoice::NoContext(NoContext::ActiveProjectHasNoBrief { name }) => {
-            log::info!("project context: projeto \"{name}\" ativo mas com brief vazio");
+            log::info!("project context: project \"{name}\" is active but its brief is empty");
             None
         }
         ContextChoice::NoContext(NoContext::NothingToGoOn) => None,

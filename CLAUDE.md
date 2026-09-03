@@ -66,7 +66,9 @@ O build queixa-se de `TAURI_SIGNING_PRIVATE_KEY` em builds locais; o instalador 
 ## Convenções
 
 - Conventional Commits (release-please gera o CHANGELOG a partir deles).
-- Comentários de código em português, a explicar o PORQUÊ, com o bug que motivou a regra.
+- Comentários de código **em inglês**, a explicar o PORQUÊ, com o bug que motivou a regra. O
+  repo é público: o que fica escrito no código tem de servir quem chega de fora. O código antigo
+  ainda está em português e migra quando se lhe toca; não há tradução em massa pendente.
 - Zero crédito a ferramentas de IA em commits, PRs ou comentários. Sem trailers de co-autoria.
 - Constantes espelhadas entre Rust e TS (ex.: geometria do picker) declaram o espelho num
   comentário nos dois lados; muda um, muda o outro.

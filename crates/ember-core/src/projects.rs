@@ -80,12 +80,12 @@ pub fn content_score(text: &str) -> usize {
 /// o ficheiro nomeia, contra a regra de so lermos ficheiros conhecidos. A pontuacao chega ao mesmo
 /// sitio sem essa porta: o ponteiro pontua zero e o ficheiro real ganha.
 pub fn pick_source(candidates: &[(Found, String)]) -> Option<&Found> {
-    // O README e uma REDE, nao um concorrente: so conta quando nenhum ficheiro de convencoes tem
-    // conteudo. Sem esta linha ganhava por tamanho (a escolha e por `content_score`, e um README
-    // de 300 linhas de prosa pontua muito mais do que um AGENTS.md de tres linhas uteis), e a
-    // pessoa acabava com o texto de apresentacao do produto em vez das regras de como se escreve
-    // ali dentro. Inverter a ordem geral (precedencia antes de conteudo) nao servia: partia o
-    // caso do `CLAUDE.md` que e so um ponteiro `@AGENTS.md`, que foi o que motivou esta funcao.
+    // The README is a SAFETY NET, not a competitor: it only counts when no conventions file has
+    // any content. Without this line it would win on size (the choice runs on `content_score`, and
+    // a 300-line README of prose scores far above a three-useful-line AGENTS.md), and the user
+    // would end up with the product pitch instead of the rules for writing in that repo. Flipping
+    // the overall order (precedence before content) was no good either: it breaks the `CLAUDE.md`
+    // that is just an `@AGENTS.md` pointer, which is the case this function was written for.
     let ha_convencoes = candidates
         .iter()
         .any(|(f, t)| f.kind != ContextKind::ReadmeMd && content_score(t) > 0);
@@ -487,9 +487,9 @@ mod tests {
 
     #[test]
     fn a_real_conventions_file_beats_the_readme() {
-        // O README so existe para as pastas que nao tem mais nada. Havendo um AGENTS.md com
-        // conteudo, e ele que manda, mesmo que o README seja muito maior: um README fala do
-        // produto para quem chega, um AGENTS.md diz como se escreve ali dentro.
+        // The README only exists for folders that have nothing else. When an AGENTS.md with
+        // content is present it rules, however much bigger the README is: a README pitches the
+        // product to newcomers, an AGENTS.md says how you write inside it.
         let readme = "# Doto
 
 "

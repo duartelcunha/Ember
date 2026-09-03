@@ -2,9 +2,9 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <!-- Sem isto o WebView2 pede /favicon.ico a cada janela aberta e o Tauri loga
-         "asset not found" em nivel ERROR. O log e a primeira paragem do debugging;
-         ERRORs falsos ali custam mais do que um icone que ninguem ve. -->
+    <!-- Without this the WebView2 asks for /favicon.ico on every window it opens and Tauri
+         logs "asset not found" at ERROR level. The log is the first stop when debugging;
+         false ERRORs there cost more than an icon nobody looks at. -->
     <link rel="icon" href="data:," />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Ember</title>

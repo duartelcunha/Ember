@@ -239,17 +239,16 @@ function GetKeyButton({ console: target }: { console: KeyConsole }) {
   );
 }
 
-/** Uma linha de um cartao de provider: etiqueta A ESQUERDA, controlo a ocupar o resto.
+/** One row of a provider card: label on the LEFT, control taking the rest.
  *
- *  Estes cartoes tinham a etiqueta POR CIMA de cada campo, como o resto das settings. Aqui isso
- *  custava caro: sao quatro a cinco campos no mesmo cartao, e ha DOIS cartoes um a seguir ao
- *  outro, por isso o separador nao cabia na janela sem scroll. Lado a lado, cada campo passa de
- *  duas linhas para uma. So neste separador: onde ha um ou dois campos, a etiqueta por cima
- *  continua a ler-se melhor.
+ *  These cards used to put the label ABOVE each field, like the rest of the settings. Here that
+ *  was expensive: four to five fields in one card, and TWO cards back to back, so the tab did not
+ *  fit the window without scrolling. Side by side, each field goes from two lines to one. Only in
+ *  this tab: where there are one or two fields, the label above still reads better.
  *
- *  A coluna da etiqueta e fixa (92px) para os campos ficarem todos alinhados uns por baixo dos
- *  outros; a `hint` por baixo leva o mesmo avanco, senao lia-se como legenda da etiqueta em vez
- *  de legenda do campo. */
+ *  The label column is fixed (92px) so every field lines up under the previous one; the `hint`
+ *  below carries the same indent, otherwise it reads as a caption of the label instead of a
+ *  caption of the field. */
 function ProviderRow({
   label,
   htmlFor,
@@ -682,17 +681,18 @@ function ProviderConfig({
       />
     </Section>
       {onMakePrimary && !isPrimary && (
-        // AO LADO do cartao, e ABSOLUTA de proposito. Uma coluna normal a direita ja esteve aqui
-        // e foi removida porque tirava 47px de largura AOS CARTOES DESTE SEPARADOR, que ficavam
-        // mais estreitos do que os de todos os outros. Fora do fluxo nao rouba largura nenhuma:
-        // os cartoes ficam com a largura toda E a seta fica na margem.
+        // BESIDE the card, and absolutely positioned on purpose. A regular column on the right
+        // lived here once and was removed because it took 47px of width away FROM THE CARDS IN
+        // THIS TAB, leaving them narrower than every other tab's. Out of the flow it steals no
+        // width at all: the cards keep their full width AND the arrow sits in the margin.
         //
-        // O espaco dela vem do padding lateral da pagina (64px), e nao da sobra do centramento:
-        // e a diferenca entre caber sempre e caber por sorte. Por isso a janela abre a 1000px e
-        // nao a 920: sem esses 80px, alargar o padding tirava largura aos cartoes.
+        // Its room comes from the page's side padding (64px), not from the leftover of centring:
+        // that is the difference between always fitting and fitting by luck. Hence the window
+        // opens at 1000px rather than 920: without those 80px, widening the padding would have
+        // taken width from the cards.
         //
-        // Sem legenda por escolha do utilizador. O `title` e o `aria-label` carregam o significado
-        // para quem passa o rato e para quem usa leitor de ecra.
+        // No label, by the user's choice. The `title` and `aria-label` carry the meaning for
+        // whoever hovers it and for screen readers.
         <button
           type="button"
           onClick={onMakePrimary}
@@ -1186,14 +1186,15 @@ export function Settings({ initialTab = "providers" }: { initialTab?: string } =
           >
         <TitleBar />
         <motion.div
-          // pt-14 e nao pt-10: a TitleBar e `fixed` e tem 36px de altura, por isso com 40px de
-          // topo os cartoes passavam a 4px dos botoes de minimizar e fechar e liam-se colados.
+          // pt-14 rather than pt-10: the TitleBar is `fixed` and 36px tall, so with 40px of top
+          // padding the cards sat 4px from the minimise and close buttons and read as glued to
+          // them.
           //
-          // px-16 (64px) e nao px-8: e deste padding que sai o espaco da seta de "tentar este
-          // primeiro", que vive FORA dos cartoes. Antes ela usava a sobra do `mx-auto`, que numa
-          // janela de 920px dava 4px de cada lado e numa janela estreita dava zero. O padding e
-          // igual em qualquer largura; a sobra do centramento nao. O `max-w` sobe junto para os
-          // cartoes nao ficarem mais estreitos do que ja eram.
+          // px-16 (64px) rather than px-8: this padding is where the "try this one first" arrow
+          // gets its room, since it lives OUTSIDE the cards. It used to rely on the `mx-auto`
+          // leftover, which in a 920px window was 4px a side and in a narrow window was zero.
+          // Padding is the same at any width; the centring leftover is not. `max-w` goes up with
+          // it so the cards do not end up narrower than they already were.
           className="mx-auto max-w-5xl px-16 pb-12 pt-14"
           // Segue a de fora de perto (delay curto) em vez de somar mais meio segundo por cima:
           // as duas encadeadas davam ~800ms ate a janela assentar.

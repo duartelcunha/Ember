@@ -190,8 +190,9 @@ function ProjectEditor({
         {draft.id && (
           <Button
             variant="ghost"
-            // Vermelho SO no segundo passo. O primeiro clique ainda nao apaga nada e nao merece
-            // alarme; o segundo apaga de vez, e a cor tem de dizer isso antes de o dedo cair.
+            // Red ONLY on the second step. The first click deletes nothing yet and does not
+            // deserve alarm; the second one deletes for good, and the colour has to say so before
+            // the finger lands.
             className={
               confirming
                 ? "border-transparent bg-[color:var(--color-error)] text-white hover:bg-[color:var(--color-error)] hover:brightness-110"

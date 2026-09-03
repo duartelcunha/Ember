@@ -24,13 +24,13 @@ pub fn plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
         .max_file_size(5_000_000)
         .rotation_strategy(RotationStrategy::KeepOne)
         .timezone_strategy(TimezoneStrategy::UseLocal)
-        // `clear_targets` NAO e cerimonia: o `Builder::new()` ja vem com alvos por omissao
-        // (Stdout + LogDir com `file_name: None`), e `.target()` ACRESCENTA aos que la estao.
-        // Sem isto ficavam dois LogDir vivos: o de omissao a escrever `Ember.log` (nome do
-        // produto) e o nosso a escrever `ember.log`. No Windows os dois nomes sao O MESMO
-        // FICHEIRO, por isso cada linha era gravada duas vezes (4760 de 7686 linhas duplicadas
-        // no log que apanhou o bug) e as duas rotacoes contavam bytes em separado, cada uma a
-        // truncar por baixo da outra.
+        // `clear_targets` is NOT ceremony: `Builder::new()` already ships default targets
+        // (Stdout + LogDir with `file_name: None`), and `.target()` APPENDS to whatever is there.
+        // Without this we kept two live LogDir targets: the default one writing `Ember.log` (the
+        // product name) and ours writing `ember.log`. On Windows those two names are THE SAME
+        // FILE, so every line was written twice (4760 of 7686 duplicated lines in the log that
+        // caught the bug) and the two rotations counted bytes separately, each truncating under
+        // the other.
         .clear_targets()
         .target(Target::new(TargetKind::LogDir {
             file_name: Some(LOG_FILE_STEM.to_string()),

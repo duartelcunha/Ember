@@ -31,5 +31,5 @@ captura via clipboard, LLM, paste de volta.
 
 ## Estilo
 
-- Conventional Commits; comentários em português a explicar o porquê; zero crédito a IA em
-  commits e PRs.
+- Conventional Commits **em inglês**; comentários de código em inglês, a explicar o porquê;
+  zero crédito a IA em commits e PRs. O código antigo em português migra quando se lhe toca.
