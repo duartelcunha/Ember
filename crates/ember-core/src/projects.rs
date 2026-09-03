@@ -133,7 +133,7 @@ pub struct Accent {
 /// uma cor arbitraria nao tem forma de gerar os tres tons de maneira legivel. A entrada 0 e a cor
 /// do Ember e TEM de ser identica a de hoje (`globals.css`), para "sem projeto" continuar a
 /// mostrar exatamente o orb que sempre mostrou.
-pub const ACCENTS: [Accent; 16] = [
+pub const ACCENTS: [Accent; 8] = [
     Accent {
         raw: "#b4512a",
         mid: "#fd8c3c",
@@ -182,59 +182,6 @@ pub const ACCENTS: [Accent; 16] = [
         glow: "#dfe4ec",
         label: "Slate",
     },
-    // Second row. Picked to fill the gaps the first eight leave on the colour wheel (pure red,
-    // amber, lime, cyan, indigo, magenta, clay and plum) rather than to add near-duplicates: with
-    // 24 projects allowed, two accents that look alike at orb size are worth nothing. Each one is
-    // three hand-written stops, like the originals, because the orb is a three-stop gradient and
-    // deriving them from a single colour gives a washed-out blur.
-    Accent {
-        raw: "#8c1d1d",
-        mid: "#ef4444",
-        glow: "#ffd0d0",
-        label: "Crimson",
-    },
-    Accent {
-        raw: "#92400e",
-        mid: "#f59e0b",
-        glow: "#ffe4b0",
-        label: "Amber",
-    },
-    Accent {
-        raw: "#4d7c0f",
-        mid: "#84cc16",
-        glow: "#e4f8c0",
-        label: "Lime",
-    },
-    Accent {
-        raw: "#155e75",
-        mid: "#06b6d4",
-        glow: "#c4f0fb",
-        label: "Cyan",
-    },
-    Accent {
-        raw: "#312e81",
-        mid: "#6366f1",
-        glow: "#d8dcff",
-        label: "Indigo",
-    },
-    Accent {
-        raw: "#86198f",
-        mid: "#d946ef",
-        glow: "#f5d0fe",
-        label: "Fuchsia",
-    },
-    Accent {
-        raw: "#7c3f2d",
-        mid: "#b06a4f",
-        glow: "#f2ddd2",
-        label: "Clay",
-    },
-    Accent {
-        raw: "#6b2154",
-        mid: "#c2649f",
-        glow: "#f6d8ec",
-        label: "Plum",
-    },
 ];
 
 /// A cor de um indice, com o indice fora de gama a cair na do Ember em vez de rebentar. Uma
@@ -268,14 +215,14 @@ impl From<&Accent> for ResolvedAccent {
 
 /// How far the dark and pale stops sit from the chosen colour, and how much chroma each keeps.
 ///
-/// These are not invented. They are the averages measured across the sixteen hand-written accents
-/// in `ACCENTS`, converted to OKLCH: the dark stop sits 0.237 below the mid in lightness and keeps
-/// 73% of its chroma, the pale stop sits 0.229 above and keeps 35%. Deriving a custom colour with
-/// the same ramp is what makes it sit next to the fixed palette without looking foreign.
-const RAW_DELTA_L: f64 = 0.237;
-const GLOW_DELTA_L: f64 = 0.229;
-const RAW_CHROMA: f64 = 0.73;
-const GLOW_CHROMA: f64 = 0.35;
+/// These are not invented. They are the averages measured across the eight hand-written accents in
+/// `ACCENTS`, converted to OKLCH: the dark stop sits 0.241 below the mid in lightness and keeps 72%
+/// of its chroma, the pale stop sits 0.213 above and keeps 38%. Deriving a custom colour with the
+/// same ramp is what makes it sit next to the fixed palette without looking foreign.
+const RAW_DELTA_L: f64 = 0.241;
+const GLOW_DELTA_L: f64 = 0.213;
+const RAW_CHROMA: f64 = 0.72;
+const GLOW_CHROMA: f64 = 0.38;
 
 /// Builds the three stops of an accent from one `#rrggbb` colour, keeping the hue.
 ///
@@ -795,7 +742,7 @@ Testes antes do codigo.",
     fn a_project_without_a_custom_colour_paints_exactly_as_it_does_today() {
         // The test that protects everyone already using the app: adding this feature must not
         // change a single pixel for a project that never asked for a custom colour.
-        for index in [0u8, 2, 7, 15] {
+        for index in [0u8, 2, 5, 7] {
             let mut p = proj("id", "Nome");
             p.accent = index;
             let resolved = resolve_accent(&p);
