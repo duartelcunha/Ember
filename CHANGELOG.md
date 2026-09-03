@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.3](https://github.com/duartelcunha/Ember/compare/v0.9.2...v0.9.3) (2026-09-03)
+
+
+### Bug Fixes
+
+* **gemini:** rank model families by free-tier capacity, not by generation ([1a24b93](https://github.com/duartelcunha/Ember/commit/1a24b93de1e747e882257cb769e67b2a8a729c20))
+
 ## [0.9.2](https://github.com/duartelcunha/Ember/compare/v0.9.1...v0.9.2) (2026-09-02)
 
 
