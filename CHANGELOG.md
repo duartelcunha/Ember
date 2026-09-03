@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.0](https://github.com/duartelcunha/Ember/compare/v0.9.3...v0.10.0) (2026-09-03)
+
+
+### Features
+
+* **projects:** custom accent colour per project, derived in OKLCH ([682232e](https://github.com/duartelcunha/Ember/commit/682232eaa85b069cc283fba33aa2925e3f805ee3))
+* **projects:** double the accent palette and the icon set ([8e4e3c0](https://github.com/duartelcunha/Ember/commit/8e4e3c00ae8ea36ed43ed5df53e50f44baf91ce0))
+* **projects:** pick a custom accent on a colour wheel ([bca114f](https://github.com/duartelcunha/Ember/commit/bca114f01b19495cabf513e50689a18e63debcbb))
+
+
+### Reverts
+
+* **projects:** back to eight accents, keeping the custom colour ([2694b6d](https://github.com/duartelcunha/Ember/commit/2694b6d6b22ce7589eb86dce5c1d8e3a450c03a9))
+
 ## [0.9.3](https://github.com/duartelcunha/Ember/compare/v0.9.2...v0.9.3) (2026-09-03)
 
 
