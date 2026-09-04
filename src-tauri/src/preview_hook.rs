@@ -132,7 +132,7 @@ mod imp {
         SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, HC_ACTION, HHOOK,
         KBDLLHOOKSTRUCT, MSG, MSLLHOOKSTRUCT, MWMO_INPUTAVAILABLE, PM_REMOVE, QS_ALLINPUT,
         WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP,
-        WM_MOUSEMOVE, WM_SYSKEYDOWN, WM_SYSKEYUP,
+        WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_SYSKEYDOWN, WM_SYSKEYUP,
     };
 
     // O callback e um `extern "system" fn` e nao captura estado: comunica pela decisao global.
@@ -527,27 +527,22 @@ mod imp {
     /// Houve movimento por emitir? O pump le e emite o evento; o callback nunca emite (tem de
     /// ser trivial para nunca encostar ao LowLevelHooksTimeout).
     static PICKER_MOVED: AtomicU8 = AtomicU8::new(0);
-    /// Geometria da janela em pixeis FISICOS, para o hook do rato saber que linha esta debaixo do
-    /// ponteiro. Escrita uma vez antes de instalar os hooks e so lida a partir dai.
-    static PICKER_GEOM: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
-    static PICKER_GEOM2: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
     /// Um clique nosso ja foi consumido e falta engolir o `button up` que vem a seguir. Sem isto
     /// a app por baixo recebia metade do clique.
     static PICKER_CLICK_TAIL: AtomicU8 = AtomicU8::new(0);
+    /// Onde o ponteiro esta, para o pump levar a lista atras dele. Como em todo o resto deste
+    /// hook, o callback so escreve atomicos: mexer numa janela dali dentro poria trabalho de
+    /// janelas dentro do orcamento do LowLevelHooksTimeout, e o Windows despeja hooks lentos.
+    static PICKER_CURSOR: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+    static PICKER_FOLLOW: AtomicU8 = AtomicU8::new(0);
 
-    /// Empacota a geometria em dois inteiros: (x, y) e (largura, primeira linha visivel).
+    /// Empacota um ponto em dois inteiros.
     fn pack(a: i32, b: i32) -> i64 {
         ((a as i64) << 32) | (b as u32 as i64)
     }
     fn unpack(v: i64) -> (i32, i32) {
         ((v >> 32) as i32, v as u32 as i32)
     }
-
-    /// Padding e altura de linha em fisicos, derivados no momento da leitura a partir da escala
-    /// guardada nos bits baixos. Mantidos em constantes porque a UI espelha os mesmos numeros.
-    static PICKER_PAD_PX: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-    static PICKER_ITEM_PX: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-    static PICKER_VISIBLE: AtomicU8 = AtomicU8::new(0);
 
     unsafe extern "system" fn picker_mouse_proc(
         code: i32,
@@ -557,41 +552,46 @@ mod imp {
         if code == HC_ACTION as i32 {
             let msg = wparam.0 as u32;
             let ms = &*(lparam.0 as *const MSLLHOOKSTRUCT);
-            let (win_x, win_y) = unpack(PICKER_GEOM.load(Ordering::SeqCst));
-            let (win_w, first) = unpack(PICKER_GEOM2.load(Ordering::SeqCst));
-            let linha = ember_core::projects::picker_row_at(
-                ms.pt.x,
-                ms.pt.y,
-                win_x,
-                win_y,
-                win_w,
-                PICKER_PAD_PX.load(Ordering::SeqCst),
-                PICKER_ITEM_PX.load(Ordering::SeqCst),
-                PICKER_VISIBLE.load(Ordering::SeqCst) as usize,
-                first as usize,
-            );
+            // Depois de decidido, o rato deixa de mandar: a lista esta a fechar e o que vier a
+            // seguir e da app por baixo.
+            let a_decidir = PICKER_DECISION.load(Ordering::SeqCst) == 0;
             match msg {
+                // A lista anda COM o ponteiro. Por isso e que ele nao escolhe linhas: uma janela
+                // colada ao cursor nunca deixa nenhuma linha ficar debaixo dele. Nunca consome o
+                // movimento; mexer o rato e trabalho da pessoa, nao nosso.
                 WM_MOUSEMOVE => {
-                    // Passar por cima destaca, como em qualquer menu. Nunca consome o movimento.
-                    if let Some(i) = linha {
-                        if PICKER_DECISION.load(Ordering::SeqCst) == 0
-                            && PICKER_INDEX.load(Ordering::SeqCst) != i as u8
-                        {
-                            PICKER_INDEX.store(i as u8, Ordering::SeqCst);
+                    if a_decidir {
+                        PICKER_CURSOR.store(pack(ms.pt.x, ms.pt.y), Ordering::SeqCst);
+                        PICKER_FOLLOW.store(1, Ordering::SeqCst);
+                    }
+                }
+                // Rodar percorre a lista, como as setas: com a lista colada ao cursor, a mao ja
+                // esta no rato. Consome, pela mesma razao que as setas: sem isso a pagina por
+                // baixo rolava ao mesmo tempo que o menu.
+                WM_MOUSEWHEEL => {
+                    if a_decidir {
+                        // O delta vem na metade alta do `mouseData`, com sinal: para cima e
+                        // positivo, e para cima na lista e um indice para tras.
+                        let delta = (ms.mouseData >> 16) as u16 as i16;
+                        if delta != 0 {
+                            let passo = if delta > 0 { -1 } else { 1 };
+                            let novo = ember_core::projects::move_index(
+                                PICKER_INDEX.load(Ordering::SeqCst) as usize,
+                                passo,
+                                PICKER_LEN.load(Ordering::SeqCst) as usize,
+                            );
+                            PICKER_INDEX.store(novo as u8, Ordering::SeqCst);
                             PICKER_MOVED.store(1, Ordering::SeqCst);
                         }
+                        return LRESULT(1);
                     }
                 }
                 WM_LBUTTONDOWN => {
-                    log::debug!(
-                        "picker: clique em ({}, {}) -> linha {linha:?} (janela {win_x},{win_y} {win_w}px)",
-                        ms.pt.x,
-                        ms.pt.y
-                    );
-                    if let Some(i) = linha {
-                        // Clique DENTRO da lista: escolhe. Consome, senao o clique ia parar a
-                        // app por baixo (a janela e click-through de proposito).
-                        PICKER_INDEX.store(i as u8, Ordering::SeqCst);
+                    if a_decidir {
+                        // Clicar confirma a linha escolhida, seja onde for o clique: a lista esta
+                        // debaixo do ponteiro e nao ha "fora" nenhum para acertar. Consome, senao
+                        // o clique ia parar a app por baixo (a janela e click-through de
+                        // proposito) e a escolha vinha com um efeito secundario a reboque.
                         let _ = PICKER_DECISION.compare_exchange(
                             0,
                             1,
@@ -601,9 +601,6 @@ mod imp {
                         PICKER_CLICK_TAIL.store(1, Ordering::SeqCst);
                         return LRESULT(1);
                     }
-                    // Clique FORA: fecha sem escolher, e o clique segue para a app. Era dela.
-                    let _ =
-                        PICKER_DECISION.compare_exchange(0, 2, Ordering::SeqCst, Ordering::SeqCst);
                 }
                 WM_LBUTTONUP => {
                     if PICKER_CLICK_TAIL.swap(0, Ordering::SeqCst) != 0 {
@@ -715,18 +712,6 @@ mod imp {
 
     /// Corre o picker (bloqueante, numa thread com pump). `on_move` e chamado no PUMP (nunca no
     /// callback) com o indice novo, para o shell emitir o evento a UI.
-    /// Geometria da janela do picker em pixeis FISICOS, que e a unidade em que o hook do rato
-    /// recebe o ponteiro.
-    #[derive(Clone, Copy)]
-    pub struct PickerGeom {
-        pub x: i32,
-        pub y: i32,
-        pub w: i32,
-        pub pad: i32,
-        pub item_h: i32,
-        pub visible: usize,
-    }
-
     /// Bombeia mensagens, com o hook AINDA INSTALADO, ate as teclas que consumimos subirem.
     ///
     /// Vale para TODAS as saidas do picker e nao so para a da decisao: fechar por Esc externo ou
@@ -752,9 +737,9 @@ mod imp {
     pub fn run_picker_blocking(
         len: usize,
         initial: usize,
-        geom: PickerGeom,
         should_cancel: impl Fn() -> bool,
         on_move: impl Fn(usize),
+        on_follow: impl Fn(i32, i32),
     ) -> PickerOutcome {
         PICKER_DECISION.store(0, Ordering::SeqCst);
         PICKER_HELD.store(0, Ordering::SeqCst);
@@ -762,12 +747,7 @@ mod imp {
         PICKER_CLICK_TAIL.store(0, Ordering::SeqCst);
         PICKER_LEN.store(len.min(u8::MAX as usize) as u8, Ordering::SeqCst);
         PICKER_INDEX.store(initial.min(len.saturating_sub(1)) as u8, Ordering::SeqCst);
-        PICKER_GEOM.store(pack(geom.x, geom.y), Ordering::SeqCst);
-        PICKER_GEOM2.store(pack(geom.w, 0), Ordering::SeqCst);
-        PICKER_PAD_PX.store(geom.pad, Ordering::SeqCst);
-        PICKER_ITEM_PX.store(geom.item_h, Ordering::SeqCst);
-        PICKER_VISIBLE.store(geom.visible.min(u8::MAX as usize) as u8, Ordering::SeqCst);
-
+        PICKER_FOLLOW.store(0, Ordering::SeqCst);
         let hmod = unsafe { GetModuleHandleW(None) }.unwrap_or_default();
         let hook = match unsafe {
             SetWindowsHookExW(
@@ -817,14 +797,15 @@ mod imp {
             }
             if PICKER_MOVED.swap(0, Ordering::SeqCst) != 0 {
                 last_activity = std::time::Instant::now();
-                let i = PICKER_INDEX.load(Ordering::SeqCst) as usize;
-                // A lista desliza quando ha mais linhas do que cabem; o rato tem de apontar para
-                // as linhas que estao MESMO a ser mostradas. Mesma conta que a UI faz.
-                let first = i
-                    .saturating_sub(geom.visible.saturating_sub(1))
-                    .min(len.saturating_sub(geom.visible));
-                PICKER_GEOM2.store(pack(geom.w, first as i32), Ordering::SeqCst);
-                on_move(i);
+                on_move(PICKER_INDEX.load(Ordering::SeqCst) as usize);
+            }
+            if PICKER_FOLLOW.swap(0, Ordering::SeqCst) != 0 {
+                // De proposito SEM tocar no `last_activity`: mexer o rato e o que a pessoa faz o
+                // dia inteiro, e um menu que se mantivesse aberto por causa disso ficava la para
+                // sempre. Quem o esquecer ve-o fechar; quem o estiver a usar carrega numa tecla,
+                // roda ou clica, e isso conta.
+                let (x, y) = unpack(PICKER_CURSOR.load(Ordering::SeqCst));
+                on_follow(x, y);
             }
             let d = PICKER_DECISION.load(Ordering::SeqCst);
             if d != 0 {
@@ -858,7 +839,10 @@ mod imp {
                 return PickerOutcome::Cancelled;
             }
             unsafe {
-                MsgWaitForMultipleObjectsEx(None, 50, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+                // Curto porque a lista SEGUE o ponteiro: a cada volta deste ciclo ela avanca um
+                // salto atras dele, e a 50ms (20 saltos por segundo) o movimento saia aos
+                // solavancos. A volta em si e um PeekMessage e uns atomicos.
+                MsgWaitForMultipleObjectsEx(None, 8, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
             }
         }
     }
@@ -867,7 +851,7 @@ mod imp {
 #[cfg(windows)]
 pub use imp::gate;
 #[cfg(windows)]
-pub use imp::{run_picker_blocking, PickerGeom, PickerOutcome};
+pub use imp::{run_picker_blocking, PickerOutcome};
 #[cfg(windows)]
 #[allow(unused_imports)]
 // o tipo e parte do contrato publico, mesmo que so o flow o nomeie via inferencia
@@ -893,22 +877,12 @@ pub enum PickerOutcome {
     Cancelled,
 }
 #[cfg(not(windows))]
-#[derive(Clone, Copy)]
-pub struct PickerGeom {
-    pub x: i32,
-    pub y: i32,
-    pub w: i32,
-    pub pad: i32,
-    pub item_h: i32,
-    pub visible: usize,
-}
-#[cfg(not(windows))]
 pub fn run_picker_blocking(
     _len: usize,
     _initial: usize,
-    _geom: PickerGeom,
     _should_cancel: impl Fn() -> bool,
     _on_move: impl Fn(usize),
+    _on_follow: impl Fn(i32, i32),
 ) -> PickerOutcome {
     PickerOutcome::Cancelled
 }

@@ -8,6 +8,16 @@
     <link rel="icon" href="data:," />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Ember</title>
+    <!-- A janela cobre o monitor e a lista e desenhada em posicao absoluta la dentro: nada aqui
+         pode scrollar. Sem isto, os 2px de borda da bolha davam uma scrollbar na lista, que
+         alem de feia sugeria projetos escondidos que nao existiam. -->
+    <style>
+      html,
+      body {
+        height: 100%;
+        overflow: hidden;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
