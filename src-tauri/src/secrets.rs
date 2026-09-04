@@ -77,6 +77,9 @@ pub struct OAuthSession {
     pub access_token: String,
     pub refresh_token: String,
     pub account_id: Option<String>,
+    /// O que se MOSTRA nas settings (email, ou nome). Opcional de verdade: sessoes gravadas antes
+    /// de isto existir nao o tem, e uma renovacao pode nao trazer token nenhum com claims.
+    pub account_label: Option<String>,
     pub expires_at_ms: u64,
 }
 
@@ -113,6 +116,10 @@ pub fn get_oauth() -> Result<Option<OAuthSession>, ember_core::CoreError> {
             .get("account_id")
             .and_then(serde_json::Value::as_str)
             .map(str::to_string),
+        account_label: meta
+            .get("account_label")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
         expires_at_ms: meta
             .get("expires_at_ms")
             .and_then(serde_json::Value::as_u64)
@@ -132,6 +139,7 @@ pub fn set_oauth(s: &OAuthSession) -> Result<(), ember_core::CoreError> {
     store(OAUTH_REFRESH, &s.refresh_token)?;
     let meta = serde_json::json!({
         "account_id": s.account_id,
+        "account_label": s.account_label,
         "expires_at_ms": s.expires_at_ms,
     });
     store(OAUTH_META, &meta.to_string())?;

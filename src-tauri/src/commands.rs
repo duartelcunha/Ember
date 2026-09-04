@@ -153,7 +153,9 @@ fn build_dto(app: &AppHandle, cfg: &config::Config) -> SettingsDto {
         // Uma falha do cofre aqui nao pode rebentar as settings inteiras: fica "sem sessao", e o
         // `key_store_error` acima ja e o canal honesto para o cofre ilegivel.
         chatgpt_signed_in: session.is_some(),
-        chatgpt_account: session.and_then(|s| s.account_id),
+        // O nome, nunca o id: quem abre as settings quer saber QUE conta esta ligada, e um
+        // identificador opaco nao responde a isso. Sem nome, a UI diz so que ha sessao.
+        chatgpt_account: session.and_then(|s| s.account_label),
         key_store_error,
         profile_text: resolved.profile.text,
         profile_source: source_str(resolved.profile.source),

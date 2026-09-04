@@ -76,6 +76,7 @@ pub async fn login(state: &AppState) -> Result<Option<String>, String> {
 
     let session = exchange(state, &code, &verifier, port).await?;
     let account = session.account_id.clone();
+    let label = session.account_label.clone();
     secrets::set_oauth(&session).map_err(|_| {
         "Signed in, but the credential vault refused to store the session. Try again.".to_string()
     })?;
@@ -87,8 +88,9 @@ pub async fn login(state: &AppState) -> Result<Option<String>, String> {
         expires_at_ms: session.expires_at_ms,
     });
     log::info!(
-        "oauth: sessao gravada (conta={})",
-        account.as_deref().unwrap_or("desconhecida")
+        "oauth: sessao gravada (conta={}, nome={})",
+        account.as_deref().unwrap_or("desconhecida"),
+        label.as_deref().unwrap_or("nao veio no token")
     );
     Ok(account)
 }
@@ -258,6 +260,16 @@ fn session_from(body: &serde_json::Value, previous_refresh: Option<&str>) -> OAu
                 .as_ref()
                 .and_then(wire::chatgpt_account_id)
         });
+    // O nome vem do mesmo sitio que a conta, e pelas mesmas razoes: o id_token primeiro, o
+    // access token a seguir para os tokens que so la o trazem.
+    let account_label = wire::jwt_claims(s("id_token"))
+        .as_ref()
+        .and_then(wire::chatgpt_account_label)
+        .or_else(|| {
+            wire::jwt_claims(s("access_token"))
+                .as_ref()
+                .and_then(wire::chatgpt_account_label)
+        });
     let refresh = s("refresh_token");
     OAuthSession {
         access_token: s("access_token").to_string(),
@@ -267,6 +279,7 @@ fn session_from(body: &serde_json::Value, previous_refresh: Option<&str>) -> OAu
             refresh.to_string()
         },
         account_id,
+        account_label,
         expires_at_ms: wire::expires_at_ms(body, crate::now_ms()),
     }
 }
@@ -378,6 +391,9 @@ async fn refresh_inner(
             // continua a servir.
             if next.account_id.is_none() {
                 next.account_id = session.account_id.clone();
+            }
+            if next.account_label.is_none() {
+                next.account_label = session.account_label.clone();
             }
             // A gravacao TEM de acontecer: o servidor ja rodou o token e o que esta no cofre
             // deixou de servir neste instante. Se falhar, dizer alto, porque a sessao acabou de

@@ -578,9 +578,9 @@ function ProviderConfig({
             subscription ? (
               // A ressalva vem ANTES de ele depender disto, e não depois de deixar de funcionar.
               <>
-                Refines come out of the ChatGPT plan you already pay for. Unofficial: it uses the
-                same route as the Codex CLI and OpenAI can turn it off without notice. If that
-                happens, pick any service above; those keep working.
+                Runs on the ChatGPT plan you already pay for, through the same unofficial route as
+                the Codex CLI. OpenAI can cut it off without notice; if that happens, pick any
+                service above.
               </>
             ) : (
               endpoint?.note
@@ -614,7 +614,7 @@ function ProviderConfig({
             {signedIn ? (
               <>
                 <p className="flex-1 text-sm text-fg-muted">
-                  Signed in{account ? ` (account ${account})` : ""}.
+                  {account ? `Signed in as ${account}.` : "Signed in."}
                 </p>
                 <Button variant="ghost" onClick={signOut} disabled={busy}>
                   Sign out
