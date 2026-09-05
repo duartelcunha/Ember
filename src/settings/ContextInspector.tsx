@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 type Snapshot = {
   sourceChanged: boolean | null; selection: string; project: string | null; projectSource: string | null;
   profileSources?: { path: string; fingerprint: string }[]; profileSource: string | null; profile: string; projectContext: string | null;
-  profileInvalid?: boolean; reason: string; profileTruncated: boolean; configRevision: number;
+  profileRedacted?: boolean; profileInvalid?: boolean; reason: string; profileTruncated: boolean; configRevision: number;
 };
 
 export function ContextInspector() {
@@ -24,6 +24,7 @@ export function ContextInspector() {
       {!snapshot ? <p>No request has resolved its context in this session.</p> : <>
         <p>{snapshot.reason}. Selection: {snapshot.selection}. Configuration revision: {snapshot.configRevision}.</p>
         {snapshot.sourceChanged && <p role="status">Project sources changed after this brief was generated. Review and regenerate the brief before relying on it.</p>}
+        {snapshot.profileRedacted && <p role="status">Secret-like content was excluded from the saved profile before preparing this request.</p>}
         {snapshot.profileInvalid && <p role="status">The global profile is too long. This request was stopped before contacting a model. Shorten the profile in Personalization.</p>}
         {!snapshot.profileInvalid && snapshot.profileTruncated && <p role="status">The global profile exceeds the prompt limit. Only the text shown below was prepared for inclusion. Review and shorten the profile in Personalization.</p>}
         <p>Global source: {snapshot.profileSource ?? "Ember preferences"}</p>

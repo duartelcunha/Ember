@@ -201,7 +201,7 @@ pub fn compose(extractions: &[Extracted]) -> String {
 }
 
 pub fn validate_reviewed(text: &str, sources: &[Source]) -> Result<(), &'static str> {
-    if text.trim().len() > crate::prompt::MAX_PROFILE_CHARS {
+    if text.trim().len() > crate::prompt::MAX_PROFILE_BYTES {
         return Err("Profile is too long. Shorten it before saving; Ember will not silently truncate a new profile.");
     }
     let normalized = text.trim().lines().collect::<Vec<_>>().join("\n");
@@ -270,15 +270,17 @@ mod tests {
     #[test]
     fn source_order_is_preserved_without_truncating_the_review_draft() {
         let a = extract("Tone: formal");
-        let b = extract(&format!("Tone: {}", "concise ".repeat(600)));
+        let b = extract(&format!("Tone: {}", "concise ".repeat(1600)));
         let combined = compose(&[a, b]);
         assert!(combined.starts_with("Writing preferences:\nTone: formal\nTone: concise"));
-        assert!(combined.len() > crate::prompt::MAX_PROFILE_CHARS);
+        assert!(combined.len() > crate::prompt::MAX_PROFILE_BYTES);
     }
     #[test]
     fn save_limits_use_utf8_bytes_and_reject_invalid_provenance() {
-        assert!(validate_reviewed(&"é".repeat(1000), &[]).is_ok());
-        assert!(validate_reviewed(&"é".repeat(1001), &[]).is_err());
+        assert!(validate_reviewed(&"é".repeat(crate::prompt::MAX_PROFILE_BYTES / 2), &[]).is_ok());
+        assert!(
+            validate_reviewed(&"é".repeat(crate::prompt::MAX_PROFILE_BYTES / 2 + 1), &[]).is_err()
+        );
         let source = Source {
             path: "/source.md".into(),
             fingerprint: "a".repeat(64),

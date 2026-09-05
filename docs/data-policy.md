@@ -46,7 +46,7 @@ showing a draft. Exclusions are visible. This conservative heuristic can omit us
 and does not prove semantic immunity to malicious instructions. The user reviews and saves
 the draft before it becomes context. No raw-source fallback exists.
 
-Saved profiles have a 2,000-byte UTF-8 limit. Oversized drafts remain editable and cannot be
+Saved profiles have a 8 KiB UTF-8 limit, shown in Personalization. Oversized drafts remain editable and cannot be
 saved; legacy oversized overrides stop refinement before a provider request. Existing manual
 preferences remain intact. Legacy automatic file loading is disabled with a Settings notice.
 Source paths and SHA-256 fingerprints are provenance for approved snapshots, not permission

@@ -152,6 +152,7 @@ export interface EmberSettings {
   /** `null` em condições normais; mensagem quando o cofre de credenciais está ilegível. */
   keyStoreError: string | null;
   profileText: string;
+  profileLimitBytes: number;
   profileSource: ProfileSource;
   profilePath: string | null;
   profileSources: ProfileProvenance[];
@@ -209,6 +210,7 @@ export const DEFAULT_SETTINGS: EmberSettings = {
   hasOpenAiKey: false,
   keyStoreError: null,
   profileText: "",
+  profileLimitBytes: 8192, // Initial mirror of Rust MAX_PROFILE_BYTES; DTO supplies the active limit.
   profileSource: "default",
   profilePath: null,
   profileSources: [],

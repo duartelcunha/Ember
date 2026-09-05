@@ -126,7 +126,7 @@ test("UI components preserve geometry and asynchronous ownership", async (t) => 
     assert.equal(savedProfile.text, 'Tone: reviewed');
     assert.equal(savedProfile.sources[0].fingerprint, 'a'.repeat(64));
     await page.waitForFunction(() => !document.querySelector('textarea').disabled);
-    await enterProfile('é'.repeat(1001));
+    await enterProfile('é'.repeat(4097));
     await page.waitForSelector('[role=alert]');
     assert.equal(await page.evaluate(() => Array.from(document.querySelectorAll('button')).find(button => button.textContent === 'Save reviewed profile').disabled), true);
     assert.equal(await page.evaluate(() => window.__profileFixture.saved.length), 1);
