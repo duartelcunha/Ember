@@ -11,6 +11,7 @@ pub mod engine;
 pub mod error;
 pub mod health;
 pub mod hotkey;
+pub mod input;
 pub mod model;
 pub mod models;
 pub mod modifiers;

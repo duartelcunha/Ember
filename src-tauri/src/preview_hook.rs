@@ -7,23 +7,11 @@
 //! O `unsafe` do Win32 vive todo aqui, isolado. As pecas puras (`classify_key`, `Decision`,
 //! `PREVIEW_TIMEOUT`) sao cross-platform e testadas em qualquer SO.
 
-/// O que o utilizador decidiu no gate.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Decision {
-    /// Aplicar: colar o texto refinado (Enter).
-    Accept,
-    /// Recusar: manter o original, nao colar nada (Esc, timeout, ou hotkey durante o gate).
-    Reject,
-}
-
-/// O que o hook faz com uma tecla premida durante o gate.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum KeyVerdict {
-    /// Nao decide nada e a tecla segue o seu caminho normal.
-    PassThrough,
-    /// Decide o gate. `consume` = a tecla NAO chega a app em foco.
-    Decide { decision: Decision, consume: bool },
-}
+#[cfg(windows)]
+use ember_core::input::{
+    classify_key, classify_watch_event, KeyVerdict, WatchVerdict, PREVIEW_TIMEOUT,
+};
+pub use ember_core::input::{Decision, PickerOutcome};
 
 // Capture, application and keyboard hooks share one native input owner.
 static INPUT_OWNER: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -34,104 +22,9 @@ pub(crate) fn input_lease() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// Modificadores puros. Premir Shift ou Ctrl nao e "continuar a trabalhar", e o inicio de um
-/// atalho ou de uma maiuscula: se contassem, o preview fugia mal a pessoa encostasse a um deles.
-fn is_modifier(vk: u32) -> bool {
-    matches!(
-        vk,
-        0x10 | 0x11 | 0x12 // Shift / Ctrl / Alt genericos
-            | 0x14 // Caps Lock
-            | 0x5B | 0x5C // Win esquerda/direita
-            | 0xA0..=0xA5 // Shift/Ctrl/Alt esquerda e direita
-    )
-}
-
-/// Classificador puro: o que uma tecla premida significa no gate. Testavel em qualquer SO.
-///
-/// Enter e Esc respondem a pergunta e sao CONSUMIDOS, para o Enter nao meter uma newline no
-/// editor por baixo. Qualquer outra tecla (que nao seja um modificador) quer dizer que a pessoa
-/// seguiu em frente e ja nao esta a olhar para o preview: mantem-se o original e a pilula sai da
-/// frente, mas a tecla NAO e consumida, porque ela estava a escrever na app dela e engolir-lhe um
-/// caracter seria pior do que qualquer pilula esquecida.
-pub fn classify_key(vk: u32) -> KeyVerdict {
-    match vk {
-        0x0D => KeyVerdict::Decide {
-            decision: Decision::Accept,
-            consume: true,
-        }, // VK_RETURN
-        0x1B => KeyVerdict::Decide {
-            decision: Decision::Reject,
-            consume: true,
-        }, // VK_ESCAPE
-        vk if is_modifier(vk) => KeyVerdict::PassThrough,
-        _ => KeyVerdict::Decide {
-            decision: Decision::Reject,
-            consume: false,
-        },
-    }
-}
-
-// ---------------------------------------------------------------------------------------
-// Watcher de Esc durante o refine (cancelar "anytime")
-// ---------------------------------------------------------------------------------------
-
-/// O que o watcher faz com um evento de teclado durante o refine. So o Esc lhe interessa; e um
-/// hook muito mais estreito que o do gate, porque durante o refine o utilizador continua a
-/// trabalhar na app dele e NADA do que ele escreve nos diz respeito.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum WatchVerdict {
-    /// Esc fresco: cancela o refine e CONSOME a tecla (o utilizador carregou para nos parar; se a
-    /// tecla seguisse, a app dele tambem a recebia e fechava um dialog qualquer).
-    Cancel,
-    /// Cauda da pressao que ja consumimos (repeticoes e key-up): continua a consumir, senao o
-    /// resto da pressao vazava para a app.
-    ConsumeTail,
-    /// Key-up de um Esc que ja estava premido QUANDO o watcher instalou: a pressao era da app
-    /// dele, o up e dela. Passa, e a partir daqui o proximo Esc ja conta.
-    ReleaseHeld,
-    /// Tudo o resto, Esc herdado incluido: passa intocado.
-    Pass,
-}
-
-/// Classificador puro do watcher. `ignoring_held` = o Esc ja estava em baixo na instalacao;
-/// `decided` = ja consumimos um keydown fresco e estamos a engolir a cauda.
-pub fn classify_watch_event(
-    vk: u32,
-    is_down: bool,
-    ignoring_held: bool,
-    decided: bool,
-) -> WatchVerdict {
-    if vk != 0x1B {
-        return WatchVerdict::Pass;
-    }
-    if decided {
-        // Depois de decidir, TUDO o que for Esc e cauda da nossa pressao ate ao key-up.
-        return WatchVerdict::ConsumeTail;
-    }
-    if is_down {
-        if ignoring_held {
-            // Auto-repeat de uma pressao que comecou antes de nos: e da app dele.
-            return WatchVerdict::Pass;
-        }
-        return WatchVerdict::Cancel;
-    }
-    if ignoring_held {
-        return WatchVerdict::ReleaseHeld;
-    }
-    WatchVerdict::Pass
-}
-
-/// Prazo total do gate: se o utilizador nao responder, recusa (mantem o original). O silencio
-/// nunca vira um paste.
-pub const PREVIEW_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
-
-// ---------------------------------------------------------------------------------------
-// Windows: o hook real
-// ---------------------------------------------------------------------------------------
-
 #[cfg(windows)]
 mod imp {
-    use super::{classify_key, Decision, KeyVerdict, PREVIEW_TIMEOUT};
+    use super::{classify_key, Decision, KeyVerdict, PickerOutcome, PREVIEW_TIMEOUT};
     use std::sync::atomic::{AtomicU8, Ordering};
     use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -833,15 +726,6 @@ mod imp {
         CallNextHookEx(None, code, wparam, lparam)
     }
 
-    /// O que o picker devolveu.
-    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-    pub enum PickerOutcome {
-        /// Enter/Tab no indice dado.
-        Committed(usize),
-        /// Esc, tecla alheia, timeout, ou cancelamento externo.
-        Cancelled,
-    }
-
     /// Um menu esquecido sai da frente sozinho, mas a contagem e de INATIVIDADE e nao de vida:
     /// medida desde a abertura, seis segundos matavam a lista enquanto a pessoa ainda a estava a
     /// ler pela primeira vez. Cada seta que ela carrega poe o relogio a zero.
@@ -997,7 +881,7 @@ mod imp {
 #[cfg(windows)]
 pub use imp::gate;
 #[cfg(windows)]
-pub use imp::{run_picker_blocking, PickerOutcome};
+pub use imp::run_picker_blocking;
 #[cfg(windows)]
 #[allow(unused_imports)]
 // o tipo e parte do contrato publico, mesmo que so o flow o nomeie via inferencia
@@ -1017,12 +901,6 @@ pub fn spawn_esc_watcher(_app: tauri::AppHandle, _run_id: u64) -> EscWatcher {
 
 /// Non-Windows: sem hook, o picker nao tem teclado. Cancela sempre.
 #[cfg(not(windows))]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum PickerOutcome {
-    Committed(usize),
-    Cancelled,
-}
-#[cfg(not(windows))]
 pub fn run_picker_blocking(
     _len: usize,
     _initial: usize,
@@ -1038,112 +916,4 @@ pub fn run_picker_blocking(
 #[cfg(not(windows))]
 pub async fn gate(_app: tauri::AppHandle, _run_id: u64) -> Decision {
     Decision::Reject
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn enter_and_esc_answer_the_question_and_never_reach_the_app() {
-        assert_eq!(
-            classify_key(0x0D),
-            KeyVerdict::Decide {
-                decision: Decision::Accept,
-                consume: true
-            }
-        );
-        assert_eq!(
-            classify_key(0x1B),
-            KeyVerdict::Decide {
-                decision: Decision::Reject,
-                consume: true
-            }
-        );
-    }
-
-    #[test]
-    fn typing_on_means_keep_the_original_without_eating_the_keystroke() {
-        // Quem continua a escrever ja respondeu: nao esta a olhar para o preview. Sem isto, a
-        // pilula ficava pendurada ate ao timeout, no meio do ecra, a pedir uma resposta que ja
-        // ninguem ia dar.
-        //
-        // `consume: false` e a parte que nao pode falhar: a tecla era dele, ia para a app dele.
-        // Engolir-lhe um caracter para fechar uma pilula nossa seria trocar um incomodo por um
-        // bug de escrita, que e muito pior.
-        for vk in [
-            0x41, /* A */
-            0x20, /* Space */
-            0x08, /* Backspace */
-            0x09, /* Tab */
-        ] {
-            assert_eq!(
-                classify_key(vk),
-                KeyVerdict::Decide {
-                    decision: Decision::Reject,
-                    consume: false
-                },
-                "vk {vk:#x} devia manter o original sem consumir a tecla"
-            );
-        }
-    }
-
-    #[test]
-    fn watch_a_fresh_esc_cancels_and_is_consumed_with_its_tail() {
-        // Esc fresco durante o refine: cancela. E dai em diante tudo o que for Esc e cauda da
-        // NOSSA pressao (repeticoes, key-up) e continua consumido, senao vazava para a app.
-        assert_eq!(
-            classify_watch_event(0x1B, true, false, false),
-            WatchVerdict::Cancel
-        );
-        assert_eq!(
-            classify_watch_event(0x1B, true, false, true),
-            WatchVerdict::ConsumeTail
-        );
-        assert_eq!(
-            classify_watch_event(0x1B, false, false, true),
-            WatchVerdict::ConsumeTail
-        );
-    }
-
-    #[test]
-    fn watch_an_esc_held_from_before_belongs_to_the_users_app() {
-        // O Esc ja estava em baixo quando o watcher instalou: essa pressao era para a app dele.
-        // As repeticoes passam, o key-up passa (e limpa o "herdado"), e so a descida SEGUINTE
-        // conta como cancelamento.
-        assert_eq!(
-            classify_watch_event(0x1B, true, true, false),
-            WatchVerdict::Pass
-        );
-        assert_eq!(
-            classify_watch_event(0x1B, false, true, false),
-            WatchVerdict::ReleaseHeld
-        );
-    }
-
-    #[test]
-    fn watch_ignores_every_other_key_entirely() {
-        // O watcher e mais estreito que o gate: durante o refine o utilizador continua a
-        // trabalhar, e NADA do que ele escreve nos diz respeito. Enter incluido.
-        for vk in [0x0D, 0x41, 0x20, 0x25, 0x26, 0x10, 0x11] {
-            assert_eq!(
-                classify_watch_event(vk, true, false, false),
-                WatchVerdict::Pass,
-                "vk {vk:#x} nao e assunto do watcher"
-            );
-        }
-    }
-
-    #[test]
-    fn modifiers_alone_do_not_dismiss_the_preview() {
-        // Encostar ao Shift para escrever uma maiuscula, ou ao Ctrl a caminho de um atalho, nao e
-        // "segui em frente". Se contasse, o preview fugia antes de a pessoa acabar o gesto.
-        for vk in [0x10, 0x11, 0x12, 0x14, 0x5B, 0xA0, 0xA2, 0xA5] {
-            assert_eq!(
-                classify_key(vk),
-                KeyVerdict::PassThrough,
-                "vk {vk:#x} e um modificador e nao devia decidir nada"
-            );
-        }
-    }
 }

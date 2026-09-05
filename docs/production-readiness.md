@@ -118,7 +118,7 @@ transitions or installers. Checks executed in this Windows checkout:
 
 | Command | Observed output |
 | --- | --- |
-| `cargo test --workspace --locked --quiet` | Shell: `49 passed; 0 failed`. Core: `322 passed; 0 failed` |
+| `cargo test --workspace --locked --quiet` | Windows shell: `43 passed; 0 failed`. Core: `328 passed; 0 failed` |
 | `cargo clippy --workspace --all-targets --locked -- -D warnings` | Exit 0, `Finished dev profile` in 5.31s |
 | `npx tsc --noEmit` | Exit 0, no diagnostics |
 | `npm test` | `tests 6`, `pass 6`, `fail 0`, including browser layout, snapshots and ACL contracts |
@@ -187,3 +187,5 @@ update channel or establish native platform parity. Windows publisher signing is
 The release-please workflow now retains its releases as drafts. Manual candidate delivery
 is separate from production promotion. The signature verification utility can be run locally
 with `cargo run --locked -p ember --example verify_update -- <installer> <signature>`.
+
+Cross-platform CI initially found Windows-only dead code in macOS/Linux builds. The pure key ownership decisions and their six regressions now live in ember-core; only native adapter entry points are platform-gated. Strict lint remains enabled.

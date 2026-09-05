@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.0-rc.1 (2026-09-05)
+
+Windows evaluation candidate, excluded from stable automatic updates.
+
+* Coordinate editing runs and validate accessible selection identity before replacement.
+* Stabilize cursor-following orb, project pills and picker with measured layout and state snapshots.
+* Preserve protected text and Unicode; expose resolved project context and reject obsolete draft responses.
+* Bind credentials to provider endpoints, encrypt optional retained results and serialize configuration writes.
+* Gate candidate publication on three-platform checks and verification of uploaded updater signatures.
+
+Native input, clipboard and monitor qualification, platform parity and publisher signing remain open. See [the implementation ledger](docs/production-readiness.md).
+
 ## [1.0.0](https://github.com/duartelcunha/Ember/compare/v0.10.0...v1.0.0) (2026-09-03)
 
 

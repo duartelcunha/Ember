@@ -1076,6 +1076,7 @@ fn emit_preview(app: &AppHandle, run_id: u64, original: &str, result: &str) {
     );
 }
 
+#[cfg(windows)]
 pub(crate) fn move_preview_page(app: &AppHandle, run_id: u64, delta: i32) {
     let state = app.state::<AppState>();
     if state.hide_gen.load(Ordering::SeqCst) != run_id {

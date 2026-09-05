@@ -4,6 +4,7 @@
 /// Apps tratados como terminal (basename do exe, lowercase). Code.exe fica de fora de
 /// proposito: o editor do VS Code copia com Ctrl+C, e o terminal integrado tambem
 /// copia com Ctrl+C quando ha seleccao no Windows.
+#[cfg(any(windows, test))]
 const TERMINALS: &[&str] = &[
     "windowsterminal.exe",
     "openconsole.exe",
@@ -26,6 +27,7 @@ const TERMINALS: &[&str] = &[
 
 /// `true` se o caminho do exe em foco e um terminal conhecido. Puro e testavel em qualquer
 /// plataforma (o `foreground_exe` que le o SO fica isolado por tras do cfg(windows)).
+#[cfg(any(windows, test))]
 pub fn is_terminal_exe(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
     let base = lower.rsplit(['\\', '/']).next().unwrap_or(lower.as_str());
