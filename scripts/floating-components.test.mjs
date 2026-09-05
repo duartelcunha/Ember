@@ -48,6 +48,9 @@ test("UI components preserve geometry and asynchronous ownership", async (t) => 
     await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
     await page.goto(`http://127.0.0.1:${port}/__ember-test/overlay`);
     await page.waitForFunction(() => document.body.textContent.includes("Snapshot ready"));
+    await t.test('hint messages do not draw a second pointer', async () => {
+      assert.equal(await page.$$eval('.ember-bubble svg', nodes => nodes.length), 0);
+    });
     const send = async (name, payload) => page.evaluate((name, payload) => window.__emit(name, payload), name, payload);
     await send("ember://state", { sequence: 99, runId: 2, phase: "error", message: "Obsolete run" });
     await page.evaluate(() => new Promise(requestAnimationFrame));
@@ -66,10 +69,23 @@ test("UI components preserve geometry and asynchronous ownership", async (t) => 
     const visible = await page.$eval('.ember-orb-row svg', e => { const r = e.getBoundingClientRect(); return { left: r.left + 22, right: r.left + 37, top: r.top + 2, bottom: r.top + 17 }; });
     assert.ok(visible.left >= 0 && visible.right <= 320 && visible.top >= 0 && visible.bottom <= 540, JSON.stringify(visible));
     await capture("project-status");
+    await page.evaluate(() => {
+      window.__phaseOverlaps = [];
+      window.__phaseObserver = new MutationObserver(() => {
+        window.__phaseOverlaps.push(Boolean(document.querySelector('.ember-orb-row') && document.querySelector('.ember-preview')));
+      });
+      window.__phaseObserver.observe(document.getElementById('root'), { childList: true, subtree: true });
+    });
     await send("ember://state", { sequence: 102, runId: 4, phase: "preview", preview: { original: ['First line\nSecond line'], result: ['Changed line\nSecond line'], page: 0 } });
     await page.setViewport({ width: 320, height: 540, deviceScaleFactor: 2 });
     await page.waitForFunction(() => document.body.textContent.includes('Review changes'));
     await presented();
+    await t.test('review replaces the orb without retaining an exiting loading layer', async () => {
+      const overlaps = await page.evaluate(() => { window.__phaseObserver.disconnect(); return window.__phaseOverlaps; });
+      assert.ok(overlaps.length > 0);
+      assert.equal(overlaps.some(Boolean), false);
+      assert.equal(await page.$$eval('.ember-orb-row', nodes => nodes.length), 0);
+    });
     rect = await bounds();
     assert.ok(rect.right <= rect.width + 1 && rect.bottom <= rect.height + 1, JSON.stringify(rect));
     const preview = await page.$eval('.ember-preview', e => ({ height: e.getBoundingClientRect().height, max: innerHeight * .4, background: getComputedStyle(e).backgroundColor }));

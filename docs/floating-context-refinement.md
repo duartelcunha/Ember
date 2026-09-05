@@ -125,3 +125,17 @@ Two additional native smoke attempts at the initial spacing stopped when foregro
 ownership changed to another application. Work-area bounds matched in every recorded sample;
 the fixture did not own foreground focus. These interrupted attempts are not qualification
 passes for this follow-up. Mixed-DPI and real Enter/paste qualification remain pending.
+
+## Exclusive loading and review states
+
+Hint pills no longer render a decorative cursor icon. Their text is sufficient, and the icon
+could be mistaken for a second pointer. Phase changes now replace the old subtree immediately.
+The former presence boundary retained the orb's nested exit animation even though its parent
+had a zero-duration exit, so loading and review briefly coexisted.
+
+Two rendered regressions reproduced both defects before correction: the hint contained one
+unexpected SVG, and a DOM observer recorded an orb and review together. After correction,
+`npm test` reports 16 passing tests, including no overlap at the transition commit and no
+retained orb afterward. `cargo test --workspace --locked --quiet` reports 53 shell and 347
+core tests passing. `npm run build` completed in 16.15 seconds. The installed application
+remains rc.2; these changes still require native qualification and delivery.

@@ -1,4 +1,4 @@
-import { AnimatePresence, domAnimation, LazyMotion, m, MotionConfig } from "motion/react";
+import { domAnimation, LazyMotion, MotionConfig } from "motion/react";
 import { useOverlayState } from "./useOverlayController";
 import { useFloatingPosition } from "../components/useFloatingPosition";
 import { Orb } from "./Orb";
@@ -61,10 +61,9 @@ export function Overlay() {
               : undefined
           }
         >
-          <AnimatePresence mode="popLayout">
-            {/* A direct motion child gives popLayout the DOM ref needed to remove
-                exiting content from measurement during phase changes. */}
-            {s.phase !== "hidden" && <m.div key={s.phase} exit={{ opacity: 0, transition: { duration: 0 } }}>
+            {/* Replace phases immediately. Nested exit animations otherwise retain
+                the loading orb above the incoming review even with a zero-duration parent. */}
+            {s.phase !== "hidden" && <div key={s.phase}>
             {s.phase === "refining" && (
               // Independent labels cannot change the visible ring's cursor anchor.
               <div key="orb" className="ember-orb-row flex items-start gap-2">
@@ -82,8 +81,7 @@ export function Overlay() {
               <Pill key="hint" kind="hint" text={s.message ?? "Select text first"} />
             )}
             {s.phase === "preview" && s.preview && <Preview key="preview" value={s.preview} />}
-            </m.div>}
-          </AnimatePresence>
+            </div>}
         </div>
         <div ref={labels} className="ember-floating fixed left-0 top-0 w-max max-w-[min(280px,calc(100vw-16px))]" aria-hidden>
           {s.phase === "refining" && <div className="flex flex-col items-start gap-1">
