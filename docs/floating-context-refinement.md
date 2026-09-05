@@ -160,3 +160,36 @@ both opening directions, stable bounds during the morph and interrupted transiti
 `cargo test --workspace --locked --quiet`: 53 shell and 347 core tests passed.
 These are automated component and core results, not installed-candidate, physical
 Enter/paste or native mixed-DPI qualification. No release or installation was performed.
+
+## Compact confirmation and UI refinement
+
+This revision supersedes the comparison-card design above at the user's request.
+Visible orb pixels and the confirmation now share an 18 by 0 logical-pixel anchor.
+Confirmation contains only `Enter apply · Esc cancel`, with `Whole field` when capture
+selected the entire field. The normal surface is 26px high, uses 11px text and an 8px
+radius, and can wrap to two lines in narrow work areas. Original and refined text no
+longer cross into the overlay snapshot. `confirmationScope` is a serialized enum with
+`selection` and `field` variants. The existing saved confirmation preference is retained.
+
+Page Up and Page Down no longer belong to the confirmation hook; they reject the
+pending application and pass through as ordinary navigation input. Enter/Esc ownership,
+key release, target validation and result recovery are unchanged. The morph still opens
+from the 15px ring over 180ms without moving the geometry anchor or retaining old content.
+
+Shared controls now provide consistent keyboard focus and pending states. Projects,
+profiles and connections show errors inline. Authorized paths disclose their full location
+through keyboard-accessible details. Empty associations and source lists explain the active
+fallback. The cream theme uses darker action and semantic colors for readable text.
+The project picker no longer scales or translates its surface or rows during selection.
+Reduced motion disables the floating morph, internal orb motion, settings entry effects,
+project expansion motion and startup/quit effects while preserving completion callbacks.
+
+Local validation: `npm test` reports 20 passed, 0 failed. Rust reports 54 shell and
+348 core tests passed. Strict Clippy completed successfully. Browser captures cover
+compact confirmation, the orb, providers and projects in both themes, with additional
+checks for contrast, stable button width, keyboard navigation and interrupted transitions.
+These captures use real components and synthetic IPC, not an installed native request.
+
+A locally identified build may be installed with a verified recovery copy for user testing.
+That does not waive mixed-DPI qualification for publication or native platform parity for
+production. Installation evidence is kept with the private local recovery copy.

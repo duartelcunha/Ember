@@ -1,6 +1,7 @@
+import { Feedback } from "../components/Feedback";
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState, useCallback } from "react";
-import { motion, MotionConfig } from "motion/react";
+import { motion, MotionConfig, useReducedMotion } from "motion/react";
 import { toast } from "sonner";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -431,7 +432,9 @@ function ProviderConfig({
   isPrimary?: boolean;
   onMakePrimary?: () => void;
 }) {
+  const [error, setError] = useState<string | null>(null);
   const [key, setKey] = useState("");
+  const [busyAction, setBusyAction] = useState<"save" | "remove" | null>(null);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(hasKey);
   const [urlDraft, setUrlDraft] = useState(baseUrl ?? "");
@@ -444,7 +447,9 @@ function ProviderConfig({
   useEffect(() => setSaved(hasKey), [hasKey]);
 
   const saveKey = async () => {
+    setBusyAction("save");
     if (!key.trim()) return;
+    setError(null);
     setBusy(true);
     try {
       await ipc.setApiKey(kind, key.trim());
@@ -456,19 +461,22 @@ function ProviderConfig({
       if (status === "valid") {
         toast.success(`${title} key is valid and saved.`);
       } else if (status === "invalid") {
-        toast.error(`${title} key saved, but looks invalid. Double-check it.`);
+        setError(`${title} key saved, but looks invalid. Double-check it.`);
       } else {
-        toast.error(`${title} key saved. Couldn't verify it right now (no network).`);
+        setError(`${title} key saved. Couldn't verify it right now (no network).`);
       }
       onKeyChanged?.();
     } catch {
-      toast.error("Couldn't save the key (app not running?).");
+      setError("Couldn't save the key (app not running?).");
     } finally {
       setBusy(false);
+      setBusyAction(null);
     }
   };
 
   const removeKey = async () => {
+    setBusyAction("remove");
+    setError(null);
     setBusy(true);
     try {
       await ipc.clearApiKey(kind);
@@ -477,9 +485,10 @@ function ProviderConfig({
       toast.success(`${title} key removed.`);
       onKeyChanged?.();
     } catch {
-      toast.error("Couldn't remove the key.");
+      setError("Couldn't remove the key.");
     } finally {
       setBusy(false);
+      setBusyAction(null);
     }
   };
 
@@ -488,7 +497,7 @@ function ProviderConfig({
       await ipc.setModel(kind, m);
       toast.success(`${title} model updated.`);
     } catch {
-      toast.error("Couldn't update the model.");
+      setError("Couldn't update the model.");
     }
   };
 
@@ -498,6 +507,7 @@ function ProviderConfig({
   const endpoint = endpointFor(baseUrl);
 
   const signIn = async () => {
+    setError(null);
     setBusy(true);
     try {
       // Só resolve depois do browser: o toast de sucesso é sobre a sessão gravada, e não sobre
@@ -507,35 +517,40 @@ function ProviderConfig({
       onKeyChanged?.();
     } catch (e) {
       // A mensagem vem do Rust já legível (login cancelado, portas ocupadas, OpenAI recusou).
-      toast.error(String(e));
+      setError(String(e));
     } finally {
       setBusy(false);
+      setBusyAction(null);
     }
   };
 
   const signOut = async () => {
+    setError(null);
     setBusy(true);
     try {
       onSettings?.(await ipc.chatgptLogout());
       toast.success("Signed out. The fallback is back to using an API key.");
       onKeyChanged?.();
     } catch {
-      toast.error("Couldn't sign out.");
+      setError("Couldn't sign out.");
     } finally {
       setBusy(false);
+      setBusyAction(null);
     }
   };
 
   const switchEndpoint = async (id: EndpointId | typeof CHATGPT) => {
     if (id === CHATGPT) {
-      setBusy(true);
+      setError(null);
+    setBusy(true);
       try {
         onSettings?.(await ipc.setOpenAiAuth("chat_gpt"));
         onKeyChanged?.();
       } catch {
-        toast.error("Couldn't switch to the subscription.");
+        setError("Couldn't switch to the subscription.");
       } finally {
         setBusy(false);
+      setBusyAction(null);
       }
       return;
     }
@@ -553,7 +568,7 @@ function ProviderConfig({
       // que ja nao estava em disco: Service = OpenAI com um modelo do Groq por baixo.
       onKeyChanged?.();
     } catch {
-      toast.error("Couldn't switch the service.");
+      setError("Couldn't switch the service.");
     }
   };
 
@@ -642,11 +657,11 @@ function ProviderConfig({
               onChange={(e) => setKey(e.target.value)}
               placeholder={saved ? "•••••••• (saved)" : "paste your key"}
             />
-            <Button variant="primary" onClick={saveKey} disabled={busy || !key.trim()}>
+            <Button variant="primary" onClick={saveKey} loading={busy && busyAction === "save"} disabled={busy || !key.trim()}>
               Save
             </Button>
             {saved && (
-              <Button variant="ghost" onClick={removeKey} disabled={busy}>
+              <Button variant="ghost" onClick={removeKey} loading={busy && busyAction === "remove"} disabled={busy}>
                 Remove
               </Button>
             )}
@@ -663,7 +678,7 @@ function ProviderConfig({
               urlDraft.trim() &&
               urlDraft.trim() !== baseUrl &&
               onCommitBaseUrl(urlDraft.trim()).catch(() =>
-                toast.error("Couldn't update the base URL.")
+                setError("Couldn't update the base URL.")
               )
             }
             placeholder="https://openrouter.ai/api/v1"
@@ -679,6 +694,7 @@ function ProviderConfig({
         onSetAuto={onSetAuto}
         onCommit={commitModel}
       />
+      {error && <Feedback tone="error">{error}</Feedback>}
     </Section>
       {onMakePrimary && !isPrimary && (
         // BESIDE the card, and absolutely positioned on purpose. A regular column on the right
@@ -973,6 +989,7 @@ export function Settings({ initialTab = "providers" }: { initialTab?: string } =
   // por isso o fade-in de entrada corre no mount e ja se ve. As reaberturas re-animam via
   // `openKey` (remount do conteudo). O fecho esconde a janela no lado nativo (ver useEffect),
   // sem fade-out (fragil numa janela nativa), por isso nao ha estado de "invisivel" no JS.
+  const still = useReducedMotion();
   const [openKey, setOpenKey] = useState(0);
   const [s, setS] = useState<EmberSettings>(DEFAULT_SETTINGS);
   const [hotkey, setHotkey] = useState(DEFAULT_SETTINGS.hotkey);
@@ -1158,9 +1175,9 @@ export function Settings({ initialTab = "providers" }: { initialTab?: string } =
             // 280ms, e nao os 600 de antes: com a janela pre-aquecida no arranque, abrir e so
             // mostrar, e uma entrada longa passa a ser a UNICA coisa que se sente lenta. A
             // escala parte de 0.985 (era 0.97) para o texto nao chegar visivelmente a arrastar.
-            initial={{ opacity: 0, scale: 0.985 }}
+            initial={still ? false : { opacity: 0, scale: 0.985 }}
             animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+            transition={{ duration: still ? 0 : 0.28, ease: [0.22, 1, 0.36, 1] }}
             style={{ transformOrigin: "center" }}
           >
         <TitleBar />
@@ -1177,9 +1194,9 @@ export function Settings({ initialTab = "providers" }: { initialTab?: string } =
           className="mx-auto max-w-5xl px-16 pb-12 pt-14"
           // Segue a de fora de perto (delay curto) em vez de somar mais meio segundo por cima:
           // as duas encadeadas davam ~800ms ate a janela assentar.
-          initial={{ opacity: 0, y: 8 }}
+          initial={still ? false : { opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1], delay: 0.06 }}
+          transition={{ duration: still ? 0 : 0.32, ease: [0.22, 1, 0.36, 1], delay: still ? 0 : 0.06 }}
         >
           {!hydrated ? (
             // Esqueleto enquanto o getSettings nao voltou: evita piscar um estado falso (ex.:
@@ -1238,7 +1255,7 @@ export function Settings({ initialTab = "providers" }: { initialTab?: string } =
                     <motion.div
                       key="gemini"
                       layout
-                      transition={SWAP_SPRING}
+                      transition={still ? { duration: 0 } : SWAP_SPRING}
                     >
                 <ProviderConfig
                   kind="gemini"
@@ -1275,7 +1292,7 @@ export function Settings({ initialTab = "providers" }: { initialTab?: string } =
                     <motion.div
                       key="openai"
                       layout
-                      transition={SWAP_SPRING}
+                      transition={still ? { duration: 0 } : SWAP_SPRING}
                     >
                 <ProviderConfig
                   kind="openai"
@@ -1466,7 +1483,7 @@ export function Settings({ initialTab = "providers" }: { initialTab?: string } =
                 </Section>
 
                 <Section
-                  title="Preview before paste"
+                  title="Confirm before applying"
                   hint="Confirm by your cursor before anything is pasted."
                   detail={
                     <p>
@@ -1477,7 +1494,7 @@ export function Settings({ initialTab = "providers" }: { initialTab?: string } =
                   }
                 >
                   <div className="flex items-center justify-between">
-                    <Label htmlFor="preview-before-paste">Confirm before pasting</Label>
+                    <Label htmlFor="preview-before-paste">Confirm before applying</Label>
                     <Switch
                       id="preview-before-paste"
                       checked={s.previewBeforePaste}

@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join, resolve, extname, dirname, basename } from "node:path";
 import puppeteer from "puppeteer";
 import { projectRegressions } from "./projects-components.mjs";
+import { settingsRegressions } from "./settings-components.mjs";
 
 // Real React components and CSS, with the documented Tauri IPC mock. This is browser
 // evidence only: it cannot establish native focus, input hooks or monitor transitions.
@@ -72,13 +73,13 @@ test("UI components preserve geometry and asynchronous ownership", async (t) => 
     await page.evaluate(() => {
       window.__phaseOverlaps = [];
       window.__phaseObserver = new MutationObserver(() => {
-        window.__phaseOverlaps.push(Boolean(document.querySelector('.ember-orb-row') && document.querySelector('.ember-preview')));
+        window.__phaseOverlaps.push(Boolean(document.querySelector('.ember-orb-row') && document.querySelector('.ember-confirmation')));
       });
       window.__phaseObserver.observe(document.getElementById('root'), { childList: true, subtree: true });
     });
-    await send("ember://state", { sequence: 102, runId: 4, phase: "preview", preview: { original: ['First line\nSecond line'], result: ['Changed line\nSecond line'], page: 0 } });
+    await send("ember://state", { sequence: 102, runId: 4, phase: "preview", confirmationScope: 'selection' });
     await page.setViewport({ width: 320, height: 540, deviceScaleFactor: 2 });
-    await page.waitForFunction(() => document.body.textContent.includes('Review changes'));
+    await page.waitForFunction(() => document.querySelector('.ember-confirmation'));
     await presented();
     await t.test('review replaces the orb without retaining an exiting loading layer', async () => {
       const overlaps = await page.evaluate(() => { window.__phaseObserver.disconnect(); return window.__phaseOverlaps; });
@@ -88,22 +89,27 @@ test("UI components preserve geometry and asynchronous ownership", async (t) => 
     });
     rect = await bounds();
     assert.ok(rect.right <= rect.width + 1 && rect.bottom <= rect.height + 1, JSON.stringify(rect));
-    const preview = await page.$eval('.ember-preview', e => ({ height: e.getBoundingClientRect().height, max: innerHeight * .4, background: getComputedStyle(e).backgroundColor }));
-    assert.ok(preview.height <= preview.max + 1, JSON.stringify(preview));
-    assert.equal(preview.background, 'rgb(26, 21, 17)');
-    await capture("preview");
-    await page.setViewport({ width: 320, height: 480, deviceScaleFactor: 2 });
-    await send('ember://state', { sequence: 103, runId: 4, phase: 'preview', preview: { original: ['W'.repeat(48)], result: ['界'.repeat(24)], page: 0 } });
-    await presented();
-    const complete = await page.$eval('.ember-preview', e => ({ card: e.getBoundingClientRect().bottom, footer: e.lastElementChild.getBoundingClientRect().bottom, height: e.scrollHeight, max: innerHeight * .4 }));
-    assert.ok(complete.footer <= complete.card && complete.height <= complete.max, JSON.stringify(complete));
+    const confirmation = await page.$eval('.ember-confirmation', e => ({ height: e.getBoundingClientRect().height, background: getComputedStyle(e).backgroundColor, text: e.textContent }));
+    assert.equal(confirmation.height, 26);
+    assert.equal(confirmation.background, 'rgb(26, 21, 17)');
+    assert.equal(confirmation.text, 'Enter apply · Esc cancel');
+    await capture("confirmation");
+    await t.test('whole-field confirmation exposes scope without document content', async () => {
+      await page.setViewport({ width: 170, height: 480, deviceScaleFactor: 2 });
+      await send('ember://state', { sequence: 103, runId: 4, phase: 'preview', confirmationScope: 'field', preview: { original: ['PRIVATE ORIGINAL'], result: ['PRIVATE RESULT'], page: 0 } });
+      await presented();
+      const compact = await page.$eval('.ember-confirmation', e => ({ width: e.getBoundingClientRect().width, height: e.getBoundingClientRect().height, text: e.textContent }));
+      assert.ok(compact.width <= 154 && compact.height <= 40, JSON.stringify(compact));
+      assert.equal(compact.text, 'Whole field · Enter apply · Esc cancel');
+      assert.equal(await page.evaluate(() => document.body.textContent.includes('PRIVATE')), false);
+    });
     await page.setViewport({ width: 800, height: 600, deviceScaleFactor: 1 });
     await send('ember://overlay-at', { sequence: 1000, generation: 2, ready: true, scale: 1, width: 800, height: 600, x: 300, y: 180, originX: 0, originY: 0 });
     await send('ember://state', { sequence: 104, runId: 4, phase: 'refining', project: 'Ember' });
     await page.waitForSelector('.ember-orb-row svg');
     await presented();
     const ink = await page.$eval('.ember-orb-row svg', e => { const r = e.getBoundingClientRect(); return { x: r.x + 22, y: r.y + 2 }; });
-    assert.equal(ink.x, 318); assert.equal(ink.y, 186);
+    assert.equal(ink.x, 318); assert.equal(ink.y, 180);
     await send('ember://overlay-at', { sequence: 1001, generation: 3, ready: false, scale: 2, width: 800, height: 600, x: 300, y: 180, originX: 0, originY: 0 });
     await presented();
     assert.equal(await page.$eval('.ember-floating', e => getComputedStyle(e).visibility), 'hidden');
@@ -117,24 +123,24 @@ test("UI components preserve geometry and asynchronous ownership", async (t) => 
         const near = (actual, expected) => assert.ok(Math.abs(actual - expected) <= .51 / scale, `${actual} is not within half a physical pixel of ${expected} at ${scale}`);
         await page.setViewport({ width: 800, height: 600, deviceScaleFactor: scale });
         await send('ember://overlay-at', { sequence: 2000 + sequence, generation: sequence, ready: true, scale, width: 800 * scale, height: 600 * scale, x: -1000 + 300 * scale, y: -500 + 180 * scale, originX: -1000, originY: -500 });
-        await send('ember://state', { sequence: sequence++, runId: 5, phase: 'preview', preview: { original: ['Original'], result: ['Result'], page: 0 } });
+        await send('ember://state', { sequence: sequence++, runId: 5, phase: 'preview', confirmationScope: 'selection' });
         await presented();
         let card = await bounds();
-        near(card.x, 318); near(card.y, 186);
-        await send('ember://overlay-at', { sequence: 2000 + sequence, generation: sequence, ready: true, scale, width: 800 * scale, height: 600 * scale, x: -1000 + 600 * scale, y: -500 + 180 * scale, originX: -1000, originY: -500 });
+        near(card.x, 318); near(card.y, 180);
+        await send('ember://overlay-at', { sequence: 2000 + sequence, generation: sequence, ready: true, scale, width: 800 * scale, height: 600 * scale, x: -1000 + 710 * scale, y: -500 + 180 * scale, originX: -1000, originY: -500 });
         await presented();
         card = await bounds();
-        near(card.right, 582);
+        near(card.right, 692);
         // This is the state emitted after native Enter acceptance and application.
         // The browser test does not replace qualification of the native input hook.
         await send('ember://state', { sequence: sequence++, runId: 5, phase: 'success', message: 'Sent' });
         await presented();
         card = await bounds();
-        near(card.right, 582); near(card.y, 186);
+        near(card.right, 692); near(card.y, 180);
         await send('ember://state', { sequence: sequence++, runId: 5, phase: 'refining' });
         await presented();
         const ring = await page.$eval('.ember-orb-row svg', e => { const r = e.getBoundingClientRect(); return { right: r.x + 37, y: r.y + 2 }; });
-        near(ring.right, 582); near(ring.y, 186);
+        near(ring.right, 692); near(ring.y, 180);
       }
     });
     await t.test('signature motion and surface morph preserve the anchor without retaining the orb', async () => {
@@ -157,7 +163,7 @@ test("UI components preserve geometry and asynchronous ownership", async (t) => 
             window.__morphAnimation.currentTime = 0;
           });
         });
-        await send('ember://state', { sequence: sequence++, runId: 6, phase: 'preview', preview: { original: ['Original'], result: ['Revised'], page: 0 } });
+        await send('ember://state', { sequence: sequence++, runId: 6, phase: 'preview', confirmationScope: 'selection' });
         await page.waitForFunction(() => window.__morphAnimation !== null);
         const start = await bounds();
         assert.equal(await page.$$eval('.ember-orb-row', nodes => nodes.length), 0);
@@ -176,14 +182,14 @@ test("UI components preserve geometry and asynchronous ownership", async (t) => 
         // A new state interrupts the morph without an old layer or a late callback.
         await send('ember://state', { sequence: sequence++, runId: 6, phase: 'success', message: 'Sent' });
         await presented();
-        assert.equal(await page.$$eval('[data-morph-from-orb], .ember-preview, .ember-orb-row', nodes => nodes.length), 0);
+        assert.equal(await page.$$eval('[data-morph-from-orb], .ember-confirmation, .ember-orb-row', nodes => nodes.length), 0);
       }
       await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
       await send('ember://state', { sequence: sequence++, runId: 6, phase: 'refining' });
       await presented();
       assert.equal(await page.$$eval('.ember-orb-row animate', nodes => nodes.length), 0);
       assert.equal(await page.$$eval('.ember-orb-row rect', nodes => nodes.every(e => getComputedStyle(e).animationName === 'none')), true);
-      await send('ember://state', { sequence: sequence++, runId: 6, phase: 'preview', preview: { original: ['Original'], result: ['Revised'], page: 0 } });
+      await send('ember://state', { sequence: sequence++, runId: 6, phase: 'preview', confirmationScope: 'selection' });
       await presented();
       assert.equal(await page.$eval('[data-morph-from-orb]', e => getComputedStyle(e).animationName), 'none');
     });
@@ -278,7 +284,14 @@ test("UI components preserve geometry and asynchronous ownership", async (t) => 
       await page.waitForFunction(() => document.querySelector('section').innerText.includes('Sent'));
       await capture('context-expanded');
     });
-    await t.test("project distillation and colour responses preserve the current draft", () => projectRegressions(page, `http://127.0.0.1:${port}`));
+    await t.test("project distillation and colour responses preserve the current draft", () => projectRegressions(page, `http://127.0.0.1:${port}`, capture));
+    await t.test("settings preserve busy labels, contrast and keyboard navigation in both themes", () => settingsRegressions(page, `http://127.0.0.1:${port}`, capture));
+    await t.test('static startup branding still completes its native lifecycle', async () => {
+      await page.goto(`http://127.0.0.1:${port}/__ember-test/splash?mode=startup`);
+      await page.waitForFunction(() => window.__closed === 'close_splash');
+      assert.equal(await page.$eval('img', e => getComputedStyle(e).transform), 'none');
+      assert.equal(await page.$eval('img', e => getComputedStyle(e).opacity), '1');
+    });
     assert.deepEqual(errors, []);
   } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)); assert.equal(dirname(directory), resolve(tmpdir())); assert.ok(basename(directory).startsWith("ember-browser-test-")); await rm(directory, { recursive: true, force: true }); }
 });

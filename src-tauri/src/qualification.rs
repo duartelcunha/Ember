@@ -20,7 +20,7 @@ pub fn run() {
                 "phase": if scene == "preview" { "preview" } else if scene == "hint" { "hint" } else { "refining" },
                 "project": if scene == "project" { Some("A project with a deliberately long name") } else { None },
                 "message": if scene == "hint" { Some("Field unavailable. Select text in another editor.") } else { None },
-                "preview": { "original": ember_core::preview::pages("its completely off positions."), "result": ember_core::preview::pages("Its positions are completely off."), "page": 0 }
+                "confirmationScope": "selection"
             });
             *state.last_state.lock().unwrap() = Some(payload.clone());
             let monitors = crate::monitors_of(&window);

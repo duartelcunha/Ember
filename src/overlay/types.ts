@@ -2,11 +2,13 @@
 
 export type OverlayPhase = "hidden" | "refining" | "success" | "error" | "hint" | "preview";
 
+export type ConfirmationScope = "selection" | "field";
+
 export interface OverlayState {
   phase: OverlayPhase;
   runId?: number;
   sequence?: number;
-  preview?: { original: string[]; result: string[]; page: number } | null;
+  confirmationScope?: ConfirmationScope | null;
   /** Mensagem (fase error/hint). */
   message?: string | null;
   /** Provider usado ("Gemini"/"OpenAI-compatible"), fase success. */

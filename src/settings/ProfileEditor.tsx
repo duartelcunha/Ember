@@ -1,3 +1,5 @@
+import { Feedback } from "../components/Feedback";
+import { SourcePath } from "../components/SourcePath";
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
@@ -6,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ipc, type EmberSettings, type ProfileProvenance } from "@/lib/ipc";
 
 export function ProfileEditor({ settings, onSaved }: { settings: EmberSettings; onSaved: (settings: EmberSettings) => void }) {
+  const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState(settings.profileText);
   const [sources, setSources] = useState<ProfileProvenance[]>(settings.profileSources);
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -27,6 +30,7 @@ export function ProfileEditor({ settings, onSaved }: { settings: EmberSettings; 
 
   async function importFiles() {
     const operation = ++epoch.current;
+    setError(null);
     setImporting(true);
     try {
       const picked = await open({ multiple: true, directory: false, title: "Choose profile sources to review",
@@ -38,12 +42,13 @@ export function ProfileEditor({ settings, onSaved }: { settings: EmberSettings; 
       setSources(draft.sources);
       setWarnings(draft.warnings);
     } catch (error) {
-      if (operation === epoch.current) toast.error(typeof error === "string" ? error : "Profile import failed.");
+      if (operation === epoch.current) setError(typeof error === "string" ? error : "Profile import failed.");
     } finally { setImporting(false); }
   }
 
   async function persist(reset: boolean) {
     const operation = ++epoch.current;
+    setError(null);
     setSaving(true);
     setSaveTarget(reset ? "reset" : "save");
     try {
@@ -57,7 +62,7 @@ export function ProfileEditor({ settings, onSaved }: { settings: EmberSettings; 
       setWarnings([]);
       toast.success(reset ? "Using Ember's default profile." : "Reviewed profile saved.");
     } catch (error) {
-      if (operation === epoch.current) toast.error(typeof error === "string" ? error : "Profile could not be saved.");
+      if (operation === epoch.current) setError(typeof error === "string" ? error : "Profile could not be saved.");
     } finally { setSaving(false); setSaveTarget(null); }
   }
 
@@ -77,7 +82,8 @@ export function ProfileEditor({ settings, onSaved }: { settings: EmberSettings; 
       <Button className="mt-3" variant="ghost" disabled={saving} onClick={() => { epoch.current++; setText(settings.profileReview ?? ""); setWarnings(["Review this draft before saving. The previous profile will remain archived."]); }}>Use as draft</Button>
     </details>}
     {settings.profileArchive && <details className="text-xs text-fg-muted"><summary>Previous profile</summary><pre className="max-h-48 overflow-auto whitespace-pre-wrap">{settings.profileArchive}</pre></details>}
-    <Textarea aria-labelledby="profile-heading" className="h-[clamp(140px,38vh,420px)] min-h-0 resize-none overflow-y-auto"
+    {error && <Feedback tone="error">{error}</Feedback>}
+    <Textarea aria-invalid={tooLong} aria-labelledby="profile-heading" className="h-[clamp(140px,38vh,420px)] min-h-0 resize-none overflow-y-auto"
       value={text} disabled={saving} onChange={event => { epoch.current++; setText(event.target.value); }}
       placeholder="Your writing preferences and technical facts." />
     <p className="text-xs text-fg-muted">{profileBytes.toLocaleString()} / {settings.profileLimitBytes.toLocaleString()} bytes. This profile is included in every refinement.</p>
@@ -85,7 +91,7 @@ export function ProfileEditor({ settings, onSaved }: { settings: EmberSettings; 
     {warnings.length > 0 && <div role="status" className="space-y-2 text-xs text-fg-muted">{warnings.map((warning, index) => <p key={index}>{warning}</p>)}</div>}
     {sources.length > 0 && <details className="text-xs text-fg-muted"><summary className="cursor-pointer">Import provenance ({sources.length} sources)</summary>
       <p className="mt-2">These fingerprints identify the imported snapshots. Changes to the files do not change the saved profile. Import again to review new content.</p>
-      <ul className="mt-2 space-y-2">{sources.map(source => <li key={source.path} className="break-all"><span>{source.path}</span><br /><span className="font-mono">{source.fingerprint}</span></li>)}</ul>
+      <ul className="mt-2 space-y-2">{sources.map(source => <li key={source.path} className="break-all"><SourcePath path={source.path} /><span className="font-mono">{source.fingerprint}</span></li>)}</ul>
     </details>}
     <div className="flex flex-wrap gap-2">
       <Button variant="primary" loading={saveTarget === "save"} disabled={saving || importing || tooLong} onClick={() => void persist(false)}>Save reviewed profile</Button>

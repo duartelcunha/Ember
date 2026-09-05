@@ -21,7 +21,7 @@ function announcement(s: OverlayState): string | null {
     case "hint":
       return s.message ?? "Select text first";
     case "preview":
-      return s.message ?? "Apply refined text? Press Enter to apply, Escape to keep your original";
+      return `${s.confirmationScope === "field" ? "Whole field. " : ""}Press Enter to apply, Escape to cancel`;
     default:
       return null;
   }
@@ -54,7 +54,6 @@ export function Overlay() {
           className="sr-only"
         >
           {status}
-          {s.phase === "preview" && s.preview && ` Original: ${s.preview.original[s.preview.page] ?? ""}. Result: ${s.preview.result[s.preview.page] ?? ""}. Page Up and Page Down to read, Enter to apply, Escape to keep the original.`}
         </div>
         <div
           ref={floating}
@@ -91,7 +90,7 @@ export function Overlay() {
             {s.phase === "hint" && (
               <Pill key="hint" kind="hint" text={s.message ?? "Select text first"} />
             )}
-            {s.phase === "preview" && s.preview && <Preview key="preview" value={s.preview} />}
+            {s.phase === "preview" && <Preview key="preview" scope={s.confirmationScope ?? "selection"} />}
             </div>}
         </div>
         <div ref={labels} className="ember-floating fixed left-0 top-0 w-max max-w-[min(280px,calc(100vw-16px))]" aria-hidden>

@@ -1,6 +1,36 @@
 //! Stable comparison pages preserve every grapheme and bound visible lines.
 use unicode_segmentation::UnicodeSegmentation;
 
+/// Only the capture scope crosses into the floating confirmation UI.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ConfirmationScope {
+    Selection,
+    Field,
+}
+
+impl ConfirmationScope {
+    pub fn from_whole_field(whole_field: bool) -> Self {
+        if whole_field {
+            Self::Field
+        } else {
+            Self::Selection
+        }
+    }
+}
+
+#[test]
+fn confirmation_serializes_scope_without_document_content() {
+    assert_eq!(
+        serde_json::to_value(ConfirmationScope::from_whole_field(false)).unwrap(),
+        "selection"
+    );
+    assert_eq!(
+        serde_json::to_value(ConfirmationScope::from_whole_field(true)).unwrap(),
+        "field"
+    );
+}
+
 pub fn pages(text: &str) -> Vec<String> {
     let mut result = Vec::new();
     let mut page = String::new();

@@ -83,9 +83,9 @@
 :root[data-theme="cream"] {
   /* Laranja da marca, um degrau mais escuro que no dark para contrastar sobre o creme claro
      (o texto do botao e claro). Mesma familia do logo. */
-  --color-accent: #e0761f;
-  --color-accent-hover: #c9691a;
-  --color-accent-active: #b25a13;
+  --color-accent: #ae5412;
+  --color-accent-hover: #97470f;
+  --color-accent-active: #813c0c;
   --color-accent-fg: #fff8f0;
 
   --color-bg: #f4ede1;
@@ -97,9 +97,9 @@
   --color-fg: #2e2519;
   --color-fg-muted: #6f6353;
 
-  --color-success: #2f9e6b;
+  --color-success: #247448;
   --color-warning: #b7791f;
-  --color-error: #d1453b;
+  --color-error: #b7352b;
   --color-info: #2f6fb0;
 
   /* Bordas: escuras translucidas sobre fundo claro (o inverso do dark). */
@@ -192,12 +192,19 @@
 }
 
 
-.ember-preview { width: max-content; min-width: min(240px, calc(100vw - 16px)); max-width: min(420px, calc(100vw - 16px)); max-height: 40vh; padding: 8px 12px; font-size: 12px; }
-.ember-preview p { line-height: 14px; overflow-wrap: anywhere; white-space: pre-wrap; }
-.ember-preview mark { color: inherit; background: rgba(253,140,60,.18); border-radius: 2px; }
 @media (prefers-reduced-motion: reduce) { .ember-spinner * { animation: none !important; } }
 
-.ember-preview > div:first-child { line-height: 14px; margin-bottom: 6px; font-size: 11px; }
-.ember-preview h2 { line-height: 12px; }
-.ember-preview > .grid { gap: 6px; }
-.ember-preview > div:last-child { line-height: 12px; margin-top: 6px; padding-top: 6px; }
+
+/* Confirmation is a keyboard hint, not a document viewer. */
+.ember-confirmation { width: max-content; max-width: calc(100vw - 16px); min-height: 26px; padding: 5px 8px; border-radius: 8px; font-size: 11px; line-height: 14px; }
+.ember-confirmation > span { display: inline; }
+
+/* Shared keyboard affordances apply to native details and smaller secondary actions. */
+button:focus-visible, summary:focus-visible, a:focus-visible { outline: 2px solid var(--border-accent); outline-offset: 3px; }
+summary { cursor: pointer; border-radius: 4px; }
+@media (prefers-reduced-motion: reduce) {
+  button { transition: none !important; transform: none !important; }
+  .animate-pulse { animation: none !important; }
+}
+
+@media (max-width: 860px) { [role="tab"] > svg { display: none; } }

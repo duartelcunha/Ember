@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { ICON_BY_NAME } from "../components/projectIcons";
 import { useEffect, useState } from "react";
-import { AnimatePresence, LazyMotion, MotionConfig, domAnimation, m } from "motion/react";
+import { AnimatePresence, LazyMotion, MotionConfig, domAnimation, m, useReducedMotion } from "motion/react";
 import { useFloatingPosition } from "../components/useFloatingPosition";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -60,6 +60,7 @@ const HINT_H = 20;
  *  dois movimentos da mesma passagem; longo de mais e nota-se que a lista ficou opaca. */
 
 export function Picker() {
+  const still = useReducedMotion();
   const [s, setS] = useState<PickerState>({
     rows: [],
     index: 0,
@@ -120,33 +121,31 @@ export function Picker() {
                 borderRadius: 12,
                 padding: PAD,
                 width: 240,
-                willChange: "opacity, transform",
+                willChange: "opacity",
                 // O vidro sai de cena enquanto a lista anda: `backdrop-filter` re-amostra o
                 // fundo a cada frame do movimento, e é isso que se vê como ranger.
 
               }}
-              initial={{ opacity: 0, scale: 0.96, y: 4 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
+              initial={still ? false : { opacity: 0 }}
+              animate={{ opacity: 1 }}
               exit={
-                chosen !== null
-                  ? // Escolheu: a lista confirma antes de sair, com um crescer curto. É o único
-                    // sinal que ela dá (a janela não tem foco, não há toast nenhum).
+                still ? { opacity: 0, transition: { duration: 0 } } : chosen !== null
+                  ? // Confirm the choice with colour and a short fade, within the measured bounds.
                     {
                       opacity: [1, 1, 0],
-                      scale: [1, 1.04, 1.02],
                       transition: { duration: 0.34, times: [0, 0.45, 1] },
                     }
-                  : { opacity: 0, scale: 0.97, transition: { duration: 0.1 } }
+                  : { opacity: 0, transition: { duration: 0.1 } }
               }
-              transition={{ type: "spring", stiffness: 600, damping: 34 }}
+              transition={still ? { duration: 0 } : { type: "spring", stiffness: 600, damping: 34 }}
             >
               {/* O flash da cor do projeto escolhido, por cima da lista inteira. Existe para a
                   escolha ter cor: é a mesma que passa a pintar o orb a seguir. */}
-              {chosen !== null && (
+              {chosen !== null && !still && (
                 <m.div
                   className="pointer-events-none absolute inset-0"
                   style={{ borderRadius: 12, background: s.rows[chosen]?.color ?? accent }}
-                  initial={{ opacity: 0 }}
+                  initial={still ? false : { opacity: 0 }}
                   animate={{ opacity: [0, 0.32, 0] }}
                   transition={{ duration: 0.34, times: [0, 0.4, 1] }}
                 />
@@ -166,11 +165,11 @@ export function Picker() {
                     style={{ height: ITEM_H }}
                     animate={
                       chosen === null
-                        ? { opacity: 1, scale: 1 }
+                        ? { opacity: 1 }
                         : // As outras saem de cena para a escolhida ficar sozinha.
-                          { opacity: isChosen ? 1 : 0, scale: isChosen ? 1.06 : 1 }
+                          { opacity: isChosen ? 1 : 0 }
                     }
-                    transition={{ duration: 0.16 }}
+                    transition={{ duration: still ? 0 : 0.16 }}
                   >
                     {/* A pilula deslizante: um so elemento partilhado por `layoutId`, que o motion
                         desliza com spring entre linhas em vez de a fazer saltar. E o detalhe que
@@ -183,7 +182,7 @@ export function Picker() {
                           background: `color-mix(in srgb, ${accent} 26%, transparent)`,
                           border: `1px solid color-mix(in srgb, ${accent} 55%, transparent)`,
                         }}
-                        transition={{ type: "spring", stiffness: 640, damping: 42 }}
+                        transition={still ? { duration: 0 } : { type: "spring", stiffness: 640, damping: 42 }}
                       />
                     )}
                     <span
@@ -210,7 +209,7 @@ export function Picker() {
                 className="flex items-center justify-center gap-1 text-[10px] text-fg-muted"
                 style={{ height: HINT_H }}
                 animate={{ opacity: chosen === null ? 1 : 0 }}
-                transition={{ duration: 0.12 }}
+                transition={{ duration: still ? 0 : 0.12 }}
               >
                 <span>scroll or</span>
                 <kbd className="rounded border border-white/15 px-1">↑</kbd>

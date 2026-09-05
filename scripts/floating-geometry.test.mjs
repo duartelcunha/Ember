@@ -37,7 +37,7 @@ test("visible pixels keep their own cursor anchor regardless of label width", ()
     const view = { width: 800, height: 600, scale };
     const pos = placeOrb(cursor, view, false);
     assert.equal(pos.x + ORB_INK.x, 218);
-    assert.equal(pos.y + ORB_INK.y, 106);
+    assert.equal(pos.y + ORB_INK.y, 100);
     const edge = placeOrb({ ...cursor, x: -1000 + 798 * scale }, view, false);
     assert.equal(edge.x + ORB_INK.x + ORB_INK.width, 780);
     assert.equal(edge.left, true);

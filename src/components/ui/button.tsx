@@ -32,7 +32,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant, size, asChild = false, loading, children, disabled, ...props }, ref) => {
     const Comp = asChild ? Slot : "button";
     return (
-      <Comp ref={ref} className={cn(buttonVariants({ variant, size }), loading && "disabled:opacity-100", className)} disabled={disabled || loading} aria-busy={loading || undefined} {...props}>
+      <Comp ref={ref} type={asChild ? undefined : "button"} className={cn(buttonVariants({ variant, size }), loading && "disabled:opacity-100", className)} disabled={disabled || loading} aria-busy={loading || undefined} {...props}>
         {loading === undefined || asChild ? children : <><span className="inline-flex w-4 shrink-0 justify-center" aria-hidden>{loading && <Spinner size={14} />}</span>{children}</>}
       </Comp>
     );

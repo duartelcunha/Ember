@@ -3,7 +3,7 @@ export interface Viewport { width: number; height: number; scale: number }
 // Anchor the visible ring beside the standard arrow's right diagonal, with air
 // between them. This is a logical offset from the hotspot, not SVG-box padding
 // or an extension along the arrow tip. Custom pointer artwork can differ.
-export const CURSOR_GAP = { x: 18, y: 6 };
+export const CURSOR_GAP = { x: 18, y: 0 };
 type PlacementOptions = { gap?: { x: number; y: number }; preserveSide?: boolean };
 
 /** Convert physical cursor coordinates once, then place measured logical content. */
