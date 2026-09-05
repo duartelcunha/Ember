@@ -70,11 +70,11 @@ export function Orb({ variant = "work" }: { variant?: keyof typeof VARIANT }) {
         willChange: "opacity",
         transformOrigin: `${(CENTER.x / SPARK_SIZE) * 100}% ${(CENTER.y / SPARK_SIZE) * 100}%`,
       }}
-      initial={{ opacity: 0 }}
+      initial={{ opacity: still ? 1 : 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0, transition: { duration: 0.1 } }}
       transition={{
-        opacity: { duration: 0.18, ease: "easeOut" },
+        opacity: { duration: still ? 0 : 0.18, ease: "easeOut" },
       }}
     >
       <svg

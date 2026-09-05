@@ -137,6 +137,56 @@ test("UI components preserve geometry and asynchronous ownership", async (t) => 
         near(ring.right, 582); near(ring.y, 186);
       }
     });
+    await t.test('signature motion and surface morph preserve the anchor without retaining the orb', async () => {
+      await page.setViewport({ width: 800, height: 600, deviceScaleFactor: 1 });
+      await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'no-preference' }]);
+      let sequence = 300;
+      for (const x of [300, 790]) {
+        await send('ember://overlay-at', { sequence: 5000 + sequence, generation: sequence, ready: true, scale: 1, width: 800, height: 600, x, y: 180, originX: 0, originY: 0 });
+        await send('ember://state', { sequence: sequence++, runId: 6, phase: 'refining' });
+        await presented();
+        assert.equal(await page.$$eval('.ember-orb-row rect', nodes => nodes.filter(e => getComputedStyle(e).animationName === 'ember-chase').length), 8);
+        assert.equal(await page.$$eval('.ember-orb-row animate', nodes => nodes.length), 1);
+        await page.evaluate(() => {
+          window.__morphAnimation = null;
+          document.getElementById('root').addEventListener('animationstart', function started(event) {
+            if (event.animationName !== 'ember-surface-morph') return;
+            this.removeEventListener('animationstart', started);
+            window.__morphAnimation = event.target.getAnimations().find(a => a.animationName === event.animationName);
+            window.__morphAnimation.pause();
+            window.__morphAnimation.currentTime = 0;
+          });
+        });
+        await send('ember://state', { sequence: sequence++, runId: 6, phase: 'preview', preview: { original: ['Original'], result: ['Revised'], page: 0 } });
+        await page.waitForFunction(() => window.__morphAnimation !== null);
+        const start = await bounds();
+        assert.equal(await page.$$eval('.ember-orb-row', nodes => nodes.length), 0);
+        const morph = await page.$eval('[data-morph-from-orb]', e => {
+          const style = getComputedStyle(e);
+          return { clip: style.clipPath, opacity: style.opacity, transform: style.transform, side: e.parentElement.dataset.side };
+        });
+        assert.equal(morph.opacity, '1');
+        assert.equal(morph.transform, 'none');
+        assert.equal(morph.side, x === 300 ? 'right' : 'left');
+        assert.ok(morph.clip.includes('15px'), morph.clip);
+        await page.evaluate(() => { window.__morphAnimation.currentTime = 90; });
+        await presented();
+        assert.deepEqual(await bounds(), start);
+        await capture(x === 300 ? 'morph-right' : 'morph-left');
+        // A new state interrupts the morph without an old layer or a late callback.
+        await send('ember://state', { sequence: sequence++, runId: 6, phase: 'success', message: 'Sent' });
+        await presented();
+        assert.equal(await page.$$eval('[data-morph-from-orb], .ember-preview, .ember-orb-row', nodes => nodes.length), 0);
+      }
+      await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
+      await send('ember://state', { sequence: sequence++, runId: 6, phase: 'refining' });
+      await presented();
+      assert.equal(await page.$$eval('.ember-orb-row animate', nodes => nodes.length), 0);
+      assert.equal(await page.$$eval('.ember-orb-row rect', nodes => nodes.every(e => getComputedStyle(e).animationName === 'none')), true);
+      await send('ember://state', { sequence: sequence++, runId: 6, phase: 'preview', preview: { original: ['Original'], result: ['Revised'], page: 0 } });
+      await presented();
+      assert.equal(await page.$eval('[data-morph-from-orb]', e => getComputedStyle(e).animationName), 'none');
+    });
     await page.goto(`http://127.0.0.1:${port}/__ember-test/picker`);
     await page.waitForFunction(() => window.__pickerReady === true && document.querySelector('.ember-floating'));
     await send('ember://picker', { sequence: 20, rows: Array.from({ length: 20 }, (_, i) => ({ id: `${i}`, name: `Project ${i}`, color: '#fd8c3c', icon: 'sparkle' })), index: 19, open: true, chosen: null });

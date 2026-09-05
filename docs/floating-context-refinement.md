@@ -139,3 +139,24 @@ unexpected SVG, and a DOM observer recorded an orb and review together. After co
 retained orb afterward. `cargo test --workspace --locked --quiet` reports 53 shell and 347
 core tests passing. `npm run build` completed in 16.15 seconds. The installed application
 remains rc.2; these changes still require native qualification and delivery.
+
+## Morph and signature motion
+
+The requested position is beside the pointer's right diagonal, with a visible gap.
+The pending 18 by 6 logical-pixel offset remains the reference for the standard arrow;
+it does not claim to trace arbitrary custom cursor artwork. The installed rc.2 still
+uses its older positioning. Visual acceptance of this candidate remains pending.
+
+When loading becomes a card, the incoming solid surface opens from a 15px rounded
+shape at the edge facing the cursor. A 180ms clip animation preserves text size and
+the geometry controller's translation. The left-edge variant mirrors the opening.
+The previous phase is removed immediately, including when a transition is interrupted.
+The original eight-pixel chase and progressive heat glow remain in the loading orb.
+Reduced motion disables the surface morph, pixel chase, heat growth and entry fade.
+
+`npm test`: 17 passed, 0 failed. Rendered regressions inspect normal and reduced motion,
+both opening directions, stable bounds during the morph and interrupted transitions.
+`npm run build`: 5,095 modules transformed, built in 12.03 seconds.
+`cargo test --workspace --locked --quiet`: 53 shell and 347 core tests passed.
+These are automated component and core results, not installed-candidate, physical
+Enter/paste or native mixed-DPI qualification. No release or installation was performed.

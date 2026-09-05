@@ -1,5 +1,8 @@
 export interface CursorPosition { sequence?: number; generation?: number; ready?: boolean; scale?: number; width?: number; height?: number; x: number; y: number; originX: number; originY: number }
 export interface Viewport { width: number; height: number; scale: number }
+// Anchor the visible ring beside the standard arrow's right diagonal, with air
+// between them. This is a logical offset from the hotspot, not SVG-box padding
+// or an extension along the arrow tip. Custom pointer artwork can differ.
 export const CURSOR_GAP = { x: 18, y: 6 };
 type PlacementOptions = { gap?: { x: number; y: number }; preserveSide?: boolean };
 

@@ -1,4 +1,5 @@
 import { domAnimation, LazyMotion, MotionConfig } from "motion/react";
+import { useLayoutEffect, useRef } from "react";
 import { useOverlayState } from "./useOverlayController";
 import { useFloatingPosition } from "../components/useFloatingPosition";
 import { Orb } from "./Orb";
@@ -31,6 +32,16 @@ export function Overlay() {
   const s = useOverlayState();
   const floating = useFloatingPosition("ember://overlay-at", s.phase === "refining" ? "orb" : "card");
   const labels = useFloatingPosition("ember://overlay-at", "labels");
+  const previousPhase = useRef(s.phase);
+  useLayoutEffect(() => {
+    // Morph only the incoming surface. Keeping the departing artwork mounted
+    // creates a second loading layer, and scaling moves the cursor-facing edge.
+    const surface = floating.current?.firstElementChild;
+    if (previousPhase.current === "refining" && s.phase !== "refining") {
+      surface?.setAttribute("data-morph-from-orb", "true");
+    }
+    previousPhase.current = s.phase;
+  }, [s.phase, floating]);
   const status = announcement(s);
   return (
     <LazyMotion features={domAnimation} strict>
