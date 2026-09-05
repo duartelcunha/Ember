@@ -41,7 +41,9 @@ pub struct AppState {
     /// Serializes run ownership and phase transitions, independently of background requests.
     pub execution: Mutex<ember_core::cycle::ExecutionCoordinator>,
     pub event_seq: AtomicU64,
-    pub resolved_context: Mutex<Option<serde_json::Value>>,
+    pub last_feedback: Mutex<Option<String>>,
+    pub resolved_context: Mutex<Option<ember_core::context::Snapshot>>,
+    pub context_sources: Mutex<std::collections::HashMap<String, crate::context::Cached>>,
     pub retention_generation: AtomicU64,
     pub prompt_generation: AtomicU64,
     /// Acorda quem espera (o `select!` do refine, a espera pela chamada em curso) quando o
@@ -251,7 +253,9 @@ impl AppState {
             follow_cursor: AtomicBool::new(true),
             execution: Mutex::new(ember_core::cycle::ExecutionCoordinator::default()),
             event_seq: AtomicU64::new(0),
+            last_feedback: Mutex::new(None),
             resolved_context: Mutex::new(None),
+            context_sources: Mutex::new(std::collections::HashMap::new()),
             retention_generation: AtomicU64::new(0),
             prompt_generation: AtomicU64::new(0),
             cancel_notify: Notify::new(),

@@ -44,6 +44,7 @@ pub struct RunOpts {
     pub timing: CaptureTiming,
     /// Titulo da janela em foco, para contexto de projeto. `None` = desligado.
     pub project_title: Option<String>,
+    pub project_application: Option<String>,
     /// Gate de aprovacao antes de colar (Enter aplica, Esc mantem).
     pub preview: bool,
     /// Sem seleccao, seleciona o campo em foco e refina-o todo.
@@ -118,11 +119,16 @@ fn emit_payload(
     phase: &str,
     message: Option<String>,
     provider: Option<String>,
-    preview: Option<serde_json::Value>,
+    confirmation_scope: Option<ember_core::preview::ConfirmationScope>,
 ) {
     let state = app.state::<AppState>();
     if state.hide_gen.load(Ordering::SeqCst) != run_id {
         return;
+    }
+    if matches!(phase, "hint" | "error") {
+        if let Ok(mut feedback) = state.last_feedback.lock() {
+            *feedback = message.clone();
+        }
     }
     state
         .orb_visible
@@ -150,7 +156,7 @@ fn emit_payload(
     let project = state.orb_project.lock().ok().and_then(|a| a.clone());
     let payload = serde_json::json!({
         "runId": run_id, "sequence": state.event_seq.fetch_add(1, Ordering::SeqCst) + 1,
-        "preview": preview, "phase": phase, "message": message, "provider": provider,
+        "confirmationScope": confirmation_scope, "phase": phase, "message": message, "provider": provider,
         "accent": accent, "project": project
     });
     if let Ok(mut slot) = state.last_state.lock() {
@@ -390,6 +396,7 @@ pub async fn run(app: AppHandle, opts: RunOpts, lease: RunLease) {
         terminal,
         timing,
         project_title,
+        project_application,
         preview,
         select_all_fallback,
         select_all_max_chars,
@@ -519,7 +526,7 @@ pub async fn run(app: AppHandle, opts: RunOpts, lease: RunLease) {
         &app,
         run_id,
         &selected,
-        project_title.as_deref(),
+        (project_title.as_deref(), project_application.as_deref()),
         mode,
         preview,
     )
@@ -575,10 +582,12 @@ pub async fn run(app: AppHandle, opts: RunOpts, lease: RunLease) {
                     finish(&app, run_id, FlowOutcome::Cancelled).await;
                     return;
                 }
-                // Um reaproveitamento PARECIDO (nao identico) diz-se: os caracteres que diferem
-                // sao precisamente a edicao que a pessoa acabou de fazer, e aplicar por cima sem
-                // avisar revertia-a em silencio.
-                emit_preview(&app, run_id, &selected, &refined);
+                // Confirmation carries scope only; document content stays in native memory.
+                emit_confirmation(
+                    &app,
+                    run_id,
+                    ember_core::preview::ConfirmationScope::from_whole_field(via_select_all),
+                );
                 crate::preview_hook::gate(app.clone(), run_id).await
             } else {
                 crate::preview_hook::Decision::Accept
@@ -717,16 +726,27 @@ async fn obtain_refined(
     app: &AppHandle,
     run_id: u64,
     selected: &str,
-    project_title: Option<&str>,
+    project_signal: (Option<&str>, Option<&str>),
     mode: RefineMode,
     preview: bool,
 ) -> Obtained {
     let state = app.state::<AppState>();
-    let prep =
-        match commands::prepare_refine(app, state.inner(), selected, project_title, mode).await {
-            Ok(p) => p,
-            Err(e) => return Obtained::Failed(e),
-        };
+    let prep = match commands::prepare_refine(
+        app,
+        state.inner(),
+        selected,
+        crate::project::Signal {
+            run_id,
+            title: project_signal.0,
+            application: project_signal.1,
+        },
+        mode,
+    )
+    .await
+    {
+        Ok(p) => p,
+        Err(e) => return Obtained::Failed(e),
+    };
     let key = prep.key.clone();
 
     // Subscrever ANTES de consultar: se a tarefa em curso guardar o resultado entre a consulta e
@@ -735,6 +755,7 @@ async fn obtain_refined(
     let mut gen = state.store_gen.subscribe();
 
     if let Some((entry, reuse)) = lookup_cache(app, &key, preview) {
+        crate::context::delivery(state.inner(), run_id, ember_core::context::Delivery::Cached);
         log::info!(
             "[run {run_id}] cache {reuse:?}: {} chars de {} ({}), sem chamada ao modelo",
             entry.refined.chars().count(),
@@ -773,6 +794,7 @@ async fn obtain_refined(
             return Obtained::Dismissed;
         }
         if let Some((entry, reuse)) = lookup_cache(app, &key, preview) {
+            crate::context::delivery(state.inner(), run_id, ember_core::context::Delivery::Cached);
             log::info!("[run {run_id}] resultado da chamada a que se juntou: reaproveitado");
             return ready_from(entry, reuse);
         }
@@ -1019,7 +1041,11 @@ pub async fn reapply_last(app: AppHandle) {
         finish(&app, run_id, FlowOutcome::Cancelled).await;
         return;
     }
-    emit_preview(&app, run_id, &selected, &refined);
+    emit_confirmation(
+        &app,
+        run_id,
+        ember_core::preview::ConfirmationScope::Selection,
+    );
     if crate::preview_hook::gate(app.clone(), run_id).await != crate::preview_hook::Decision::Accept
     {
         finish(&app, run_id, FlowOutcome::Cancelled).await;
@@ -1063,45 +1089,8 @@ async fn hide_after(app: &AppHandle, run_id: u64, ms: u64) {
     emit(app, run_id, "hidden", None, None);
 }
 
-fn emit_preview(app: &AppHandle, run_id: u64, original: &str, result: &str) {
-    emit_payload(
-        app,
-        run_id,
-        "preview",
-        None,
-        None,
-        Some(serde_json::json!({
-            "original": ember_core::preview::pages(original), "result": ember_core::preview::pages(result), "page": 0,
-        })),
-    );
-}
-
-#[cfg(windows)]
-pub(crate) fn move_preview_page(app: &AppHandle, run_id: u64, delta: i32) {
-    let state = app.state::<AppState>();
-    if state.hide_gen.load(Ordering::SeqCst) != run_id {
-        return;
-    }
-    let Ok(mut slot) = state.last_state.lock() else {
-        return;
-    };
-    let Some(payload) = slot.as_mut() else {
-        return;
-    };
-    let Some(preview) = payload.get_mut("preview").filter(|v| v.is_object()) else {
-        return;
-    };
-    let pages = ["original", "result"]
-        .iter()
-        .filter_map(|key| preview[*key].as_array())
-        .map(Vec::len)
-        .max()
-        .unwrap_or(1)
-        .max(1) as i64;
-    let page = (preview["page"].as_i64().unwrap_or(0) + delta as i64).clamp(0, pages - 1);
-    preview["page"] = page.into();
-    payload["sequence"] = (state.event_seq.fetch_add(1, Ordering::SeqCst) + 1).into();
-    let _ = app.emit_to("overlay", STATE_EVENT, payload.clone());
+fn emit_confirmation(app: &AppHandle, run_id: u64, scope: ember_core::preview::ConfirmationScope) {
+    emit_payload(app, run_id, "preview", None, None, Some(scope));
 }
 
 #[tauri::command]

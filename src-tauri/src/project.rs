@@ -20,3 +20,9 @@ pub fn resolve<'a>(
         .max_by_key(|(depth, _)| *depth)
         .map(|(_, p)| p)
 }
+
+pub struct Signal<'a> {
+    pub run_id: u64,
+    pub title: Option<&'a str>,
+    pub application: Option<&'a str>,
+}

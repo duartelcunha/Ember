@@ -1,15 +1,19 @@
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
-const testWindow = window as typeof window & { __emit: typeof emit; __pickerReady: boolean };
+const testWindow = window as typeof window & { __emit: typeof emit; __pickerReady: boolean; __closed?: string };
 testWindow.__pickerReady = false;
 mockIPC((cmd) => {
+  if (cmd === "close_splash" || cmd === "finalize_quit") testWindow.__closed = cmd;
   if (cmd === "picker_snapshot") testWindow.__pickerReady = true;
   if (cmd === "floating_position") return { x: -10, y: 540, originX: -640, originY: 0, sequence: 1 };
   if (cmd === "overlay_snapshot") return { sequence: 10, runId: 3, phase: "hint", message: "Snapshot ready" };
   return null;
 }, { shouldMockEvents: true });
 testWindow.__emit = emit;
-if (location.pathname.includes("projects")) void import("./projects-fixture");
+if (location.pathname.includes("splash")) void import("../src/splash/main");
+else if (location.pathname.includes("settings")) void import("./settings-fixture");
+else if (location.pathname.includes("context")) void import("./context-fixture");
+else if (location.pathname.includes("projects")) void import("./projects-fixture");
 else if (location.pathname.includes("profile")) void import("./profile-fixture");
 else if (location.pathname.includes("picker")) void import("../src/picker/main");
 else void import("../src/overlay/main");

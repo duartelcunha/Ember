@@ -43,3 +43,5 @@ pub use overlay_geom::{overlay_geometry, Layout, Rect, DEFAULT_LAYOUT};
 pub use prompt::{build_llm_request, build_system_prompt};
 pub use refine_cache::{CacheEntry, CacheKey, Hit, RefineCache};
 pub use retry::{backoff_ms, classify, plan, Decision, LoopState, RetryConfig};
+
+pub mod context;

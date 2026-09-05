@@ -6,8 +6,13 @@ not production approval.
 
 ## Implementation ledger
 
-The approved six-stage plan is **partially implemented**. Production release approval remains blocked. Windows evaluation candidate 1.1.0-rc.2 is published and installed locally; its signature, migration and two-monitor picker smoke results are recorded in [native qualification evidence](native-qualification.md). This ledger supersedes production claims in older audits
+The approved six-stage plan is **partially implemented**. Production release approval remains blocked. Windows evaluation candidate 1.1.0-rc.2 is published and installed locally; its signature, migration and version-specific native limitations are recorded in [native qualification evidence](native-qualification.md). The two-monitor picker pass belongs to rc.1. This ledger supersedes production claims in older audits
 and demonstration recordings. Baseline: `179e397`, `feat/picker-follows-the-pointer`.
+
+The subsequent [floating and context implementation](floating-context-refinement.md) adds
+visible-pixel anchoring, compact opaque review, authorized source refresh and recoverable
+profile migration. It is not a published candidate. A native geometry harness completed 16
+scenarios on two 100% monitors; mixed-DPI qualification remains required before delivery.
 
 | Area | Required evidence | State |
 | --- | --- | --- |

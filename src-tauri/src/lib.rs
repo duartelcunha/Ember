@@ -7,6 +7,7 @@ mod clipboard_snapshot;
 mod commands;
 mod config;
 mod connection;
+mod context;
 mod floating;
 mod flow;
 mod foreground;
@@ -462,7 +463,7 @@ fn register_one(app: &AppHandle, hotkey: &str, action: HotkeyAction) -> Result<(
                 foreground::debug_foreground_exe(),
                 terminal
             );
-            let project_title = if cfg.project_context {
+            let project_title = if cfg.project_context || cfg.active_project.is_some() {
                 foreground::foreground_title()
             } else {
                 None
@@ -475,6 +476,7 @@ fn register_one(app: &AppHandle, hotkey: &str, action: HotkeyAction) -> Result<(
                     settle_ms: cfg.paste_settle_ms,
                 },
                 project_title,
+                project_application: foreground::debug_foreground_exe(),
                 preview: cfg.preview_before_paste,
                 select_all_fallback: cfg.select_all_fallback
                     && foreground::select_all_is_safe_here(),
@@ -628,6 +630,7 @@ pub fn run() {
             }
             build_tray(app)?;
             let handle = app.handle().clone();
+            context::start(handle.clone());
 
             // Refinados ja pagos de sessoes anteriores. Sem isto, fechar a app deitava fora
             // dinheiro gasto e o mesmo texto voltava a ser cobrado no arranque seguinte.
@@ -821,3 +824,11 @@ pub fn run() {
 pub fn purge_credentials_for_uninstall() -> Result<(), String> {
     secrets::purge_for_uninstall()
 }
+
+/// Offline native surface harness, excluded from distributed application builds.
+#[cfg(feature = "native-qualification")]
+pub fn qualify_floating() {
+    qualification::run();
+}
+#[cfg(feature = "native-qualification")]
+mod qualification;

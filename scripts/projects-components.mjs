@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-export async function projectRegressions(page, origin) {
+export async function projectRegressions(page, origin, capture = async () => {}) {
   await page.setViewport({ width: 900, height: 900, deviceScaleFactor: 1 });
   await page.goto(`${origin}/__ember-test/projects`);
   await page.waitForSelector('button[aria-label="Edit"]');
@@ -20,6 +20,19 @@ export async function projectRegressions(page, origin) {
     await page.waitForSelector(`#name-${id}`);
   };
   await edit('a');
+  await page.evaluate(() => Array.from(document.querySelectorAll('summary')).find(e => e.textContent === 'Automatic context').focus());
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => document.body.innerText.includes('AGENTS.md'));
+  assert.equal(await page.evaluate(() => document.body.innerText.includes('/fixture/Alpha/AGENTS.md')), false);
+  await page.evaluate(() => Array.from(document.querySelectorAll('summary')).find(e => e.textContent === 'AGENTS.md').focus());
+  await page.keyboard.press('Enter');
+  assert.equal(await page.evaluate(() => document.body.innerText.includes('/fixture/Alpha/AGENTS.md')), true);
+  for (const theme of ['dark', 'cream']) {
+    await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+    await capture(`projects-${theme}`);
+  }
+  await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
+
   await click('Check project sources');
   await page.waitForFunction(() => document.body.textContent.includes('Generate a reviewed draft'));
   await click('Generate a reviewed draft');
@@ -30,6 +43,19 @@ export async function projectRegressions(page, origin) {
   assert.equal(await page.$eval('#brief-b', e => e.value), 'Brief for Beta');
 
   await edit('a');
+  await page.$eval('button[aria-label="Custom colour"]', e => e.scrollIntoView({ block: 'center', behavior: 'instant' }));
+  // The editor expands with animation. A native pointer click must target its settled
+  // position, otherwise pointer-down and pointer-up can land on different controls.
+  await page.waitForFunction(() => {
+    const button = document.querySelector('button[aria-label="Custom colour"]');
+    const r = button.getBoundingClientRect();
+    const position = `${r.x},${r.y},${r.width},${r.height}`;
+    const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+    const f = window.__projectsFixture;
+    f.buttonFrames = f.buttonPosition === position && hit && button.contains(hit) ? (f.buttonFrames ?? 0) + 1 : 0;
+    f.buttonPosition = position;
+    return f.buttonFrames >= 3;
+  });
   await page.click('button[aria-label="Custom colour"]');
   await page.waitForSelector('[aria-label="Colour wheel"]');
   await page.$eval('[aria-label="Colour wheel"]', element => element.scrollIntoView({ block: 'center', behavior: 'instant' }));

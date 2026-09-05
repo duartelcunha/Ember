@@ -1,7 +1,9 @@
+import { SourcePath } from "../components/SourcePath";
+import { Feedback } from "../components/Feedback";
 import { ContextInspector } from "./ContextInspector";
 import { ICON_BY_NAME } from "../components/projectIcons";
 import { useEffect, useRef, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { toast } from "sonner";
 import {
   Sparkle,
@@ -221,6 +223,7 @@ function ProjectEditor({
   onSave,
   onDelete,
   busy,
+  saving,
 }: {
   draft: Project;
   accents: EmberSettings["accents"];
@@ -230,9 +233,11 @@ function ProjectEditor({
   onSave: () => void;
   onDelete: () => void;
   busy: boolean;
+  saving: boolean;
 }) {
   // Apagar em dois passos, sem modal: a app não tem Dialog e não vale a pena construir um para
   // uma confirmação. O botão vira "Really delete?" e volta atrás sozinho.
+  const still = useReducedMotion();
   const [confirming, setConfirming] = useState(false);
 
   // Uma cor a medida vale mais do que o indice: com ela preenchida, nenhuma das fixas esta ativa.
@@ -265,14 +270,14 @@ function ProjectEditor({
   useEffect(() => {
     // O painel cresce para baixo e a janela e pequena: aberto, metade dele ficava por baixo do
     // que se ve. `nearest` desloca o minimo para o mostrar, em vez de saltar a pagina inteira.
-    panelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    panelRef.current?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "nearest" });
   }, []);
 
   useEffect(() => {
     if (!picking) return;
     // O disco abre para baixo e para a direita da bolinha; junto ao fundo da janela abria fora do
     // que se ve e parecia que nao tinha acontecido nada. Centra-se ao abrir.
-    swatchRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    swatchRef.current?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "center" });
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setPicking(false);
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -375,10 +380,10 @@ function ProjectEditor({
                   // O momento: o painel ABRE DA PROPRIA BOLINHA, por um circulo de clip que
                   // cresce a partir dela. E a mesma forma do que se vai escolher, e diz de onde
                   // veio sem precisar de uma seta desenhada.
-                  initial={{ clipPath: "circle(14px at 14px 14px)", opacity: 0, scale: 0.96 }}
+                  initial={still ? false : { clipPath: "circle(14px at 14px 14px)", opacity: 0, scale: 0.96 }}
                   animate={{ clipPath: "circle(150% at 14px 14px)", opacity: 1, scale: 1 }}
                   exit={{ clipPath: "circle(14px at 14px 14px)", opacity: 0, scale: 0.96 }}
-                  transition={{ duration: 0.34, ease: [0.22, 1, 0.36, 1] }}
+                  transition={{ duration: still ? 0 : 0.34, ease: [0.22, 1, 0.36, 1] }}
                   style={{ transformOrigin: "14px 14px" }}
                   className="absolute left-0 top-0 z-50 flex flex-col items-center gap-3 rounded-xl border border-[color:var(--border-subtle)] bg-surface-1 p-4 shadow-[0_2px_4px_rgba(0,0,0,0.14),0_18px_48px_-16px_rgba(0,0,0,0.45)]"
                 >
@@ -466,8 +471,27 @@ function ProjectEditor({
         </p>
       </div>
 
+      <details className="rounded-lg border border-[color:var(--border-subtle)] p-3 text-xs">
+        <summary className="cursor-pointer font-medium">Automatic context</summary>
+        <p className="mt-2 text-fg-muted">Use a project path first. Application associations apply only when one project matches.</p>
+        <div className="mt-3 space-y-2">{(draft.context?.applications ?? []).map(path => <div key={path} className="flex items-center justify-between gap-2"><SourcePath path={path} /><Button size="sm" variant="outline" disabled={busy} onClick={() => onChange({ ...draft, context: { version: 1, sources: draft.context?.sources ?? [], applications: (draft.context?.applications ?? []).filter(p => p !== path) } })}>Remove</Button></div>)}</div>
+        <Button variant="ghost" className="mt-2" disabled={busy} onClick={async () => {
+          const selected = await open({ multiple: false, directory: false, title: "Choose application" });
+          if (typeof selected === "string") onChange(current => current === draft ? { ...current, context: { version: 1, sources: current.context?.sources ?? [], applications: [...new Set([...(current.context?.applications ?? []), selected])] } } : current);
+        }}>Associate application</Button>
+        {!(draft.context?.applications.length) && <p className="mt-2 text-fg-muted">No application associations. Project paths and manual selection still work.</p>}
+        <p className="mt-4 font-medium">Authorized sources</p>
+        <p className="mt-1 text-fg-muted">Changes to these files update locally. New files and imports require your choice.</p>
+        <ul className="mt-2 space-y-2">{(draft.context?.sources ?? []).map(source => <li key={source.path} className="flex items-center justify-between gap-2"><SourcePath path={source.path} /><Button size="sm" variant="outline" disabled={busy} onClick={() => onChange({ ...draft, context: { version: 1, applications: draft.context?.applications ?? [], sources: (draft.context?.sources ?? []).filter(s => s.path !== source.path) } })}>Remove</Button></li>)}</ul>
+        {!(draft.context?.sources.length) && <p className="mt-2 text-fg-muted">No authorized files. Your saved brief is still used.</p>}
+        <Button variant="ghost" className="mt-2" disabled={busy || !draft.folder} onClick={async () => {
+          const selected = await open({ multiple: true, directory: false, title: "Authorize context files inside this project", filters: [{ name: "Context", extensions: ["md", "markdown", "txt"] }] });
+          if (selected) onChange(current => current === draft ? { ...current, context: { version: 1, applications: current.context?.applications ?? [], sources: [...(current.context?.sources ?? []), ...(Array.isArray(selected) ? selected : [selected]).filter(path => !current.context?.sources.some(s => s.path === path)).map(path => ({ path, text: "", fingerprint: "", excludedLines: 0 }))] } } : current);
+        }}>Add sources</Button>
+      </details>
+
       <div className="flex flex-wrap items-center gap-2 pt-1">
-        <Button variant="primary" onClick={onSave} disabled={busy || !draft.name.trim()}>
+        <Button variant="primary" onClick={onSave} loading={saving} disabled={busy || !draft.name.trim()}>
           Save
         </Button>
         {draft.id && (
@@ -506,6 +530,8 @@ export function ProjectsTab({
   s: EmberSettings;
   setS: (next: EmberSettings) => void;
 }) {
+  const [error, setError] = useState<string | null>(null);
+  const still = useReducedMotion();
   const [openId, setOpenId] = useState<string | null>(null);
   const [draft, setDraftState] = useState<Project | null>(null);
   const draftEpoch = useRef(0);
@@ -514,6 +540,7 @@ export function ProjectsTab({
     draftEpoch.current += 1;
     setDraftState(next);
   };
+  const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState(false);
   const [distilling, setDistilling] = useState(false);
   const [scan, setScan] = useState<(ProjectScan & { folder: string }) | null>(null);
@@ -536,6 +563,7 @@ export function ProjectsTab({
   };
 
   const startNew = () => {
+    setError(null);
     setScan(null);
     setDraft(blank());
     setOpenId("__novo__");
@@ -550,6 +578,7 @@ export function ProjectsTab({
     const epoch = draftEpoch.current;
     const chosen = await open({ directory: true, multiple: false });
     if (typeof chosen !== "string" || epoch !== draftEpoch.current) return;
+    setError(null);
     setBusy(true);
     try {
       const r = await ipc.scanProjectFolder(chosen);
@@ -559,7 +588,7 @@ export function ProjectsTab({
       const base = chosen.split(/[\\/]/).filter(Boolean).pop() ?? "";
       setDraft((d) => (d ? { ...d, name: d.name || base, folder: chosen } : d));
     } catch (e) {
-      toast.error(String(e));
+      if (epoch === draftEpoch.current) setError(String(e));
     } finally {
       setBusy(false);
     }
@@ -568,6 +597,7 @@ export function ProjectsTab({
   /** Escolher uma subpasta é o mesmo que a ter escolhido no seletor: volta a fazer o scan. */
   const useSubfolder = async (path: string) => {
     const epoch = draftEpoch.current;
+    setError(null);
     setBusy(true);
     try {
       const r = await ipc.scanProjectFolder(path);
@@ -576,7 +606,7 @@ export function ProjectsTab({
       const base = path.split(/[\\/]/).filter(Boolean).pop() ?? "";
       setDraft((d) => (d ? { ...d, name: base, folder: path } : d));
     } catch (e) {
-      toast.error(String(e));
+      if (epoch === draftEpoch.current) setError(String(e));
     } finally {
       setBusy(false);
     }
@@ -585,6 +615,7 @@ export function ProjectsTab({
   const distil = async () => {
     if (!scan?.folder) return;
     const epoch = draftEpoch.current;
+    setError(null);
     setDistilling(true);
     try {
       const brief = await ipc.distillProject(scan.folder, scan.sourceFingerprint);
@@ -598,7 +629,7 @@ export function ProjectsTab({
       // A mensagem vem do Rust já a dizer o que falhou de verdade (sem ficheiro, sem rede,
       // nada de útil no ficheiro, resposta rejeitada). O projeto continua a poder ser gravado
       // com um brief escrito à mão.
-      toast.error(String(e));
+      if (epoch === draftEpoch.current) setError(String(e));
     } finally {
       setDistilling(false);
     }
@@ -608,15 +639,17 @@ export function ProjectsTab({
     if (!draft?.folder || busy || distilling) return;
     const epoch = draftEpoch.current;
     const folder = draft.folder;
+    setError(null);
     setBusy(true);
     try {
       const result = await ipc.scanProjectFolder(folder);
       if (epoch === draftEpoch.current) setScan({ ...result, folder });
-    } catch { toast.error("Project sources could not be read."); }
+    } catch { if (epoch === draftEpoch.current) setError("Project sources could not be read."); }
     finally { setBusy(false); }
   };
 
   const toggleEditor = (p: Project) => {
+    setError(null);
     if (openId === p.id) {
       // Fecha SEM limpar o rascunho: se o limpasse aqui, o conteúdo desmontava no mesmo frame e
       // a caixa ficava a encolher vazia. O rascunho só é trocado quando se abre outro projeto.
@@ -631,20 +664,24 @@ export function ProjectsTab({
   const save = async () => {
     if (!draft || busy || distilling) return;
     const epoch = draftEpoch.current;
+    setError(null);
     setBusy(true);
+    setSaving(true);
     try {
       setS(await ipc.saveProject(draft));
       if (epoch === draftEpoch.current) setOpenId(null);
       else toast.info("Your newer edits remain in the draft. Save them when ready.");
       toast.success("Project saved.");
     } catch (e) {
-      toast.error(String(e));
+      if (epoch === draftEpoch.current) setError(String(e));
     } finally {
       setBusy(false);
+      setSaving(false);
     }
   };
 
   const remove = async (id: string) => {
+    setError(null);
     setBusy(true);
     try {
       setS(await ipc.deleteProject(id));
@@ -652,19 +689,20 @@ export function ProjectsTab({
       setDraft(null);
       toast.success("Project deleted.");
     } catch {
-      toast.error("Couldn't delete the project.");
+      setError("Couldn't delete the project.");
     } finally {
       setBusy(false);
     }
   };
 
   const setActive = async (id: string | null) => {
+    setError(null);
     setBusy(true);
     try {
       setS(await ipc.setActiveProject(id));
       toast.success(id ? "Project is now active." : "No project active.");
     } catch {
-      toast.error("Couldn't change the active project.");
+      setError("Couldn't change the active project.");
     } finally {
       setBusy(false);
     }
@@ -673,12 +711,14 @@ export function ProjectsTab({
   return (
     <div className="flex flex-col gap-4">
       <ContextInspector />
+      {error && <Feedback tone="error">{error}</Feedback>}
       {openId && draft?.folder && <Button variant="ghost" disabled={busy || distilling} onClick={() => void rescanDraft()}>Check project sources</Button>}
       {scan && openId !== "__novo__" && <div className="space-y-2">
-        <Button variant="ghost" disabled={busy || distilling || !scan.sourcePaths.length} onClick={() => void distil()}>Generate a reviewed draft</Button>
+        <Button variant="ghost" loading={distilling} disabled={busy || !scan.sourcePaths.length} onClick={() => void distil()}>Generate a reviewed draft</Button>
         {draft?.id && <details className="text-xs"><summary>Previously saved brief</summary><pre className="whitespace-pre-wrap p-3">{s.projects.find(p => p.id === draft.id)?.brief}</pre></details>}
       </div>}
-      {scan && <div className="text-xs text-fg-muted" role="status"><p>Sources: {scan.sourcePaths.join(", ") || "None"}</p>{scan.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div>}
+      {scan && draft && <Button variant="ghost" disabled={busy || !scan.sourcePaths.length} onClick={() => setDraft(current => current ? { ...current, context: { version: 1, applications: current.context?.applications ?? [], sources: scan.sourcePaths.map(path => ({ path, text: "", fingerprint: "", excludedLines: 0 })) } } : current)}>Use scanned sources automatically</Button>}
+      {scan && <details className="text-xs text-fg-muted"><summary>Scanned sources</summary><div role="status"><p>Sources: {scan.sourcePaths.join(", ") || "None"}</p>{scan.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div></details>}
       <div className="rounded-lg border border-[color:var(--border-subtle)] bg-surface-1 p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
@@ -750,15 +790,11 @@ export function ProjectsTab({
                       variant="primary"
                       onClick={distil}
                       disabled={distilling}
-                      className="mt-3"
+                      className="mt-3 disabled:opacity-100"
+                      aria-busy={distilling}
                     >
-                      {distilling ? (
-                        <span className="flex items-center gap-1.5">
-                          <Spinner variant="embers" size={14} /> Reading…
-                        </span>
-                      ) : (
-                        "Read and write the brief"
-                      )}
+                      <span className="inline-flex w-4 justify-center" aria-hidden>{distilling && <Spinner size={14} />}</span>
+                      Read and write the brief
                     </Button>
                   </>
                 ) : scan.subfolders.length > 0 ? (
@@ -804,6 +840,7 @@ export function ProjectsTab({
             onSave={save}
             onDelete={() => {}}
             busy={busy}
+            saving={saving}
           />
         </div>
       )}
@@ -897,10 +934,10 @@ export function ProjectsTab({
               {isOpen && draft && draft.id === p.id && (
                 <motion.div
                   key="editor"
-                  initial={{ height: 0, opacity: 0 }}
+                  initial={still ? false : { height: 0, opacity: 0 }}
                   animate={{ height: "auto", opacity: 1 }}
                   exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
+                  transition={{ duration: still ? 0 : 0.32, ease: [0.22, 1, 0.36, 1] }}
                   style={{ overflow: "hidden" }}
                 >
                   <ProjectEditor
@@ -912,6 +949,7 @@ export function ProjectsTab({
                     onSave={save}
                     onDelete={() => remove(p.id)}
                     busy={busy}
+            saving={saving}
                   />
                 </motion.div>
               )}

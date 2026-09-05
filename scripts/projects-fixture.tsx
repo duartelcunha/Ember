@@ -7,7 +7,7 @@ import { ProjectsTab } from "../src/settings/ProjectsTab";
 import "../src/styles/globals.css";
 
 const project = (id: string, name: string): Project => ({ id, name, brief: `Brief for ${name}`,
-  accent: 0, accentCustom: "#fd8c3c", icon: "sparkle", folder: `/fixture/${name}`, sourcePath: null });
+  accent: 0, accentCustom: "#fd8c3c", icon: "sparkle", folder: `/fixture/${name}`, sourcePath: null, context: { version: 1, applications: [], sources: [{ path: `/fixture/${name}/AGENTS.md`, text: "", fingerprint: "", excludedLines: 0 }] } });
 let stored = { ...DEFAULT_SETTINGS, projects: [project("a", "Alpha"), project("b", "Beta")],
   accents: [{ label: "Ember", raw: "#aa4411", mid: "#fd8c3c", glow: "#ffcc88" }], icons: ["sparkle"] };
 const fixture = { wheel: [] as ((value: AccentPreview) => void)[], saved: [] as Project[], distillations: 0,

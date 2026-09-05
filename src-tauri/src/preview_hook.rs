@@ -49,7 +49,6 @@ mod imp {
     // `drain_until_released`.
     static RELEASED: AtomicU8 = AtomicU8::new(0);
     static OWNED: AtomicU8 = AtomicU8::new(0);
-    static PAGE_DELTA: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
     const IGN_ENTER: u8 = 1;
     const IGN_ESC: u8 = 2;
@@ -58,9 +57,21 @@ mod imp {
         match vk {
             0x0D => IGN_ENTER,
             0x1B => IGN_ESC,
-            0x21 => 4,
-            0x22 => 8,
             _ => 0,
+        }
+    }
+
+    #[test]
+    fn paging_keys_have_no_owned_tail() {
+        for vk in [0x21, 0x22] {
+            assert_eq!(ignore_bit(vk), 0);
+            assert_eq!(
+                classify_key(vk),
+                KeyVerdict::Decide {
+                    decision: Decision::Reject,
+                    consume: false,
+                }
+            );
         }
     }
 
@@ -70,35 +81,6 @@ mod imp {
             let kb = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
             let vk = kb.vkCode;
             let bit = ignore_bit(vk);
-            if matches!(vk, 0x21 | 0x22) {
-                let down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
-                let up = msg == WM_KEYUP || msg == WM_SYSKEYUP;
-                if up {
-                    IGNORE_HELD.fetch_and(!bit, Ordering::SeqCst);
-                    if OWNED.load(Ordering::SeqCst) & bit != 0 {
-                        RELEASED.fetch_or(bit, Ordering::SeqCst);
-                        OWNED.fetch_and(!bit, Ordering::SeqCst);
-                        return LRESULT(1);
-                    }
-                }
-                if down && OWNED.load(Ordering::SeqCst) & bit != 0 {
-                    RELEASED.fetch_and(!bit, Ordering::SeqCst);
-                    if HOOK_DECISION.load(Ordering::SeqCst) != 0 {
-                        return LRESULT(1);
-                    }
-                }
-                if down
-                    && IGNORE_HELD.load(Ordering::SeqCst) & bit == 0
-                    && HOOK_DECISION.load(Ordering::SeqCst) == 0
-                {
-                    OWNED.fetch_or(bit, Ordering::SeqCst);
-                    RELEASED.fetch_and(!bit, Ordering::SeqCst);
-                    PAGE_DELTA.fetch_add(if vk == 0x22 { 1 } else { -1 }, Ordering::SeqCst);
-                    return LRESULT(1);
-                }
-                return CallNextHookEx(None, code, wparam, lparam);
-            }
-
             // Teclas que NAO sao o Enter nem o Esc: se decidirem alguma coisa (a pessoa continuou
             // a escrever), marcam a decisao e seguem o seu caminho na mesma. Nunca se consomem, e
             // por isso este ramo cai sempre no `CallNextHookEx` la em baixo.
@@ -204,14 +186,13 @@ mod imp {
 
     /// Corre o gate numa thread dedicada com message pump (o LL hook so entrega o callback na
     /// thread que instala E bombeia mensagens). Bloqueante: chamar fora do runtime tokio.
-    pub fn run_gate_blocking(should_cancel: impl Fn() -> bool, on_page: impl Fn(i32)) -> Decision {
+    pub fn run_gate_blocking(should_cancel: impl Fn() -> bool) -> Decision {
         let _input_owner = super::input_lease();
         if should_cancel() {
             return Decision::Reject;
         }
         HOOK_DECISION.store(0, Ordering::SeqCst);
         OWNED.store(0, Ordering::SeqCst);
-        PAGE_DELTA.store(0, Ordering::SeqCst);
         RELEASED.store(0, Ordering::SeqCst);
         // Marca as teclas ja premidas agora (bit alto do GetAsyncKeyState) para as ignorar ate
         // uma descida fresca. Evita um falso Accept do Enter que ainda estava em baixo.
@@ -222,11 +203,6 @@ mod imp {
             }
             if (GetAsyncKeyState(0x1B) as u16 & 0x8000) != 0 {
                 held |= IGN_ESC;
-            }
-        }
-        for (vk, bit) in [(0x21, 4), (0x22, 8)] {
-            if unsafe { GetAsyncKeyState(vk) as u16 & 0x8000 != 0 } {
-                held |= bit;
             }
         }
         IGNORE_HELD.store(held, Ordering::SeqCst);
@@ -257,7 +233,7 @@ mod imp {
         };
         let _mouse_guard = HookGuard(mouse);
 
-        let mut start = std::time::Instant::now();
+        let start = std::time::Instant::now();
 
         loop {
             // 1) Bombeia mensagens: serve o callback do LL hook.
@@ -272,11 +248,6 @@ mod imp {
             //    tecla premida: enquanto o dedo estiver em baixo, o hook tem de continuar a
             //    engolir as repeticoes automaticas, senao vazam para a app (num terminal, um
             //    Enter vazado submete o prompt sozinho).
-            let page_delta = PAGE_DELTA.swap(0, Ordering::SeqCst);
-            if page_delta != 0 {
-                on_page(page_delta);
-                start = std::time::Instant::now();
-            }
             match HOOK_DECISION.load(Ordering::SeqCst) {
                 1 => {
                     log::info!("gate: ACCEPT (Enter consumed by hook)");
@@ -319,10 +290,7 @@ mod imp {
         use tauri::Manager;
         let (tx, rx) = tokio::sync::oneshot::channel();
         std::thread::spawn(move || {
-            let d = run_gate_blocking(
-                || app.state::<crate::state::AppState>().dismissed(run_id),
-                |delta| crate::flow::move_preview_page(&app, run_id, delta),
-            );
+            let d = run_gate_blocking(|| app.state::<crate::state::AppState>().dismissed(run_id));
             let _ = tx.send(d); // se o lado async caiu (app a sair), o send falha inofensivamente
         });
         rx.await.unwrap_or(Decision::Reject)

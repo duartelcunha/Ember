@@ -83,9 +83,9 @@
 :root[data-theme="cream"] {
   /* Laranja da marca, um degrau mais escuro que no dark para contrastar sobre o creme claro
      (o texto do botao e claro). Mesma familia do logo. */
-  --color-accent: #e0761f;
-  --color-accent-hover: #c9691a;
-  --color-accent-active: #b25a13;
+  --color-accent: #ae5412;
+  --color-accent-hover: #97470f;
+  --color-accent-active: #813c0c;
   --color-accent-fg: #fff8f0;
 
   --color-bg: #f4ede1;
@@ -97,9 +97,9 @@
   --color-fg: #2e2519;
   --color-fg-muted: #6f6353;
 
-  --color-success: #2f9e6b;
+  --color-success: #247448;
   --color-warning: #b7791f;
-  --color-error: #d1453b;
+  --color-error: #b7352b;
   --color-info: #2f6fb0;
 
   /* Bordas: escuras translucidas sobre fundo claro (o inverso do dark). */
@@ -136,31 +136,14 @@
   }
 }
 
-/* Glow pulsante (estado "a pensar"), por baixo do orb. Sem rotacao: so respiracao de luz.
-   Tom quente da marca (laranja vivo -> transparente), a condizer com a estrela. */
-
-/* Bolha de preview (vidro). NUNCA animar transform (translate/scale) nesta classe: o
-   backdrop-filter re-amostra o fundo desfocado a cada frame do movimento e engasga. So
-   opacidade anima na bolha; o movimento vive no conteudo interno (sem blur). Ver Pill.tsx. */
+/* Solid floating cards keep contrast independent of the application underneath. */
 .ember-bubble {
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(140%);
-  backdrop-filter: blur(var(--glass-blur)) saturate(140%);
+  background: #1a1511;
   border: 1px solid var(--border-default);
-  /* Sombra suave em camadas (contacto curto + difusa larga), em vez de uma unica sombra
-     grande e deslocada que era cortada pela borda da janela do overlay e deixava um edge duro.
-     Offsets/blur pequenos o bastante para desvanecerem dentro do padding da janela. */
-  box-shadow:
-    0 2px 6px rgba(0, 0, 0, 0.28),
-    0 8px 20px rgba(0, 0, 0, 0.32),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.24);
   color: var(--color-fg);
 }
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .ember-bubble {
-    background: var(--glass-bg-strong);
-  }
-}
+:root[data-theme="cream"] .ember-bubble { background: #f7f2e9; }
 
 /* Scrollbar fina e escura, a condizer com o tema glassy (a janela de settings e a unica que
    scrolla). WebView2 e Chromium, por isso os pseudo-elementos ::-webkit-scrollbar aplicam-se;
@@ -190,8 +173,38 @@
 /* Floating surfaces measure their content and coalesce motion before painting. */
 .ember-floating { visibility: hidden; will-change: transform; }
 .ember-floating[data-side="left"] .ember-orb-row { flex-direction: row-reverse; }
-.ember-floating[data-moving="true"] .ember-bubble {
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-  background: var(--glass-bg-strong) !important;
+
+/* The incoming solid surface grows from the visible 15px ring, without scaling
+   text or animating the translation owned by the cursor geometry controller. */
+[data-morph-from-orb] {
+  --ember-morph-start: inset(0 calc(100% - 15px) calc(100% - 15px) 0 round 7.5px);
+  animation: ember-surface-morph 180ms cubic-bezier(.2, .7, .2, 1);
 }
+.ember-floating[data-side="left"] [data-morph-from-orb] {
+  --ember-morph-start: inset(0 0 calc(100% - 15px) calc(100% - 15px) round 7.5px);
+}
+@keyframes ember-surface-morph {
+  from { clip-path: var(--ember-morph-start); }
+  to { clip-path: inset(-6px -6px -6px -6px round 8px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-morph-from-orb] { animation: none; }
+}
+
+
+@media (prefers-reduced-motion: reduce) { .ember-spinner * { animation: none !important; } }
+
+
+/* Confirmation is a keyboard hint, not a document viewer. */
+.ember-confirmation { width: max-content; max-width: calc(100vw - 16px); min-height: 26px; padding: 5px 8px; border-radius: 8px; font-size: 11px; line-height: 14px; }
+.ember-confirmation > span { display: inline; }
+
+/* Shared keyboard affordances apply to native details and smaller secondary actions. */
+button:focus-visible, summary:focus-visible, a:focus-visible { outline: 2px solid var(--border-accent); outline-offset: 3px; }
+summary { cursor: pointer; border-radius: 4px; }
+@media (prefers-reduced-motion: reduce) {
+  button { transition: none !important; transform: none !important; }
+  .animate-pulse { animation: none !important; }
+}
+
+@media (max-width: 860px) { [role="tab"] > svg { display: none; } }

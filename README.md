@@ -29,6 +29,8 @@ You know that clumsy message, that rambling prompt you keep editing, or that rou
 
 [Windows evaluation candidate 1.1.0-rc.2](https://github.com/duartelcunha/Ember/releases/tag/v1.1.0-rc.2) is available with a verified updater signature. Existing installations should use `/UPDATE` and preserve a configuration backup; do not run the old uninstaller first. See the [native test and installation evidence](docs/native-qualification.md).
 
+The next [floating-surface and context changes](docs/floating-context-refinement.md) are under qualification. They introduce visible-pixel cursor anchoring, compact comparison cards and explicitly authorized project sources. They are not included in the published rc.2 installer.
+
 This checkout is undergoing production hardening. Windows native qualification remains open; macOS and Linux do not yet meet the required functional parity. See the [implementation ledger and release blockers](docs/production-readiness.md). Historical recordings below do not establish the current native behavior.
 
 ---

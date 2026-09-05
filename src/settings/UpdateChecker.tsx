@@ -1,3 +1,4 @@
+import { Feedback } from "../components/Feedback";
 import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { check } from "@tauri-apps/plugin-updater";
@@ -67,13 +68,13 @@ export function UpdateChecker() {
           {version ? `Version ${version}` : "Version unknown"}
         </span>
         {status !== "downloading" && status !== "ready" && (
-          <Button variant="ghost" size="sm" onClick={run} disabled={status === "checking"}>
-            {status === "checking" ? "Checking…" : "Check for updates"}
+          <Button variant="ghost" size="sm" onClick={run} loading={status === "checking"}>
+            Check for updates
           </Button>
         )}
       </div>
       {status === "up-to-date" && (
-        <p className="text-xs text-success">You're on the latest version.</p>
+        <Feedback tone="success">No newer release is available on this update channel.</Feedback>
       )}
       {status === "downloading" && (
         <div className="flex flex-col gap-1.5">
@@ -103,7 +104,7 @@ export function UpdateChecker() {
           </Button>
         </div>
       )}
-      {status === "error" && <p className="text-xs text-error">{errorMsg}</p>}
+      {status === "error" && <Feedback tone="error">{errorMsg}</Feedback>}
     </div>
   );
 }
