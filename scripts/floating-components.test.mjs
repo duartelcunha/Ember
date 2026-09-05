@@ -166,7 +166,8 @@ test("UI components preserve geometry and asynchronous ownership", async (t) => 
     await t.test("context inspector stays concise and rejects obsolete snapshots", async () => {
       await page.setViewport({ width: 640, height: 540, deviceScaleFactor: 1 });
       await page.goto(`http://127.0.0.1:${port}/__ember-test/context`);
-      await page.waitForFunction(() => window.__contextFixture.pending.length === 1);
+      // Navigation can finish before the dynamically imported fixture initializes.
+      await page.waitForFunction(() => window.__contextFixture?.pending.length === 1);
       const snapshot = { runId: 11, project: "Ember", selection: "auto", reason: "Project path", profile: "Tone: direct", profileSources: [], profileReviewNeeded: false, profileInvalid: false, projectContext: "Stack: Rust", sources: [], sourceStatus: "Up to date", delivery: "prepared" };
       await page.evaluate(value => window.__contextFixture.pending.shift()(value), snapshot);
       await page.waitForFunction(() => document.body.textContent.includes('Ember · Automatic'));
