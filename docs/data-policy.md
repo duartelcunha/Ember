@@ -35,9 +35,23 @@ new filesystem source. The context inspector shows the last resolved request sna
 Known project files and explicit `@relative/path.md` lines are read inside the selected
 canonical directory. Import cycles and excluded sources produce warnings. Limits are
 512 KiB combined, 32 source files and eight import levels. Imports must occupy their own line.
-The global profile still uses the existing discovery or manual override mechanism, with
-bounded reads and visible prompt truncation. Explicit global source selection and full
-instruction extraction remain open release work.
+Global profiles no longer discover or read ambient `CLAUDE.md` or `AGENTS.md` files during
+refinement. Personalization can import up to eight explicitly selected Markdown/text files,
+with 64 KiB per file and 256 KiB combined. A five-second caller deadline and one retained
+worker lease bound stalled filesystem reads. Import is local and does not call a provider.
+
+The extraction keeps recognized writing preferences and technical facts, excludes code,
+unknown sections and common operational directions, and removes secret-like content before
+showing a draft. Exclusions are visible. This conservative heuristic can omit useful content
+and does not prove semantic immunity to malicious instructions. The user reviews and saves
+the draft before it becomes context. No raw-source fallback exists.
+
+Saved profiles have a 2,000-byte UTF-8 limit. Oversized drafts remain editable and cannot be
+saved; legacy oversized overrides stop refinement before a provider request. Existing manual
+preferences remain intact. Legacy automatic file loading is disabled with a Settings notice.
+Source paths and SHA-256 fingerprints are provenance for approved snapshots, not permission
+to reload files. Import again to review changes. New manual saves also reject detected secrets.
+Full project scope hierarchy and adversarial instruction evaluation remain release work.
 
 OpenAI-compatible credentials are bound to their HTTPS endpoint. Changing that endpoint does
 not send an existing connection's credential to the new server. Plain HTTP local connections

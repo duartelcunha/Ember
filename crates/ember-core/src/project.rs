@@ -261,9 +261,14 @@ fn looks_like_secret(line: &str) -> bool {
     if lower.contains("bearer ") && l.len() > 30 {
         return true;
     }
-    // Prefixos de chave comuns.
+    // Common key prefixes must start a token, not the suffix of prose such as task-oriented.
     for p in ["sk-", "sk-ant-", "AKIA", "ghp_", "gho_", "AIza", "xox"] {
-        if l.contains(p) {
+        if l.match_indices(p).any(|(index, _)| {
+            l[..index]
+                .chars()
+                .next_back()
+                .is_none_or(|c| !c.is_alphanumeric() && c != '_')
+        }) {
             return true;
         }
     }
@@ -508,6 +513,20 @@ mod tests {
         assert!(out.contains("Be concise."));
         assert!(!out.contains("AIza"));
         assert!(!out.contains("sk-ant-"));
+    }
+
+    #[test]
+    fn key_prefixes_distinguish_prose_suffixes_from_credential_tokens() {
+        let prose = "Tone: task-oriented, risk-aware, brisk-paced.";
+        assert_eq!(redact_secrets(prose), prose);
+        for line in [
+            "sk-synthetic",
+            "value=sk-synthetic",
+            "\"ghp_synthetic\"",
+            "(AKIAsynthetic)",
+        ] {
+            assert_eq!(redact_secrets(line), "");
+        }
     }
 
     #[test]

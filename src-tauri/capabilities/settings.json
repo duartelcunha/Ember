@@ -59,6 +59,7 @@
     "allow-open-repo",
     "allow-open-key-console",
     "allow-read-profile-file",
+    "allow-import-profile-files",
     "allow-get-diagnostics"
   ]
 }

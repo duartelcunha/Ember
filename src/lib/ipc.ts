@@ -120,6 +120,9 @@ export interface Accent {
 }
 
 /** Estado das definicoes exposto pelo nucleo Rust (sem chaves em claro). */
+export interface ProfileProvenance { path: string; fingerprint: string; bytes: number }
+export interface ProfileImport { text: string; sources: ProfileProvenance[]; warnings: string[] }
+
 export interface EmberSettings {
   geminiModel: string;
   openaiModel: string;
@@ -151,6 +154,8 @@ export interface EmberSettings {
   profileText: string;
   profileSource: ProfileSource;
   profilePath: string | null;
+  profileSources: ProfileProvenance[];
+  legacyAutoProfileDisabled: boolean;
   mode: RefineMode;
   thinkingEnabled: boolean;
   thinkingLevel: ThinkingLevel;
@@ -206,6 +211,8 @@ export const DEFAULT_SETTINGS: EmberSettings = {
   profileText: "",
   profileSource: "default",
   profilePath: null,
+  profileSources: [],
+  legacyAutoProfileDisabled: false,
   mode: "adaptive",
   thinkingEnabled: true,
   thinkingLevel: "high",
@@ -301,7 +308,8 @@ export const ipc = {
     invoke<void>("set_preview_before_paste", { enabled }),
   setCaptureTiming: (polls: number, stepMs: number, settleMs: number) =>
     invoke<EmberSettings>("set_capture_timing", { polls, stepMs, settleMs }),
-  setProfile: (text: string) => invoke<void>("set_profile", { text }),
+  setProfile: (text: string, sources: ProfileProvenance[] = []) => invoke<void>("set_profile", { text, sources }),
+  importProfileFiles: (paths: string[]) => invoke<ProfileImport>("import_profile_files", { paths }),
   reloadProfileFromClaudeMd: () => invoke<EmberSettings>("reload_profile"),
   resetProfileToDefault: () => invoke<EmberSettings>("reset_profile"),
   setDebugMode: (enabled: boolean) => invoke<void>("set_debug_mode", { enabled }),

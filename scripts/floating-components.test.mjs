@@ -9,7 +9,7 @@ import puppeteer from "puppeteer";
 
 // Real React components and CSS, with the documented Tauri IPC mock. This is browser
 // evidence only: it cannot establish native focus, input hooks or monitor transitions.
-test("floating components recover from snapshots and ignore obsolete events", async () => {
+test("UI components preserve geometry and asynchronous ownership", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "ember-browser-test-"));
   await build({ logLevel: "error", build: { outDir: directory, emptyOutDir: false,
     rollupOptions: { input: resolve("scripts/floating-fixture.html") } } });
@@ -83,6 +83,54 @@ test("floating components recover from snapshots and ignore obsolete events", as
     await page.evaluate(() => new Promise(requestAnimationFrame));
     assert.equal(await page.$$eval('[role=option][aria-selected=true]', e => e.length), 1);
     await capture("picker");
+    await t.test("profile imports require review and discard obsolete responses", async () => {
+    await page.goto(`http://127.0.0.1:${port}/__ember-test/profile`);
+    await page.waitForSelector('textarea');
+    const clickButton = async label => page.evaluate(label => {
+      const button = Array.from(document.querySelectorAll('button')).find(button => button.textContent === label);
+      if (!button || button.disabled) throw new Error(`Button unavailable: ${label}`);
+      button.click();
+    }, label);
+    const enterProfile = async text => {
+      await page.focus('textarea');
+      await page.$eval('textarea', element => element.select());
+      await page.keyboard.type(text);
+    };
+    const resolveImport = draft => page.evaluate(draft => window.__profileFixture.resolveImport(draft), draft);
+    await clickButton('Import files...');
+    await page.waitForFunction(() => window.__profileFixture.imports === 1);
+    await enterProfile('Tone: my newer edit');
+    await resolveImport({ text: 'Tone: stale import', sources: [], warnings: ['Old import'] });
+    await page.waitForFunction(() => Array.from(document.querySelectorAll('button')).some(button => button.textContent === 'Import files...' && !button.disabled));
+    assert.equal(await page.$eval('textarea', element => element.value), 'Tone: my newer edit');
+    assert.equal(await page.evaluate(() => window.__profileFixture.saved.length), 0);
+
+    await clickButton('Import files...');
+    await page.waitForFunction(() => window.__profileFixture.imports === 2);
+    await clickButton('Use Ember default');
+    await page.waitForFunction(() => document.querySelector('textarea').value === 'Tone: default');
+    await resolveImport({ text: 'Tone: stale after reset', sources: [], warnings: [] });
+    await presented();
+    assert.equal(await page.$eval('textarea', element => element.value), 'Tone: default');
+
+    await page.waitForFunction(() => Array.from(document.querySelectorAll('button')).some(button => button.textContent === 'Import files...' && !button.disabled));
+    await clickButton('Import files...');
+    await page.waitForFunction(() => window.__profileFixture.imports === 3);
+    await resolveImport({ text: 'Tone: reviewed', sources: [{ path: '/fixture/AGENTS.md', fingerprint: 'a'.repeat(64), bytes: 80 }], warnings: ['Operational lines were excluded.'] });
+    await page.waitForFunction(() => document.body.textContent.includes('Operational lines were excluded.'));
+    assert.equal(await page.evaluate(() => window.__profileFixture.saved.length), 0);
+    await clickButton('Save reviewed profile');
+    await page.waitForFunction(() => window.__profileFixture.saved.length === 1);
+    const savedProfile = await page.evaluate(() => window.__profileFixture.saved[0]);
+    assert.equal(savedProfile.text, 'Tone: reviewed');
+    assert.equal(savedProfile.sources[0].fingerprint, 'a'.repeat(64));
+    await page.waitForFunction(() => !document.querySelector('textarea').disabled);
+    await enterProfile('é'.repeat(1001));
+    await page.waitForSelector('[role=alert]');
+    assert.equal(await page.evaluate(() => Array.from(document.querySelectorAll('button')).find(button => button.textContent === 'Save reviewed profile').disabled), true);
+    assert.equal(await page.evaluate(() => window.__profileFixture.saved.length), 1);
+    await capture('profile-review');
+    });
     assert.deepEqual(errors, []);
   } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)); assert.equal(dirname(directory), resolve(tmpdir())); assert.ok(basename(directory).startsWith("ember-browser-test-")); await rm(directory, { recursive: true, force: true }); }
 });

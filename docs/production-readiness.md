@@ -14,7 +14,7 @@ and demonstration recordings. Baseline: `179e397`, `feat/picker-follows-the-poin
 | Text integrity and destination | Core regressions implemented; Windows checks window/control HWND, UIA element/range and recaptured text | Continuous input generation and native application matrix open |
 | Input ownership and cancellation | Run phase coordinator, retained native job ownership, shared input lease, joined watcher, fail-closed confirmation | Input-generation continuity and native abort/hook matrix open |
 | Overlay and project picker | Shared monitor surface, measured DOM bounds, sequence snapshots, paging, reduced motion | Browser and geometry tests pass; native matrix open |
-| Context and projects | None/Auto/Pinned behavior, resolved snapshot inspector, draft revisions, bounded imports, source fingerprint | Global source authorization and full scope hierarchy open |
+| Context and projects | None/Auto/Pinned behavior, resolved snapshot inspector, draft revisions, bounded imports, source fingerprint | Explicit reviewed global imports implemented; full scope hierarchy open |
 | Persistence and connections | Endpoint-bound keys, encrypted opt-in results, generations, atomic config, bounded streams | Deterministic native race/failure tests open |
 | Platform parity | Three-OS CI passed tests, strict lint and frontend build; real Linux credential backend | macOS/Linux input/clipboard/target adapters not implemented |
 | Distribution | Signed updater candidate published and installed, pinned tooling, opt-in uninstall data removal | Publisher signing/notarization, wider native qualification and recovery matrix open |
@@ -30,7 +30,7 @@ or remaining implementation is listed in the last column.
 | A02 | Hook install failure and unsupported platforms reject; actual original/result comparison with keyboard paging | Native focus and screen reader qualification |
 | A03 | Remove stale terminal clipboard fallback and generic line clearing; preserve bounded HGLOBAL formats; ownership-aware restore before network wait | Close ownership gaps around capture; delayed rendering tests; safe terminal adapters. Generic terminal replacement is disabled |
 | A04 | Mask original bytes before normalization; check token count/order/unknown markers; restore after cleanup; preserve joiners; protect fences, inline code, paths and explicit shell prompts | Broader linguistic/provider evaluation and ambiguous command fragments |
-| A05 | Complete PEM block redaction; global profile data framing and read bounds; inspector exposes truncation | Authorized global source selection and semantic exclusion of operational instructions before prompt composition |
+| A05 | Complete PEM block redaction; explicit bounded global imports, reviewed snapshots and source provenance; oversized profiles refused before network | Semantic extraction limits and adversarial model evaluation |
 | A06 | HTTPS URL validation; no redirects; endpoint-bound vault entry; legacy credential binds to old configured endpoint before URL change; connection generations | Named connection schema and explicit local HTTP without authentication |
 | A07 | All custom commands listed in application ACL manifest; settings/overlay/picker/animation capabilities separated; static security contract tests | Negative IPC invocations in real packaged webviews |
 | A08 | Retention and diagnostic generations; one writer; separate session/persistent cache; authenticated encryption; logout invalidates before waiting and rejects stale commits | Native concurrent logout/login/refresh, disable/re-enable/write, vault failure and interrupted-write tests |
@@ -39,7 +39,7 @@ or remaining implementation is listed in the last column.
 | A13 | Explicit run phase coordinator and retained native job ownership; shared input lease; joined watcher; cancellation and owned key tails | Continuous input generation, lost key-up recovery and complete mouse button/drag matrix |
 | A14 | Run ID plus monotonic sequence, state snapshots after subscribing; stale run and sequence rejection | Native webview reload and transition evidence |
 | A15 | Draft epoch gates scan/distillation; old results cannot replace a newer draft; save preserves newer edits; shared icon/accent registry | Dedicated project editor asynchronous component tests and native visual review |
-| A16 | Known root files plus scoped Markdown imports; technical facts retained by distillation; bounded read, cycles, provenance and stale-source warning | Root-to-active-file scope hierarchy, source precedence editor and global source controls |
+| A16 | Known root files plus scoped Markdown imports; technical facts retained by distillation; bounded read, cycles, provenance and stale-source warning | Root-to-active-file scope hierarchy and source precedence editor |
 | A17 | Explicit No project, Auto and Pinned behavior; Auto only chooses registered roots; empty brief cannot impersonate applied context; inspector exposes resolution | Persisted selection remains backward-compatible fields; inspector shows resolved context, not a provider delivery receipt |
 | A18 | Original bytes in exact cache key; no fuzzy lookup in automatic path; SHA-256 request/chain/connection/credential identity | Paid-provider cache/billing acceptance matrix |
 | A19 | Serialized atomic config writer; revision conflict rejection; schema migration and preserved recovery copy; hotkey/autostart compensation on failure | Real concurrent UI/OS failure and rollback scenarios |
@@ -200,3 +200,29 @@ Follow-up publication guards reject an already published release and a draft who
 revision differs from the checkout, before downloading or uploading artifacts. The real
 PowerShell script passes three command-mocked regressions, including the matching-source
 path reaching artifact verification. The tests do not issue remote mutations.
+
+## Reviewed global profile increment, 1.1.0-rc.2
+
+Ambient global discovery is removed. Explicit local import prepares a conservative draft;
+only reviewed text is saved and used. Sources carry fingerprints and are not reopened during
+refinement. Unknown sections, code examples and common operational directions are excluded.
+Oversized drafts remain available for editing, and legacy oversized profiles stop the request.
+The inspector exposes approved source provenance. Delayed imports cannot overwrite newer
+edits or a reset. A timed-out filesystem worker retains ownership until it actually ends.
+
+Automatic extraction followed by immediate use was rejected because the user could not
+review omitted or conflicting rules. A complete semantic parser remains an alternative, but
+would require a much broader evaluation contract. The present heuristic requires review and
+can omit useful technical prose. No claim of complete prompt-injection immunity is made.
+
+Existing manual overrides are preserved. The legacy discovery flag is retained for a migration
+notice; no config schema change is needed. Rolling back to rc.1 can re-enable legacy discovery
+if the old flag was never changed. Review Personalization before using an older build.
+
+Local validation: `cargo test --workspace --locked --quiet` reported `49 passed; 0 failed`
+in the shell and `340 passed; 0 failed` in the core. Strict Clippy exited 0. `npm test` reported
+`tests 7`, `pass 7`, `fail 0`; `npm run build` completed with 5,095 modules in 11.12 seconds.
+Publication guards reported `3 passed; 0 failed`; version consistency reported `1.1.0-rc.2`.
+The four browser captures in `target/profile-browser-evidence` were inspected locally.
+They use synthetic fixtures and mocked IPC. Publication and installation evidence will be
+recorded after the new candidate passes the qualified release workflow.

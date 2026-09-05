@@ -618,6 +618,7 @@ pub fn run() {
             commands::open_repo,
             commands::open_key_console,
             commands::read_profile_file,
+            commands::import_profile_files,
             commands::get_diagnostics,
         ])
         .setup(|app| {
