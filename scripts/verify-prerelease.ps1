@@ -7,10 +7,15 @@ if ($Tag -notmatch '^v\d+\.\d+\.\d+-rc\.\d+$') { throw 'Invalid candidate tag' }
 $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
 if ($Tag -ne "v$version") { throw 'Candidate does not match this checkout' }
 $repo = 'duartelcunha/Ember'
-$release = gh release view $Tag --repo $repo --json isDraft,isPrerelease,assets | ConvertFrom-Json
+$release = gh release view $Tag --repo $repo --json isDraft,isPrerelease,assets,targetCommitish | ConvertFrom-Json
 if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect candidate release' }
 if (!$release.isPrerelease) { throw 'Refusing a stable release' }
 if ($Publish -and !$release.isDraft) { throw 'Refusing to mutate a published version' }
+if ($Publish) {
+    $sourceCommit = git rev-parse HEAD
+    if ($LASTEXITCODE -ne 0 -or $sourceCommit -notmatch '^[0-9a-f]{40}$') { throw 'Cannot establish source revision' }
+    if ($release.targetCommitish -cne $sourceCommit) { throw 'Draft belongs to a different source revision; create a new candidate or repair the draft before publication' }
+}
 $directory = Join-Path (Get-Location) "target/release-verification/$Tag"
 New-Item -ItemType Directory -Force -Path $directory | Out-Null
 gh release download $Tag --repo $repo --dir $directory --clobber --pattern '*-setup.exe' --pattern '*.sig' --pattern latest.json
