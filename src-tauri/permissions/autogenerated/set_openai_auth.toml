@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-openai-auth"
+description = "Enables the set_openai_auth command without any pre-configured scope."
+commands.allow = ["set_openai_auth"]
+
+[[permission]]
+identifier = "deny-set-openai-auth"
+description = "Denies the set_openai_auth command without any pre-configured scope."
+commands.deny = ["set_openai_auth"]

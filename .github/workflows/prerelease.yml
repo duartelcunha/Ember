@@ -1,0 +1,64 @@
+name: qualified-prerelease
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qualified-prerelease
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/ci.yml
+
+  windows-candidate:
+    needs: checks
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.22.2
+          cache: npm
+      - uses: dtolnay/rust-toolchain@e1648915a4fdfbb5afab579a8afeb8eba8f6528c
+        with:
+          toolchain: 1.96.1
+      - uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      - run: npm ci
+      - name: Require an unpublished candidate version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($version -notmatch '^\d+\.\d+\.\d+-rc\.\d+$') { throw 'Expected a release candidate version' }
+          $existing = gh release view "v$version" --json isDraft 2>$null | ConvertFrom-Json
+          if ($LASTEXITCODE -eq 0 -and !$existing.isDraft) { throw 'Published versions are immutable; increment the candidate version' }
+          "tag=v$version" >> $env:GITHUB_OUTPUT
+          exit 0
+      - name: Build signed updater artifacts in a draft
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ steps.version.outputs.tag }}
+          releaseName: Ember ${{ steps.version.outputs.tag }}
+          releaseCommitish: ${{ github.sha }}
+          releaseDraft: true
+          prerelease: true
+          args: --bundles nsis
+          retryAttempts: 0
+      - name: Verify uploaded artifacts before publishing the candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: ./scripts/verify-prerelease.ps1 -Tag '${{ steps.version.outputs.tag }}' -Publish

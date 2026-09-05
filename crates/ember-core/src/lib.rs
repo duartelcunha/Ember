@@ -17,6 +17,7 @@ pub mod modifiers;
 pub mod oklch;
 pub mod overlay;
 pub mod overlay_geom;
+pub mod preview;
 pub mod profile_path;
 pub mod project;
 pub mod projects;

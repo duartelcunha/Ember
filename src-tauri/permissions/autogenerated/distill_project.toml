@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-distill-project"
+description = "Enables the distill_project command without any pre-configured scope."
+commands.allow = ["distill_project"]
+
+[[permission]]
+identifier = "deny-distill-project"
+description = "Denies the distill_project command without any pre-configured scope."
+commands.deny = ["distill_project"]

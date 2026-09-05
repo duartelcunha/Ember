@@ -21,18 +21,8 @@ export function Pill({ kind, text }: { kind: Kind; text: string }) {
         : "var(--color-fg-muted)";
   return (
     <m.div
-      // Sem `max-w`: a bolha mede-se pelo texto. Com um teto, uma frase como "Enter to apply ·
-      // Esc to keep original" partia-se em duas linhas e a pilula passava a ser um paragrafo
-      // flutuante em vez de uma etiqueta. A janela do overlay e transparente e ignora cliques,
-      // por isso deixa-la respirar em largura nao custa nada a ninguem.
-      // A janela esta ancorada no MEIO DO PONTEIRO (uma ancora so para as duas fases, ver
-      // `orb_target` em lib.rs) e nao se reposiciona quando a fase muda. Logo e esta margem que
-      // poe a pilula ao LADO do cursor em vez de por cima dele. A conta, a escala 1: a area de
-      // conteudo comeca em `cursor - 14`, portanto 40px poem a borda esquerda em `cursor + 26`.
-      // Como a seta ocupa ~12px a direita do hotspot, ficam ~14px de folga limpa entre as duas,
-      // que e o que faz o espacamento parecer escolhido em vez de acidental.
-      // ESPELHADO em `PILL_MARGIN_X` (lib.rs), que clampa a pilula ao ecra por esta margem.
-      className="ember-bubble ml-10 flex w-fit items-center gap-1.5 px-2.5 py-1.5"
+      // The measured surface contains long messages within the active work area.
+      className="ember-bubble flex w-fit max-w-[min(460px,calc(100vw-16px))] items-center gap-1.5 px-2.5 py-1.5"
       // Segundo tempo do morph: a faisca colapsou para o centro (exit do Orb) e a pilula
       // ACENDE a partir desse ponto (origem a esquerda, scale com spring curto). E uma
       // entrada one-shot de ~200ms: re-amostrar o backdrop-filter durante esses frames e
@@ -42,8 +32,8 @@ export function Pill({ kind, text }: { kind: Kind; text: string }) {
       // Sem deslize lateral (`x: -14 -> 0`) desde que TODAS as fases seguem o cursor: a propria
       // janela ja traz o movimento, e os dois somados liam-se como a pilula a escorregar para
       // um sitio onde nao ficava. Fica so o acender: opacidade + escala a partir do ponteiro.
-      initial={{ opacity: 0, scale: 0.55 }}
-      animate={{ opacity: 1, scale: 1 }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
       exit={{ opacity: 0, transition: { duration: 0.3, ease: [0.22, 1, 0.36, 1] } }}
       transition={{
         opacity: { duration: 0.16, ease: "easeOut" },
@@ -60,7 +50,7 @@ export function Pill({ kind, text }: { kind: Kind; text: string }) {
         {ICON[kind]}
       </m.span>
       <m.span
-        className="whitespace-nowrap text-xs text-fg"
+        className="min-w-0 whitespace-pre-wrap break-words text-xs text-fg"
         initial={{ opacity: 0, y: 3 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1], delay: 0.2 }}

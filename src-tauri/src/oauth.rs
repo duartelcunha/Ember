@@ -10,6 +10,7 @@
 use ember_core::codex as wire;
 use ember_core::CoreError;
 use sha2::{Digest, Sha256};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -42,6 +43,7 @@ fn challenge_for(verifier: &str) -> String {
 /// Corre o fluxo completo e grava a sessao. Devolve a conta ligada (quando o token a diz), para a
 /// UI poder mostrar QUAL a conta em vez de um "signed in" anonimo.
 pub async fn login(state: &AppState) -> Result<Option<String>, String> {
+    let generation = state.oauth_generation.fetch_add(1, Ordering::SeqCst) + 1;
     let verifier = random_b64(32)?;
     let csrf_state = random_b64(16)?;
     let challenge = challenge_for(&verifier);
@@ -76,22 +78,24 @@ pub async fn login(state: &AppState) -> Result<Option<String>, String> {
 
     let session = exchange(state, &code, &verifier, port).await?;
     let account = session.account_id.clone();
-    let label = session.account_label.clone();
-    secrets::set_oauth(&session).map_err(|_| {
-        "Signed in, but the credential vault refused to store the session. Try again.".to_string()
-    })?;
-    // Guarda o access token acabado de receber, senao o primeiro pedido a seguir ao login gastava
-    // uma renovacao (e uma rotacao do refresh token) para chegar a um token que ja tinhamos.
-    *state.oauth_access.lock().await = Some(crate::state::CachedAccess {
-        token: session.access_token.clone(),
-        account_id: session.account_id.clone(),
-        expires_at_ms: session.expires_at_ms,
-    });
-    log::info!(
-        "oauth: sessao gravada (conta={}, nome={})",
-        account.as_deref().unwrap_or("desconhecida"),
-        label.as_deref().unwrap_or("nao veio no token")
-    );
+    let mut cache = state.oauth_access.lock().await;
+    {
+        let _commit = state
+            .oauth_commit
+            .lock()
+            .map_err(|_| "Session state unavailable")?;
+        if generation != state.oauth_generation.load(Ordering::SeqCst) {
+            return Err("Sign-in was cancelled by a newer authentication action.".into());
+        }
+        secrets::set_oauth(&session).map_err(|_| "Credential vault refused the session")?;
+        state.oauth_logged_out.store(false, Ordering::SeqCst);
+        *cache = Some(crate::state::CachedAccess {
+            token: session.access_token.clone(),
+            account_id: session.account_id.clone(),
+            expires_at_ms: session.expires_at_ms,
+        });
+    }
+    log::info!("oauth: session stored");
     Ok(account)
 }
 
@@ -104,7 +108,9 @@ async fn wait_for_code(listener: &TcpListener, expected_state: &str) -> Result<S
             .await
             .map_err(|e| format!("the local sign-in server failed: {e}"))?;
 
-        let Some(target) = read_request_target(&mut socket).await else {
+        let Ok(Some(target)) =
+            tokio::time::timeout(Duration::from_secs(5), read_request_target(&mut socket)).await
+        else {
             let _ = socket
                 .write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n")
                 .await;
@@ -302,7 +308,13 @@ async fn token(
     state: &AppState,
     force_refresh: bool,
 ) -> Result<(String, Option<String>), CoreError> {
+    let generation = state.oauth_generation.load(Ordering::SeqCst);
     let mut cache = state.oauth_access.lock().await;
+    if state.oauth_logged_out.load(Ordering::SeqCst)
+        || generation != state.oauth_generation.load(Ordering::SeqCst)
+    {
+        return Err(CoreError::Auth);
+    }
     // O token em memoria serve enquanto for valido. Sem esta cache, e como o access token nao cabe
     // no cofre, CADA refine comecava por uma renovacao: um pedido a mais e uma rotacao de token a
     // mais para chegar exatamente ao mesmo sitio.
@@ -317,6 +329,11 @@ async fn token(
         return Err(CoreError::Auth);
     };
     let next = refresh_session(state, &session).await?;
+    let _commit = state.oauth_commit.lock().map_err(|_| CoreError::Auth)?;
+    if generation != state.oauth_generation.load(Ordering::SeqCst) {
+        return Err(CoreError::Auth);
+    }
+    secrets::set_oauth(&next)?;
     let out = (next.access_token.clone(), next.account_id.clone());
     *cache = Some(crate::state::CachedAccess {
         token: next.access_token,
@@ -398,12 +415,6 @@ async fn refresh_inner(
             // A gravacao TEM de acontecer: o servidor ja rodou o token e o que esta no cofre
             // deixou de servir neste instante. Se falhar, dizer alto, porque a sessao acabou de
             // se perder e o utilizador vai ter de voltar a fazer login sem perceber porque.
-            if let Err(e) = secrets::set_oauth(&next) {
-                log::error!(
-                    "oauth: o cofre recusou gravar o token renovado; a sessao vai ter de ser refeita ({e:?})"
-                );
-                return Err(CoreError::KeyStore);
-            }
             log::info!("oauth: token renovado");
             Ok(next)
         }

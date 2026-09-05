@@ -13,7 +13,22 @@ pub fn is_effectively_empty(s: &str) -> bool {
 /// significa que o modelo deitou fora (ou mutou) um pedaco de codigo/URL: nao da para restaurar
 /// intacto, por isso degrada em vez de colar codigo partido.
 pub fn check_preservation(table: &SpanTable, output: &str) -> bool {
-    table.tokens().all(|t| output.contains(t))
+    let mut remaining = output;
+    for token in table.tokens() {
+        if output.matches(token).count() != 1 {
+            return false;
+        }
+        let Some(position) = remaining.find(token) else {
+            return false;
+        };
+        remaining = &remaining[position + token.len()..];
+    }
+    // Unknown marker-shaped output must not reach the clipboard either.
+    let mut unprotected = output.to_owned();
+    for token in table.tokens() {
+        unprotected = unprotected.replace(token, "");
+    }
+    !unprotected.contains("{{EMBER_SPAN_")
 }
 
 // -------------------------------------------------------------------------------------------

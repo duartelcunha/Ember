@@ -291,10 +291,7 @@ pub fn derive_accent(hex: &str) -> Option<ResolvedAccent> {
     let mid = oklch::to_oklch(oklch::parse_hex(hex)?);
     let stop = |l: f64, c: f64| oklch::to_hex(oklch::to_srgb_in_gamut(Oklch { l, c, h: mid.h }));
     Some(ResolvedAccent {
-        raw: stop(
-            (mid.l - RAW_DELTA_L).clamp(0.10, 0.60),
-            mid.c * RAW_CHROMA,
-        ),
+        raw: stop((mid.l - RAW_DELTA_L).clamp(0.10, 0.60), mid.c * RAW_CHROMA),
         mid: oklch::to_hex(oklch::to_srgb_in_gamut(mid)),
         glow: stop(
             (mid.l + GLOW_DELTA_L).clamp(0.85, 0.97),
@@ -381,6 +378,8 @@ pub struct Project {
     /// O ficheiro concreto que foi lido dessa pasta.
     #[serde(default)]
     pub source_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_fingerprint: Option<String>,
     /// A custom `#rrggbb` accent, which wins over `accent` when it parses.
     ///
     /// Additive and optional on purpose: every config already on disk stays valid and needs no
@@ -545,12 +544,7 @@ pub fn picker_pill_pos(
     scale: f64,
     pill_logical: (u32, u32),
 ) -> (f64, f64) {
-    let (ax, ay, aw, ah) = (
-        area.0 as f64,
-        area.1 as f64,
-        area.2 as f64,
-        area.3 as f64,
-    );
+    let (ax, ay, aw, ah) = (area.0 as f64, area.1 as f64, area.2 as f64, area.3 as f64);
     let (pw, ph) = (pill_logical.0 as f64 * scale, pill_logical.1 as f64 * scale);
     // `.min` antes de `.max`, e nao `clamp`: numa area mais pequena do que a lista os limites
     // cruzam-se, e `clamp` com min > max entra em panico. Assim a lista fica encostada ao canto.
@@ -715,6 +709,7 @@ Testes antes do codigo.",
             brief: "Escreve curto.".into(),
             folder: None,
             source_path: None,
+            source_fingerprint: None,
             accent_custom: None,
         }
     }
@@ -763,8 +758,16 @@ Testes antes do codigo.",
                 let d = (hue(x) - hue(&a.mid)).abs();
                 d.min(360.0 - d)
             };
-            assert!(drift(&a.raw) < 12.0, "{hex}: raw hue drifted {}", drift(&a.raw));
-            assert!(drift(&a.glow) < 12.0, "{hex}: glow hue drifted {}", drift(&a.glow));
+            assert!(
+                drift(&a.raw) < 12.0,
+                "{hex}: raw hue drifted {}",
+                drift(&a.raw)
+            );
+            assert!(
+                drift(&a.glow) < 12.0,
+                "{hex}: glow hue drifted {}",
+                drift(&a.glow)
+            );
         }
     }
 
@@ -773,7 +776,9 @@ Testes antes do codigo.",
         // The orb is a three-stop gradient. If the dark and pale stops land close together the
         // gradient flattens into a blob, and the accent stops telling the user anything. The
         // clamps in `derive_accent` are what stop that, so this is the test that pins them.
-        for hex in ["#000000", "#050505", "#ffffff", "#fafafa", "#ff0000", "#00ff00", "#0000ff"] {
+        for hex in [
+            "#000000", "#050505", "#ffffff", "#fafafa", "#ff0000", "#00ff00", "#0000ff",
+        ] {
             let a = derive_accent(hex).expect("valid hex");
             let spread = lightness(&a.glow) - lightness(&a.raw);
             assert!(
@@ -995,7 +1000,13 @@ Testes antes do codigo.",
     fn the_list_position_comes_back_in_css_pixels_on_a_scaled_monitor() {
         // Monitor secundario a 150%: a UI raciocina em px CSS, portanto o resultado e dividido
         // pela escala e relativo ao canto da janela, nao ao canto do ecra virtual.
-        let pos = picker_pill_pos((2000, 500), (14, 18), (1920, 0, 1920, 1080), 1.5, (240, 138));
+        let pos = picker_pill_pos(
+            (2000, 500),
+            (14, 18),
+            (1920, 0, 1920, 1080),
+            1.5,
+            (240, 138),
+        );
         assert_eq!(pos, ((2014.0 - 1920.0) / 1.5, (518.0 - 0.0) / 1.5));
     }
 

@@ -1,7 +1,4 @@
-//! Mascara os pedacos que o modelo nao deve tocar (blocos de codigo em fence e URLs de esquema
-//! completo) por tokens opacos `{{EMBER_SPAN_n}}`, e desmascara no fim. So estes dois tipos:
-//! mascarar caminhos, codigo inline ou placeholders soltos (`<x>`, `%s`) sobre-mascarava a
-//! prosa e tirava ao modelo o contexto de que precisa. Puro.
+//! Preserve code fences, inline code and URLs before any text normalization.
 
 /// Um pedaco a preservar, por intervalo de bytes no input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,26 +35,73 @@ fn token(n: usize) -> String {
 pub fn scan_spans(input: &str) -> Vec<Span> {
     let mut fences: Vec<Span> = Vec::new();
     let mut idx = 0usize;
-    let mut open: Option<usize> = None;
+    let mut open: Option<(usize, u8, usize)> = None;
     for line in input.split_inclusive('\n') {
-        let line_start = idx;
-        let is_fence = line.trim_start().starts_with("```");
-        if is_fence {
+        let trimmed = line.trim_start();
+        let delimiter = trimmed.as_bytes().first().copied().unwrap_or(0);
+        let count = trimmed.bytes().take_while(|b| *b == delimiter).count();
+        if matches!(delimiter, b'`' | b'~') && count >= 3 {
             match open {
-                None => open = Some(line_start),
-                Some(start) => {
+                None => open = Some((idx, delimiter, count)),
+                Some((start, kind, width))
+                    if delimiter == kind
+                        && count >= width
+                        && trimmed[count..].trim().is_empty() =>
+                {
                     fences.push(Span {
                         start,
-                        end: line_start + line.len(),
+                        end: idx + line.len(),
                     });
                     open = None;
                 }
+                _ => {}
             }
         }
         idx += line.len();
     }
-    // Fence por fechar: ignora (nao mascara meia fence).
-
+    // Incomplete code is still code. Preserve to EOF instead of exposing it to cleanup.
+    if let Some((start, _, _)) = open {
+        fences.push(Span {
+            start,
+            end: input.len(),
+        });
+    }
+    // Inline code and quoted commands can include literal backticks via longer delimiters.
+    let bytes = input.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if let Some(span) = fences.iter().find(|s| i >= s.start && i < s.end) {
+            i = span.end;
+            continue;
+        }
+        if bytes[i] != b'`' {
+            i += 1;
+            continue;
+        }
+        let width = bytes[i..].iter().take_while(|b| **b == b'`').count();
+        let mut end = i + width;
+        let mut found = None;
+        while end < bytes.len() {
+            if bytes[end] == b'`' {
+                let closing = bytes[end..].iter().take_while(|b| **b == b'`').count();
+                if closing == width {
+                    found = Some(end + width);
+                    break;
+                }
+                end += closing;
+            } else {
+                end += 1;
+            }
+        }
+        if let Some(end) = found {
+            if !fences.iter().any(|s| i < s.end && end > s.start) {
+                fences.push(Span { start: i, end });
+            }
+            i = end;
+        } else {
+            i += width;
+        }
+    }
     let in_fence = |pos: usize| fences.iter().any(|s| pos >= s.start && pos < s.end);
     let mut spans = fences.clone();
     for u in find_urls(input) {
@@ -65,7 +109,78 @@ pub fn scan_spans(input: &str) -> Vec<Span> {
             spans.push(u);
         }
     }
+    for technical in find_technical_spans(input) {
+        if !spans
+            .iter()
+            .any(|s| technical.start < s.end && technical.end > s.start)
+        {
+            spans.push(technical);
+        }
+    }
+    // Literal marker syntax belongs to the user's text, never to our generated namespace.
+    for (start, _) in input.match_indices("{{EMBER_SPAN_") {
+        if let Some(close) = input[start..].find("}}") {
+            let end = start + close + 2;
+            if !spans.iter().any(|s| start < s.end && end > s.start) {
+                spans.push(Span { start, end });
+            }
+        }
+    }
     spans.sort_by_key(|s| s.start);
+    spans
+}
+
+fn find_technical_spans(input: &str) -> Vec<Span> {
+    let mut spans = Vec::new();
+    let mut offset = 0;
+    for line in input.split_inclusive('\n') {
+        let text = line.trim_start();
+        // Only explicit shell prompts identify an entire command line. Ordinary prose naming
+        // a command is still editable; backticks can protect ambiguous command fragments.
+        if text.starts_with("$ ") || (text.starts_with("PS ") && text.contains("> ")) {
+            spans.push(Span {
+                start: offset,
+                end: offset + line.len(),
+            });
+        }
+        offset += line.len();
+    }
+    for (start, _) in input.char_indices() {
+        let previous = input[..start].chars().next_back();
+        if previous.is_some_and(|c| !c.is_whitespace() && !matches!(c, '"' | '\'' | '(')) {
+            continue;
+        }
+        let rest = &input[start..];
+        let bytes = rest.as_bytes();
+        let drive = bytes.len() > 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && matches!(bytes[2], b'\\' | b'/');
+        let relative = rest.starts_with("./") || rest.starts_with("../") || rest.starts_with("~/");
+        let absolute =
+            rest.starts_with('/') && bytes.get(1).is_some_and(|c| !c.is_ascii_whitespace());
+        if !drive && !relative && !absolute && !rest.starts_with("\\\\") {
+            continue;
+        }
+        let quote = previous.filter(|c| matches!(c, '"' | '\''));
+        let end = if let Some(quote) = quote {
+            rest.find(quote).map(|i| start + i)
+        } else {
+            Some(
+                start
+                    + rest
+                        .find(|c: char| {
+                            c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>' | ')')
+                        })
+                        .unwrap_or(rest.len()),
+            )
+        };
+        if let Some(end) = end.filter(|end| *end > start + 1) {
+            if !spans.iter().any(|s| start < s.end && end > s.start) {
+                spans.push(Span { start, end });
+            }
+        }
+    }
     spans
 }
 
@@ -119,7 +234,7 @@ pub fn is_single_fence(input: &str, spans: &[Span]) -> bool {
     }
     let s = spans[0];
     let text = &input[s.start..s.end];
-    text.trim_start().starts_with("```")
+    (text.trim_start().starts_with("```") || text.trim_start().starts_with("~~~"))
         && input[..s.start].trim().is_empty()
         && input[s.end..].trim().is_empty()
 }
@@ -129,12 +244,20 @@ pub fn mask(input: &str, spans: &[Span]) -> (String, SpanTable) {
     let mut out = String::with_capacity(input.len());
     let mut table = SpanTable::default();
     let mut last = 0usize;
+    let mut next_token = 0;
     for span in spans {
         if span.start < last {
             continue; // defensivo: ignora sobreposicoes
         }
         out.push_str(&input[last..span.start]);
-        let tok = token(table.entries.len());
+        // User text can already contain our marker syntax. Never reuse such a token.
+        let tok = loop {
+            let candidate = token(next_token);
+            next_token += 1;
+            if !input.contains(&candidate) {
+                break candidate;
+            }
+        };
         out.push_str(&tok);
         table
             .entries
@@ -147,10 +270,20 @@ pub fn mask(input: &str, spans: &[Span]) -> (String, SpanTable) {
 
 /// Repoe cada token pelo texto original.
 pub fn unmask(text: &str, table: &SpanTable) -> String {
-    let mut out = text.to_string();
-    for (tok, original) in &table.entries {
-        out = out.replace(tok.as_str(), original);
+    // One pass over model output prevents restored text from being interpreted as tokens.
+    let mut out = String::with_capacity(text.len());
+    let mut remaining = text;
+    while let Some((position, token, original)) = table
+        .entries
+        .iter()
+        .filter_map(|(token, original)| remaining.find(token).map(|p| (p, token, original)))
+        .min_by_key(|(position, _, _)| *position)
+    {
+        out.push_str(&remaining[..position]);
+        out.push_str(original);
+        remaining = &remaining[position + token.len()..];
     }
+    out.push_str(remaining);
     out
 }
 
@@ -180,10 +313,20 @@ mod tests {
 
     #[test]
     fn prose_placeholders_are_not_masked() {
-        // Guarda a regressao de sobre-mascarar: <x>, %s, $X e caminhos nao viram spans.
-        let input = "use <name> and %s and $VAR and ./path/to/file";
+        let input = "use <name> and %s and $VAR in a sentence";
         let spans = scan_spans(input);
         assert!(spans.is_empty());
+    }
+
+    #[test]
+    fn paths_and_explicit_shell_commands_keep_their_bytes() {
+        let input =
+            "Ver ./src/main.rs, /etc/hosts e \"C:\\My Project\\file.md\".\n$ git  diff -- '*.rs'\n";
+        let (masked, table) = mask(input, &scan_spans(input));
+        assert!(!masked.contains("/etc/hosts"));
+        assert!(!masked.contains("My Project"));
+        assert!(!masked.contains("git  diff"));
+        assert_eq!(unmask(&masked, &table), input);
     }
 
     #[test]
@@ -208,8 +351,14 @@ mod tests {
     }
 
     #[test]
-    fn unclosed_fence_is_not_masked() {
+    fn unclosed_fence_is_preserved() {
         let input = "```rust\nfn x(){}\n"; // sem fecho
-        assert!(scan_spans(input).is_empty());
+        assert_eq!(
+            scan_spans(input),
+            vec![Span {
+                start: 0,
+                end: input.len()
+            }]
+        );
     }
 }

@@ -1,21 +1,12 @@
-import { useEffect, useRef, useState } from "react";
-import { AnimatePresence, LazyMotion, domAnimation, m } from "motion/react";
+import { invoke } from "@tauri-apps/api/core";
+import { ICON_BY_NAME } from "../components/projectIcons";
+import { useEffect, useState } from "react";
+import { AnimatePresence, LazyMotion, MotionConfig, domAnimation, m } from "motion/react";
+import { useFloatingPosition } from "../components/useFloatingPosition";
 import { listen } from "@tauri-apps/api/event";
 import {
   Sparkle,
-  Lightning,
-  Atom,
-  Code,
-  Briefcase,
-  Flask,
-  Rocket,
-  Compass,
-  Cube,
-  Target,
-  Book,
-  GearSix,
   Prohibit,
-  type Icon,
 } from "@phosphor-icons/react";
 
 /**
@@ -39,12 +30,14 @@ const PICKER_AT_EVENT = "ember://picker-at";
 
 interface Row {
   id: string | null;
+  automatic?: boolean;
   name: string;
   color: string;
   icon: string;
 }
 
 interface PickerState {
+  sequence?: number;
   rows: Row[];
   index: number;
   open: boolean;
@@ -52,20 +45,7 @@ interface PickerState {
   chosen: number | null;
 }
 
-const ICON_BY_NAME: Record<string, Icon> = {
-  sparkle: Sparkle,
-  lightning: Lightning,
-  atom: Atom,
-  code: Code,
-  briefcase: Briefcase,
-  flask: Flask,
-  rocket: Rocket,
-  compass: Compass,
-  cube: Cube,
-  target: Target,
-  book: Book,
-  gear: GearSix,
-};
+
 
 /** Espelha `PICKER_ITEM_H`/`PICKER_PAD` do Rust: a janela é dimensionada lá com estes números. */
 const ITEM_H = 34;
@@ -78,7 +58,6 @@ const MAX_VISIBLE = 9;
 const HINT_H = 20;
 /** Quanto tempo depois do último movimento é que o vidro volta. Curto de mais e ele volta entre
  *  dois movimentos da mesma passagem; longo de mais e nota-se que a lista ficou opaca. */
-const GLASS_BACK_MS = 130;
 
 export function Picker() {
   const [s, setS] = useState<PickerState>({
@@ -87,33 +66,36 @@ export function Picker() {
     open: false,
     chosen: null,
   });
-  const [at, setAt] = useState({ x: 0, y: 0 });
-  const [moving, setMoving] = useState(false);
-  const glassTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const floating = useFloatingPosition(PICKER_AT_EVENT);
 
   useEffect(() => {
-    const un = listen<PickerState>(PICKER_EVENT, (e) => setS(e.payload));
-    const unAt = listen<{ x: number; y: number }>(PICKER_AT_EVENT, (e) => {
-      setAt(e.payload);
-      setMoving(true);
-      clearTimeout(glassTimer.current);
-      glassTimer.current = setTimeout(() => setMoving(false), GLASS_BACK_MS);
-    });
+    let disposed = false;
+    const accept = (next: PickerState | null) => {
+      if (next && !disposed) setS((current) => (next.sequence ?? 0) > (current.sequence ?? -1) ? next : current);
+    };
+    const un = listen<PickerState>(PICKER_EVENT, (e) => accept(e.payload));
+    void un.then(() => invoke<PickerState | null>("picker_snapshot")).then(accept).catch(() => {});
     return () => {
+      disposed = true;
       un.then((f) => f());
-      unAt.then((f) => f());
-      clearTimeout(glassTimer.current);
     };
   }, []);
 
   // Janela de índices visível: com mais linhas do que cabem, desliza para conter a seleção.
   // Sem scrollbar: numa lista percorrida por setas e roda, a scrollbar era ruído.
+  const [viewportHeight, setViewportHeight] = useState(window.innerHeight);
+  useEffect(() => {
+    const resize = () => setViewportHeight(window.innerHeight);
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
+  }, []);
+  const maxVisible = Math.max(1, Math.min(MAX_VISIBLE, Math.floor((viewportHeight - 32 - PAD * 2 - HINT_H) / ITEM_H)));
   const total = s.rows.length;
   const first = Math.min(
-    Math.max(0, s.index - (MAX_VISIBLE - 1)),
-    Math.max(0, total - MAX_VISIBLE),
+    Math.max(0, s.index - (maxVisible - 1)),
+    Math.max(0, total - maxVisible),
   );
-  const visible = s.rows.slice(first, first + MAX_VISIBLE);
+  const visible = s.rows.slice(first, first + maxVisible);
   const selected = s.rows[s.index];
   // O fecho por escolha: a lista já está a fechar, mas tem de se ver O QUE foi escolhido.
   const chosen = !s.open && s.chosen !== null ? s.chosen : null;
@@ -121,15 +103,19 @@ export function Picker() {
 
   return (
     <LazyMotion features={domAnimation} strict>
+      <MotionConfig reducedMotion="user">
       <div
-        className="absolute left-0 top-0"
-        style={{ transform: `translate3d(${at.x}px, ${at.y}px, 0)`, willChange: "transform" }}
+        ref={floating}
+        className="ember-floating absolute left-0 top-0 max-w-[calc(100vw-16px)]"
       >
         <AnimatePresence>
           {s.open && s.rows.length > 0 && (
             <m.div
               key="picker"
-              className="ember-bubble relative flex flex-col"
+              role="listbox"
+              aria-label="Project context"
+              aria-activedescendant={`project-option-${s.index}`}
+              className="ember-bubble relative flex max-w-[calc(100vw-16px)] flex-col"
               style={{
                 borderRadius: 12,
                 padding: PAD,
@@ -137,13 +123,7 @@ export function Picker() {
                 willChange: "opacity, transform",
                 // O vidro sai de cena enquanto a lista anda: `backdrop-filter` re-amostra o
                 // fundo a cada frame do movimento, e é isso que se vê como ranger.
-                ...(moving
-                  ? {
-                      backdropFilter: "none",
-                      WebkitBackdropFilter: "none",
-                      background: "var(--glass-bg-strong)",
-                    }
-                  : null),
+
               }}
               initial={{ opacity: 0, scale: 0.96, y: 4 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -175,10 +155,13 @@ export function Picker() {
                 const i = first + vi;
                 const isSel = i === s.index;
                 const isChosen = chosen === i;
-                const I = row.id === null ? Prohibit : (ICON_BY_NAME[row.icon] ?? Sparkle);
+                const I = row.id === null && !row.automatic ? Prohibit : (ICON_BY_NAME[row.icon] ?? Sparkle);
                 return (
                   <m.div
-                    key={row.id ?? "__none__"}
+                    key={row.automatic ? "__auto__" : row.id ?? "__none__"}
+                    id={`project-option-${i}`}
+                    role="option"
+                    aria-selected={isSel}
                     className="relative flex items-center gap-2 px-2"
                     style={{ height: ITEM_H }}
                     animate={
@@ -239,6 +222,7 @@ export function Picker() {
           )}
         </AnimatePresence>
       </div>
+      </MotionConfig>
     </LazyMotion>
   );
 }

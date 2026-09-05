@@ -1,0 +1,28 @@
+import { Sparkle, Lightning, Atom, Code, Briefcase, Flask, Rocket, Compass, Cube, Target, Book, GearSix, Palette, Terminal, Database, Globe, ChatCircle, ChartLine, ShieldCheck, Wrench, GraduationCap, Heart, Camera, CurrencyDollar, type Icon } from "@phosphor-icons/react";
+
+export const ICON_BY_NAME: Record<string, Icon> = {
+  sparkle: Sparkle,
+  lightning: Lightning,
+  atom: Atom,
+  code: Code,
+  briefcase: Briefcase,
+  flask: Flask,
+  rocket: Rocket,
+  compass: Compass,
+  cube: Cube,
+  target: Target,
+  book: Book,
+  gear: GearSix,
+  palette: Palette,
+  terminal: Terminal,
+  database: Database,
+  globe: Globe,
+  chat: ChatCircle,
+  chart: ChartLine,
+  shield: ShieldCheck,
+  wrench: Wrench,
+  "graduation-cap": GraduationCap,
+  heart: Heart,
+  camera: Camera,
+  money: CurrencyDollar,
+};

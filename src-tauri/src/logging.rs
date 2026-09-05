@@ -20,7 +20,7 @@ pub const LOG_FILE_STEM: &str = "ember";
 pub fn plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
     let mut builder = tauri_plugin_log::Builder::new()
         .level(log::LevelFilter::Info)
-        .level_for("ember_lib", log::LevelFilter::Debug)
+        .level_for("ember_lib", log::LevelFilter::Info)
         .max_file_size(5_000_000)
         .rotation_strategy(RotationStrategy::KeepOne)
         .timezone_strategy(TimezoneStrategy::UseLocal)

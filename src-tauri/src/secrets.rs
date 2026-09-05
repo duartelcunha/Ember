@@ -26,15 +26,45 @@ fn entry_name(provider: Provider) -> &'static str {
     }
 }
 
-fn entry(provider: Provider) -> keyring::Result<keyring::Entry> {
-    keyring::Entry::new(SERVICE, entry_name(provider))
+fn entry(provider: Provider, base_url: &str) -> keyring::Result<keyring::Entry> {
+    use sha2::{Digest, Sha256};
+    let name = if provider == Provider::OpenAi {
+        let digest = Sha256::digest(base_url.trim().trim_end_matches('/').as_bytes());
+        let suffix: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+        format!("openai_api_key_{suffix}")
+    } else {
+        entry_name(provider).to_string()
+    };
+    keyring::Entry::new(SERVICE, &name)
+}
+
+/// Bind the existing key once to the already configured destination, before any endpoint change.
+pub fn migrate_legacy_openai(base_url: &str) -> keyring::Result<()> {
+    static MIGRATION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _migration = MIGRATION.lock().unwrap_or_else(|e| e.into_inner());
+    let old = keyring::Entry::new(SERVICE, "openai_api_key")?;
+    let value = match old.get_password() {
+        Ok(value) => value,
+        Err(keyring::Error::NoEntry) => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    let destination = entry(Provider::OpenAi, base_url)?;
+    match destination.get_password() {
+        Err(keyring::Error::NoEntry) => destination.set_password(&value)?,
+        Ok(_) => {}
+        Err(error) => return Err(error),
+    }
+    old.delete_credential()
 }
 
 /// Como `get`, mas distingue "chave nao configurada" (`Ok(None)`) de uma falha real do
 /// cofre (`Err`). Sem isto, um Credential Manager bloqueado devolvia `None` e o provider
 /// era silenciosamente retirado da cadeia (degradava em silencio, contra a regra da casa).
-pub fn try_get(provider: Provider) -> Result<Option<String>, ember_core::CoreError> {
-    let entry = entry(provider).map_err(|_| ember_core::CoreError::KeyStore)?;
+pub fn try_get(
+    provider: Provider,
+    base_url: &str,
+) -> Result<Option<String>, ember_core::CoreError> {
+    let entry = entry(provider, base_url).map_err(|_| ember_core::CoreError::KeyStore)?;
     match entry.get_password() {
         Ok(k) => Ok(Some(k)),
         Err(keyring::Error::NoEntry) => Ok(None),
@@ -45,12 +75,12 @@ pub fn try_get(provider: Provider) -> Result<Option<String>, ember_core::CoreErr
 /// `try_get` em bool, para a UI/pre-validacao que so quer saber se ha chave. NAO engole erros
 /// do cofre: propaga `KeyStore` (regra de resiliencia). Substitui o antigo `has`/`get`, que
 /// colapsavam uma falha do cofre em `false`/`None` e faziam a UI mentir "sem chave configurada".
-pub fn try_has(provider: Provider) -> Result<bool, ember_core::CoreError> {
-    Ok(try_get(provider)?.is_some())
+pub fn try_has(provider: Provider, base_url: &str) -> Result<bool, ember_core::CoreError> {
+    Ok(try_get(provider, base_url)?.is_some())
 }
 
-pub fn set(provider: Provider, key: &str) -> keyring::Result<()> {
-    entry(provider)?.set_password(key)
+pub fn set(provider: Provider, key: &str, base_url: &str) -> keyring::Result<()> {
+    entry(provider, base_url)?.set_password(key)
 }
 
 // ---------------------------------------------------------------------------------------
@@ -164,9 +194,92 @@ pub fn has_oauth() -> Result<bool, ember_core::CoreError> {
     Ok(get_oauth()?.is_some())
 }
 
-pub fn delete(provider: Provider) -> keyring::Result<()> {
-    match entry(provider)?.delete_credential() {
+pub fn delete(provider: Provider, base_url: &str) -> keyring::Result<()> {
+    match entry(provider, base_url)?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(e) => Err(e),
+    }
+}
+
+#[cfg(windows)]
+fn owned_credential_name(target: &str) -> bool {
+    let Some(name) = target.strip_suffix(".Ember") else {
+        return false;
+    };
+    if [
+        "gemini_api_key",
+        "openai_api_key",
+        "claude_api_key",
+        "openai_oauth_access",
+        "openai_oauth_refresh",
+        "openai_oauth_meta",
+        "result_cache_key",
+    ]
+    .contains(&name)
+    {
+        return true;
+    }
+    name.strip_prefix("openai_api_key_")
+        .is_some_and(|hash| hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+/// Invoked only by the explicit uninstall data-removal path, before deleting the executable.
+#[cfg(windows)]
+pub fn purge_for_uninstall() -> Result<(), String> {
+    use windows::Win32::Security::Credentials::*;
+    let mut count = 0u32;
+    let mut credentials = std::ptr::null_mut();
+    if let Err(error) = unsafe {
+        CredEnumerateW(
+            windows::core::PCWSTR::null(),
+            None,
+            &mut count,
+            &mut credentials,
+        )
+    } {
+        if error.code() == windows::core::HRESULT::from_win32(1168) {
+            return Ok(());
+        }
+        return Err("Credential vault could not be enumerated".into());
+    }
+    let mut failed = false;
+    for index in 0..count as usize {
+        let credential = unsafe { &**credentials.add(index) };
+        let name = unsafe { credential.TargetName.to_string() }.unwrap_or_default();
+        if credential.Type == CRED_TYPE_GENERIC
+            && owned_credential_name(&name)
+            && unsafe { CredDeleteW(credential.TargetName, CRED_TYPE_GENERIC, None) }.is_err()
+        {
+            failed = true;
+        }
+    }
+    unsafe {
+        CredFree(credentials.cast());
+    }
+    if failed {
+        Err("Some Ember credentials could not be removed".into())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(all(test, windows))]
+mod uninstall_tests {
+    use super::*;
+    #[test]
+    fn cleanup_is_limited_to_exact_ember_credential_names() {
+        assert!(owned_credential_name("openai_oauth_refresh.Ember"));
+        assert!(owned_credential_name(&format!(
+            "openai_api_key_{}.Ember",
+            "a".repeat(64)
+        )));
+        for foreign in [
+            "other.Ember",
+            "openai_api_key.Ember.evil",
+            "openai_api_key_x.Ember",
+            "gemini_api_key.OtherApp",
+        ] {
+            assert!(!owned_credential_name(foreign));
+        }
     }
 }

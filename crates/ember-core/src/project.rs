@@ -232,10 +232,24 @@ pub fn nearest_context(
 /// de alta entropia). Best-effort: apanha segredos, nao texto confidencial (por isso o controlo
 /// real e o opt-in por repo, nao a redacao).
 pub fn redact_secrets(text: &str) -> String {
-    text.lines()
-        .filter(|line| !looks_like_secret(line))
-        .collect::<Vec<_>>()
-        .join("\n")
+    let mut private_block = false;
+    let mut lines = Vec::new();
+    for line in text.lines() {
+        let upper = line.to_ascii_uppercase();
+        if upper.contains("-----BEGIN ") && upper.contains("PRIVATE KEY-----") {
+            private_block = true;
+        }
+        if private_block {
+            if upper.contains("-----END ") && upper.contains("PRIVATE KEY-----") {
+                private_block = false;
+            }
+            continue;
+        }
+        if !looks_like_secret(line) {
+            lines.push(line);
+        }
+    }
+    lines.join("\n")
 }
 
 fn looks_like_secret(line: &str) -> bool {
@@ -601,5 +615,18 @@ mod tests {
         assert_eq!(framed.matches(PROJECT_CLOSE).count(), 1);
         assert!(framed.contains("[/EMBER_PROJECT_CONTEXT ]"));
         assert!(framed.contains("[EMBER_PROJECT_CONTEXT ]"));
+    }
+}
+
+#[cfg(test)]
+mod private_key_regressions {
+    #[test]
+    fn private_key_body_and_unclosed_block_never_survive() {
+        let key = "before\n-----BEGIN RSA PRIVATE KEY-----\nsynthetic-test-body\n-----END RSA PRIVATE KEY-----\nafter";
+        assert_eq!(super::redact_secrets(key), "before\nafter");
+        assert_eq!(
+            super::redact_secrets("safe\n-----BEGIN PRIVATE KEY-----\nsynthetic-test-body"),
+            "safe"
+        );
     }
 }

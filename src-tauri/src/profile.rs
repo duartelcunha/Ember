@@ -3,7 +3,7 @@
 
 use ember_core::model::{Profile, ProfileSource};
 use ember_core::profile_path::{pick_existing, profile_candidates};
-use std::fs;
+use std::io::Read;
 use std::path::Path;
 use tauri::{AppHandle, Manager};
 
@@ -41,7 +41,7 @@ pub fn resolve(app: &AppHandle, override_text: Option<&str>, ignore_claude_md: b
         let candidates = profile_candidates(home.as_deref());
         let exists = |p: &Path| p.exists();
         if let Some(p) = pick_existing(&candidates, &exists) {
-            if let Ok(text) = fs::read_to_string(&p) {
+            if let Ok(text) = read_bounded(&p, 64 * 1024) {
                 return Resolved {
                     profile: Profile {
                         text,
@@ -60,4 +60,24 @@ pub fn resolve(app: &AppHandle, override_text: Option<&str>, ignore_claude_md: b
         },
         path: None,
     }
+}
+
+/// Read a bounded UTF-8 snapshot, including when a file grows after metadata inspection.
+pub(crate) fn read_bounded(path: &Path, limit: u64) -> Result<String, String> {
+    let file = std::fs::File::open(path).map_err(|_| "Source could not be opened")?;
+    if !file
+        .metadata()
+        .map_err(|_| "Source metadata unavailable")?
+        .is_file()
+    {
+        return Err("Source must be a regular file".into());
+    }
+    let mut bytes = Vec::new();
+    file.take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "Source could not be read")?;
+    if bytes.len() as u64 > limit {
+        return Err("Source exceeds the read limit".into());
+    }
+    String::from_utf8(bytes).map_err(|_| "Source must be UTF-8 text".into())
 }

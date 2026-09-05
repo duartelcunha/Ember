@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-primary-provider"
+description = "Enables the set_primary_provider command without any pre-configured scope."
+commands.allow = ["set_primary_provider"]
+
+[[permission]]
+identifier = "deny-set-primary-provider"
+description = "Denies the set_primary_provider command without any pre-configured scope."
+commands.deny = ["set_primary_provider"]

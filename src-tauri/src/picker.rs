@@ -9,7 +9,7 @@
 use std::sync::atomic::Ordering;
 
 use ember_core::projects as core;
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::state::AppState;
 
@@ -18,11 +18,6 @@ const PICKER_EVENT: &str = "ember://picker";
 /// dezenas de vezes por segundo, e mandar as linhas todas outra vez de cada vez era pagar a lista
 /// inteira para mover dois numeros.
 const PICKER_AT_EVENT: &str = "ember://picker-at";
-
-/// Offset do canto superior-esquerdo do picker em relacao ao cursor, em px fisicos. Abaixo e a
-/// direita, como um menu de contexto: o cursor nunca fica em cima da primeira linha. A lista
-/// mantem este offset enquanto o rato andar, portanto e tambem a distancia a que ela o segue.
-const OFFSET: (i32, i32) = (14, 18);
 
 /// Enquanto a combinacao do atalho esta premida, o Windows volta a entrega-la. Dentro desta
 /// janela, uma repeticao e a MESMA pressao e nao um pedido de fechar.
@@ -33,6 +28,7 @@ const REOPEN_GRACE: std::time::Duration = std::time::Duration::from_millis(600);
 struct Row {
     /// `None` na primeira linha ("sem projeto").
     id: Option<String>,
+    automatic: bool,
     name: String,
     /// Tom `mid` da paleta, pronto a usar; a UI nao conhece a paleta.
     color: String,
@@ -42,6 +38,7 @@ struct Row {
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PickerState {
+    sequence: u64,
     rows: Vec<Row>,
     index: usize,
     /// `false` = esconder (a UI faz o fade-out).
@@ -52,28 +49,20 @@ struct PickerState {
 }
 
 /// A posicao da lista dentro da janela, em px CSS.
-#[derive(Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PickerAt {
-    x: f64,
-    y: f64,
-}
-
 fn emit_state(app: &AppHandle, rows: &[Row], index: usize, open: bool, chosen: Option<usize>) {
-    let _ = app.emit_to(
-        "picker",
-        PICKER_EVENT,
-        PickerState {
-            rows: rows.to_vec(),
-            index,
-            open,
-            chosen,
-        },
-    );
-}
-
-fn emit_at(app: &AppHandle, (x, y): (f64, f64)) {
-    let _ = app.emit_to("picker", PICKER_AT_EVENT, PickerAt { x, y });
+    let state = app.state::<AppState>();
+    let payload = serde_json::to_value(PickerState {
+        sequence: state.event_seq.fetch_add(1, Ordering::SeqCst) + 1,
+        rows: rows.to_vec(),
+        index,
+        open,
+        chosen,
+    })
+    .expect("Picker state contains only serializable fields");
+    if let Ok(mut slot) = state.picker_state.lock() {
+        *slot = Some(payload.clone());
+    }
+    let _ = app.emit_to("picker", PICKER_EVENT, payload);
 }
 
 /// Abre o picker ao cursor. Chamado pelo atalho proprio; corre no runtime async.
@@ -82,7 +71,7 @@ pub async fn open_picker(app: AppHandle) {
     // Durante um refine ha (ou vai haver) outro hook LL vivo: dois a consumir Enter ao mesmo
     // tempo e um perigo real, por isso o picker simplesmente nao abre. O atalho nao fica em
     // fila: quem quer o picker carrega outra vez depois.
-    if state.busy.load(Ordering::SeqCst) {
+    if state.is_busy() {
         log::info!("picker: ignorado (refine a decorrer)");
         return;
     }
@@ -97,7 +86,6 @@ pub async fn open_picker(app: AppHandle) {
     // apagavamos esse pedido logo a seguir: ficavam o hook do picker e o do refine vivos ao
     // mesmo tempo, os dois a comer o Enter. Na segunda pressao do atalho o pedido de fecho e
     // reposto mais abaixo, portanto limpar aqui nao perde nada.
-    state.picker_cancel.store(false, Ordering::SeqCst);
     if state.picker_open.swap(true, Ordering::SeqCst) {
         let idade = state
             .picker_opened_at
@@ -113,13 +101,14 @@ pub async fn open_picker(app: AppHandle) {
         }
         return;
     }
+    state.picker_cancel.store(false, Ordering::SeqCst);
     if let Ok(mut g) = state.picker_opened_at.lock() {
         *g = Some(std::time::Instant::now());
     }
     // Segunda verificacao do refine, agora que `picker_open` ja esta publicado: se um comecou
     // entre a primeira e esta, e ele que manda (e o trabalho a serio) e a lista nem chega a
     // aparecer. Sem isto, a corrida so era estreita, nao inexistente.
-    if state.busy.load(Ordering::SeqCst) {
+    if state.is_busy() {
         state.picker_open.store(false, Ordering::SeqCst);
         log::info!("picker: ignorado (refine arrancou entretanto)");
         return;
@@ -136,21 +125,30 @@ pub async fn open_picker(app: AppHandle) {
     // para desligar, o que mata o proposito do atalho.
     let mut rows = vec![Row {
         id: None,
+        automatic: false,
         name: "No project".into(),
         color: core::ACCENTS[0].mid.into(),
         icon: String::new(),
     }];
+    rows.push(Row {
+        id: None,
+        automatic: true,
+        name: "Auto: registered projects".into(),
+        color: core::ACCENTS[0].mid.into(),
+        icon: "sparkle".into(),
+    });
     rows.extend(cfg.projects.iter().map(|p| Row {
         id: Some(p.id.clone()),
+        automatic: false,
         name: p.name.clone(),
-        color: core::accent(p.accent).mid.into(),
+        color: core::resolve_accent(p).mid,
         icon: p.icon.clone(),
     }));
     let initial = cfg
         .active_project
         .as_deref()
         .and_then(|id| rows.iter().position(|r| r.id.as_deref() == Some(id)))
-        .unwrap_or(0);
+        .unwrap_or(usize::from(cfg.project_context));
 
     let Some(w) = crate::get_or_create_window(&app, "picker") else {
         state.picker_open.store(false, Ordering::SeqCst);
@@ -164,94 +162,29 @@ pub async fn open_picker(app: AppHandle) {
     //
     // A lista tambem nao aponta linhas com o ponteiro: colada ao cursor, nenhuma linha fica
     // debaixo dele. Quem escolhe sao as setas, a roda e o Enter (ou o clique, que confirma).
-    let (lw, lh) = core::picker_size(rows.len());
-    let cursor = app.cursor_position().ok().map(|c| (c.x as i32, c.y as i32));
-    // O monitor e a escala vem DO CURSOR e nao da janela: e onde a lista vai aparecer, e num
-    // setup com dois DPIs a janela lembrava-se do ecra da vez anterior.
-    let (area, scale) = match cursor {
-        Some((x, y)) => crate::monitor_at_point(&w, x, y),
-        None => (
-            crate::monitor_at_point(&w, 0, 0).0,
-            w.scale_factor().unwrap_or(1.0),
-        ),
-    };
-    let _ = w.set_size(tauri::PhysicalSize::new(area.w as u32, area.h as u32));
-    let _ = w.set_position(PhysicalPosition::new(area.x, area.y));
-    let at = |c: (i32, i32), a: crate::geom::Rect, sc: f64| {
-        core::picker_pill_pos(c, OFFSET, (a.x, a.y, a.w, a.h), sc, (lw, lh))
-    };
-    let pill = cursor.map(|c| at(c, area, scale)).unwrap_or((0.0, 0.0));
+    let surface = std::sync::Mutex::new(crate::floating::Surface::new(
+        app.clone(),
+        w.clone(),
+        PICKER_AT_EVENT,
+    ));
+    if let Ok(mut follower) = surface.lock() {
+        follower.follow();
+    }
     let _ = w.set_always_on_top(true);
-    // Click-through e SEM foco, como o overlay: o comentario do lib.rs:180 e a lei aqui tambem.
     let _ = w.set_ignore_cursor_events(true);
     emit_state(&app, &rows, initial, true, None);
-    emit_at(&app, pill);
     let _ = w.show();
-    log::info!(
-        "picker: janela sobre o monitor ({}, {}) {}x{} escala {scale}; lista em ({:.0}, {:.0}) css",
-        area.x,
-        area.y,
-        area.w,
-        area.h,
-        pill.0,
-        pill.1
-    );
 
-    // O hook corre numa thread propria (o LL hook entrega na thread que instala e bombeia).
-    // `on_move` chega do pump: re-emitir o estado inteiro e barato (<=25 linhas) e mais simples
-    // do que um canal de deltas.
     let (tx, rx) = tokio::sync::oneshot::channel();
     {
         let app2 = app.clone();
         let rows2 = rows.clone();
-        let follow_app = app.clone();
-        let follow_win = w.clone();
-        // O ecra que a janela esta a cobrir agora. Serve para o caminho quente nao ter de
-        // perguntar ao SO por monitores a cada movimento do rato: enquanto o ponteiro andar
-        // dentro desta area, mover a lista e uma conta e um evento.
-        let screen = std::sync::Arc::new(std::sync::Mutex::new((area, scale)));
         std::thread::spawn(move || {
             let cancel_app = app2.clone();
-            // Seguir o cursor. O hook do rato so escreve onde ele esta; a conta e feita aqui, no
-            // pump, e o resultado vai para a UI como dois numeros. Nao ha trabalho de janelas
-            // neste caminho, e e por isso que ele e suave.
-            let on_follow = move |x: i32, y: i32| {
-                let (area, scale) = match screen.lock() {
-                    Ok(g) => *g,
-                    Err(_) => return,
-                };
-                if x >= area.x && x < area.x + area.w && y >= area.y && y < area.y + area.h {
-                    emit_at(
-                        &follow_app,
-                        core::picker_pill_pos(
-                            (x, y),
-                            OFFSET,
-                            (area.x, area.y, area.w, area.h),
-                            scale,
-                            (lw, lh),
-                        ),
-                    );
-                    return;
+            let on_follow = move |_: i32, _: i32| {
+                if let Ok(mut follower) = surface.lock() {
+                    follower.follow();
                 }
-                // O ponteiro mudou de ecra, e a janela tem de o seguir. Isto e trabalho de
-                // janelas, logo corre na thread principal, e acontece uma vez por travessia e nao
-                // uma vez por movimento.
-                let w = follow_win.clone();
-                let app3 = follow_app.clone();
-                let screen3 = screen.clone();
-                let _ = follow_app.run_on_main_thread(move || {
-                    let (a, sc) = crate::monitor_at_point(&w, x, y);
-                    let _ = w.set_size(tauri::PhysicalSize::new(a.w as u32, a.h as u32));
-                    let _ = w.set_position(PhysicalPosition::new(a.x, a.y));
-                    if let Ok(mut g) = screen3.lock() {
-                        *g = (a, sc);
-                    }
-                    emit_at(
-                        &app3,
-                        core::picker_pill_pos((x, y), OFFSET, (a.x, a.y, a.w, a.h), sc, (lw, lh)),
-                    );
-                    log::debug!("picker: a lista mudou para o monitor ({}, {})", a.x, a.y);
-                });
             };
             let outcome = crate::preview_hook::run_picker_blocking(
                 rows2.len(),
@@ -268,7 +201,7 @@ pub async fn open_picker(app: AppHandle) {
             let _ = tx.send(outcome);
         });
     }
-    let outcome = rx
+    let mut outcome = rx
         .await
         .unwrap_or(crate::preview_hook::PickerOutcome::Cancelled);
 
@@ -276,15 +209,14 @@ pub async fn open_picker(app: AppHandle) {
         let escolhido = rows.get(i).and_then(|r| r.id.clone());
         let mut cfg = crate::config::load(&app);
         cfg.active_project = escolhido.clone();
+        cfg.project_context = rows.get(i).is_some_and(|row| row.automatic);
         if let Err(e) = crate::config::save(&app, &cfg) {
-            log::warn!("picker: nao consegui gravar o projeto ativo: {e}");
+            log::warn!("picker: configuration save failed: {e}");
+            outcome = crate::preview_hook::PickerOutcome::Cancelled;
         }
         let cfg = crate::config::load(&app);
         crate::commands::refresh_orb_accent(&state, &cfg);
-        log::info!(
-            "picker: projeto ativo -> {}",
-            rows.get(i).map(|r| r.name.as_str()).unwrap_or("?")
-        );
+        log::debug!("picker: selection transaction completed");
     }
 
     // Fecho: a UI anima e a janela esconde-se logo a seguir. Esconder sem avisar dava um corte
@@ -300,4 +232,19 @@ pub async fn open_picker(app: AppHandle) {
     tokio::time::sleep(std::time::Duration::from_millis(espera)).await;
     let _ = w.hide();
     state.picker_open.store(false, Ordering::SeqCst);
+}
+
+#[tauri::command]
+pub fn picker_snapshot(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<serde_json::Value>, String> {
+    if window.label() != "picker" {
+        return Err("Picker only".into());
+    }
+    Ok(state
+        .picker_state
+        .lock()
+        .map_err(|_| "Picker state unavailable")?
+        .clone())
 }

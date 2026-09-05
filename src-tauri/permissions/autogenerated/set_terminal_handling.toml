@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-terminal-handling"
+description = "Enables the set_terminal_handling command without any pre-configured scope."
+commands.allow = ["set_terminal_handling"]
+
+[[permission]]
+identifier = "deny-set-terminal-handling"
+description = "Denies the set_terminal_handling command without any pre-configured scope."
+commands.deny = ["set_terminal_handling"]

@@ -1,31 +1,10 @@
+import { ContextInspector } from "./ContextInspector";
+import { ICON_BY_NAME } from "../components/projectIcons";
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { toast } from "sonner";
 import {
   Sparkle,
-  Lightning,
-  Atom,
-  Code,
-  Briefcase,
-  Flask,
-  Rocket,
-  Compass,
-  Cube,
-  Target,
-  Book,
-  GearSix,
-  Palette,
-  Terminal,
-  Database,
-  Globe,
-  ChatCircle,
-  ChartLine,
-  ShieldCheck,
-  Wrench,
-  GraduationCap,
-  Heart,
-  Camera,
-  CurrencyDollar,
   CaretDown,
   X,
   type Icon,
@@ -43,32 +22,7 @@ import { ipc, type AccentPreview, type EmberSettings, type Project, type Project
  * componente. Um nome que o Rust passe a mandar e que não esteja aqui cai no primeiro, em vez de
  * rebentar a lista toda.
  */
-const ICON_BY_NAME: Record<string, Icon> = {
-  sparkle: Sparkle,
-  lightning: Lightning,
-  atom: Atom,
-  code: Code,
-  briefcase: Briefcase,
-  flask: Flask,
-  rocket: Rocket,
-  compass: Compass,
-  cube: Cube,
-  target: Target,
-  book: Book,
-  gear: GearSix,
-  palette: Palette,
-  terminal: Terminal,
-  database: Database,
-  globe: Globe,
-  chat: ChatCircle,
-  chart: ChartLine,
-  shield: ShieldCheck,
-  wrench: Wrench,
-  "graduation-cap": GraduationCap,
-  heart: Heart,
-  camera: Camera,
-  money: CurrencyDollar,
-};
+
 
 function iconOf(name: string): Icon {
   return ICON_BY_NAME[name] ?? Sparkle;
@@ -500,8 +454,8 @@ function ProjectEditor({
           }
         />
         <p className="text-xs text-fg-muted">
-          Only what changes a rewrite: language and register, names that must stay untouched,
-          domain words and their spelling, and a couple of things to avoid. Not architecture.
+          Writing preferences and technical facts: language, terminology, architecture and constraints.
+          Exclude instructions to run commands, edit files or manage agents.
         </p>
       </div>
 
@@ -546,7 +500,12 @@ export function ProjectsTab({
   setS: (next: EmberSettings) => void;
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<Project | null>(null);
+  const [draft, setDraftState] = useState<Project | null>(null);
+  const draftEpoch = useRef(0);
+  const setDraft: React.Dispatch<React.SetStateAction<Project | null>> = (next) => {
+    draftEpoch.current += 1;
+    setDraftState(next);
+  };
   const [busy, setBusy] = useState(false);
   const [distilling, setDistilling] = useState(false);
   const [scan, setScan] = useState<(ProjectScan & { folder: string }) | null>(null);
@@ -580,11 +539,13 @@ export function ProjectsTab({
    * da máquina por causa de um clique numa pasta.
    */
   const pickFolder = async () => {
+    const epoch = draftEpoch.current;
     const chosen = await open({ directory: true, multiple: false });
-    if (typeof chosen !== "string") return;
+    if (typeof chosen !== "string" || epoch !== draftEpoch.current) return;
     setBusy(true);
     try {
       const r = await ipc.scanProjectFolder(chosen);
+      if (epoch !== draftEpoch.current) return;
       setScan({ ...r, folder: chosen });
       // Nome sugerido a partir da pasta: quase sempre é o certo, e continua editável.
       const base = chosen.split(/[\\/]/).filter(Boolean).pop() ?? "";
@@ -598,11 +559,13 @@ export function ProjectsTab({
 
   /** Escolher uma subpasta é o mesmo que a ter escolhido no seletor: volta a fazer o scan. */
   const useSubfolder = async (path: string) => {
+    const epoch = draftEpoch.current;
     setBusy(true);
     try {
       const r = await ipc.scanProjectFolder(path);
+      if (epoch !== draftEpoch.current) return;
       setScan({ ...r, folder: path });
-      const base = path.split(/[\/]/).filter(Boolean).pop() ?? "";
+      const base = path.split(/[\\/]/).filter(Boolean).pop() ?? "";
       setDraft((d) => (d ? { ...d, name: base, folder: path } : d));
     } catch (e) {
       toast.error(String(e));
@@ -613,10 +576,15 @@ export function ProjectsTab({
 
   const distil = async () => {
     if (!scan?.folder) return;
+    const epoch = draftEpoch.current;
     setDistilling(true);
     try {
-      const brief = await ipc.distillProject(scan.folder);
-      setDraft((d) => (d ? { ...d, brief, sourcePath: scan.sourcePath } : d));
+      const brief = await ipc.distillProject(scan.folder, scan.sourceFingerprint);
+      if (epoch !== draftEpoch.current) {
+        toast.info("The draft changed. Generate the brief again to use the current project.");
+        return;
+      }
+      setDraft((d) => (d ? { ...d, brief, sourcePath: scan.sourcePath, sourceFingerprint: scan.sourceFingerprint } : d));
       toast.success("Read it. Check the brief below before saving.");
     } catch (e) {
       // A mensagem vem do Rust já a dizer o que falhou de verdade (sem ficheiro, sem rede,
@@ -628,6 +596,18 @@ export function ProjectsTab({
     }
   };
 
+  const rescanDraft = async () => {
+    if (!draft?.folder || busy || distilling) return;
+    const epoch = draftEpoch.current;
+    const folder = draft.folder;
+    setBusy(true);
+    try {
+      const result = await ipc.scanProjectFolder(folder);
+      if (epoch === draftEpoch.current) setScan({ ...result, folder });
+    } catch { toast.error("Project sources could not be read."); }
+    finally { setBusy(false); }
+  };
+
   const toggleEditor = (p: Project) => {
     if (openId === p.id) {
       // Fecha SEM limpar o rascunho: se o limpasse aqui, o conteúdo desmontava no mesmo frame e
@@ -635,16 +615,19 @@ export function ProjectsTab({
       setOpenId(null);
       return;
     }
+    setScan(null);
     setDraft({ ...p });
     setOpenId(p.id);
   };
 
   const save = async () => {
-    if (!draft) return;
+    if (!draft || busy || distilling) return;
+    const epoch = draftEpoch.current;
     setBusy(true);
     try {
       setS(await ipc.saveProject(draft));
-      setOpenId(null);
+      if (epoch === draftEpoch.current) setOpenId(null);
+      else toast.info("Your newer edits remain in the draft. Save them when ready.");
       toast.success("Project saved.");
     } catch (e) {
       toast.error(String(e));
@@ -681,6 +664,13 @@ export function ProjectsTab({
 
   return (
     <div className="flex flex-col gap-4">
+      <ContextInspector />
+      {openId && draft?.folder && <Button variant="ghost" disabled={busy || distilling} onClick={() => void rescanDraft()}>Check project sources</Button>}
+      {scan && openId !== "__novo__" && <div className="space-y-2">
+        <Button variant="ghost" disabled={busy || distilling || !scan.sourcePaths.length} onClick={() => void distil()}>Generate a reviewed draft</Button>
+        {draft?.id && <details className="text-xs"><summary>Previously saved brief</summary><pre className="whitespace-pre-wrap p-3">{s.projects.find(p => p.id === draft.id)?.brief}</pre></details>}
+      </div>}
+      {scan && <div className="text-xs text-fg-muted" role="status"><p>Sources: {scan.sourcePaths.join(", ") || "None"}</p>{scan.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div>}
       <div className="rounded-lg border border-[color:var(--border-subtle)] bg-surface-1 p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
@@ -874,6 +864,7 @@ export function ProjectsTab({
               <button
                 type="button"
                 onClick={() => toggleEditor(p)}
+                disabled={busy}
                 aria-label={isOpen ? "Close" : "Edit"}
                 aria-expanded={isOpen}
                 className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-fg-muted transition-colors hover:text-fg"

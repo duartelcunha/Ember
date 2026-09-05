@@ -27,7 +27,7 @@
 
 You know that clumsy message, that rambling prompt you keep editing, or that rough commit note? Select it, hit your shortcut, and Ember cleans it up directly where your cursor is.
 
-No window switching. No copy-paste dance. No lost focus.
+This checkout is undergoing production hardening. Windows native qualification remains open; macOS and Linux do not yet meet the required functional parity. See the [implementation ledger and release blockers](docs/production-readiness.md). Historical recordings below do not establish the current native behavior.
 
 ---
 
@@ -54,7 +54,7 @@ Switch project-specific tone, guidelines, and vocabulary on the fly without poll
 </p>
 
 - **Instant Hotkey Switcher:** Press <kbd>Ctrl+Shift+P</kbd> anywhere on your system to open a lightweight, cursor-anchored switcher and navigate between projects using arrow keys.
-- **Distilled Rules:** Automatically digests conventions from `CLAUDE.md`, `AGENTS.md`, or `.cursorrules` to retain domain jargon without prompt injection risks.
+- **Distilled Rules:** Builds a reviewable brief from known Markdown sources and bounded local imports inside the selected directory. Source fingerprints identify stale briefs. Source data is redacted and framed; prompt injection remains a threat to evaluate.
 - **Custom Accents & Icons:** Dedicated colors and icons reflect active projects on the ambient orb and tray icon.
 
 ---
@@ -65,10 +65,10 @@ Switch project-specific tone, guidelines, and vocabulary on the fly without poll
   <img src="docs/media/refine-terminal-claude-code.gif" width="100%" alt="Ember refining a prompt in Claude Code terminal">
 </p>
 
-When working in terminals (Windows Terminal, PowerShell, CMD, Alacritty, WezTerm, Warp, or CLI tools like Claude Code):
-1. **Accidental Execution Prevention:** Output is automatically flattened to single-line commands to eliminate dangerous multi-line paste execution in interactive shells.
-2. **Terminal-Safe Shortcuts:** Uses synchronous input injection and terminal-aware modifier sequences (`Ctrl+Shift+C/V`).
-3. **Selection Recovery:** Falls back to selection clipboard memory if synthetic copy is blocked.
+Generic terminal replacement is disabled in this hardening checkout. The old clipboard fallback
+and generic line-clearing shortcut were unsafe. Terminal capture can still obtain a result,
+but safe replacement requires a tested adapter for the terminal and editor in use. The recording
+above shows historical behavior. This limitation blocks the agreed production experience.
 
 ---
 
@@ -83,21 +83,21 @@ Ember blends natively with both dark and light desktop setups with instant theme
 - **BYOK (Bring Your Own Key):** Direct links to create keys in 1 click for Gemini, Groq, OpenAI, OpenRouter, and Anthropic.
 - **Interactive Hotkey Recorder:** Set custom shortcuts for Main refinement, direct Fix, direct Rebuild, and Project Picker.
 - **Preview Gate (Optional):** Review changes in an unobtrusive bubble before applying (<kbd>Enter</kbd> to paste, <kbd>Esc</kbd> to keep original).
-- **Smart Select-All Fallback:** In chat composers (ChatGPT, Slack, Codex), pressing your shortcut with nothing selected captures the active field.
+- **Smart Select-All Fallback:** When the focused editor exposes a verifiable editable field, pressing your shortcut with nothing selected can capture the whole field. Unsupported accessibility providers are refused.
 
 ---
 
 ## Security & Privacy Architecture
 
-Ember is engineered from the ground up with strict defensive security principles:
+Results stay in memory by default. Optional retention uses authenticated encryption and a key in the OS vault. Legacy plaintext results are preserved without being loaded and can be explicitly deleted in Settings. Diagnostic prompt logging is a separate opt-in plaintext setting. See [data handling and recovery](docs/data-policy.md).
 
-| Area | Security Guarantee |
+| Area | Current implementation |
 |---|---|
-| **Secret Storage** | API keys and OAuth tokens are stored exclusively in the OS Credential Vault (**Windows Credential Manager** / macOS Keychain). Keys never cross the IPC bridge to frontend JavaScript. |
+| **Secret Storage** | API keys and OAuth refresh credentials use the OS Credential Vault (**Windows Credential Manager** / macOS Keychain). Active access tokens remain in memory. Keys never cross the IPC bridge to frontend JavaScript. |
 | **Prompt Boundary Isolation** | Input text and project context are wrapped with strict anti-injection delimiters and escaped (`[EMBER_INPUT]`, `[EMBER_PROJECT_SOURCE]`, `[EMBER_PROJECT_CONTEXT]`). |
-| **Window & Focus Isolation** | Overlay and Picker windows run with `focus: false` and strict Content Security Policy (`default-src 'self'`). Keystrokes land strictly in the user's active application. |
-| **Input Hook Hygiene** | Low-level keyboard hooks (`WH_KEYBOARD_LL`) intercept only the single approval key (`Enter`/`Esc`) during preview gates and pass all other system keystrokes through untouched. |
-| **OS Sandboxing** | Browser links and URLs are opened directly via Win32 `ShellExecuteW`, bypassing `cmd.exe` execution layers. |
+| **Window & Focus Isolation** | Overlay and Picker windows run with `focus: false` and strict Content Security Policy (`default-src 'self'`). Windows replacement checks the original window, focused HWND, accessibility element, selection endpoints and recaptured text. Native application qualification and continuous input generation validation remain open. |
+| **Input Hook Hygiene** | Low-level keyboard hooks (`WH_KEYBOARD_LL`) own confirmation and paging keys during preview gates and pass all other system keystrokes through untouched. |
+| **Link opening** | Browser links and URLs are opened directly via Win32 `ShellExecuteW`, bypassing `cmd.exe` execution layers. |
 
 ---
 
@@ -105,7 +105,7 @@ Ember is engineered from the ground up with strict defensive security principles
 
 ```text
 [ Primary Provider ]               [ Fallback Provider ]
- Google Gemini Free Tier   ───►   OpenAI-Compatible (Groq / OpenRouter / Local Ollama)
+ Google Gemini Free Tier   ───►   OpenAI-Compatible over HTTPS (Groq / OpenRouter)
 ```
 
 - **Resilient State Machine:** Transient network errors and rate limits (`429`) automatically trigger exponential backoff according to `Retry-After` headers.

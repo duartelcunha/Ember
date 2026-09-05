@@ -25,6 +25,15 @@ pub enum KeyVerdict {
     Decide { decision: Decision, consume: bool },
 }
 
+// Capture, application and keyboard hooks share one native input owner.
+static INPUT_OWNER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub(crate) fn input_lease() -> std::sync::MutexGuard<'static, ()> {
+    INPUT_OWNER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// Modificadores puros. Premir Shift ou Ctrl nao e "continuar a trabalhar", e o inicio de um
 /// atalho ou de uma maiuscula: se contassem, o preview fugia mal a pessoa encostasse a um deles.
 fn is_modifier(vk: u32) -> bool {
@@ -114,7 +123,7 @@ pub fn classify_watch_event(
 
 /// Prazo total do gate: se o utilizador nao responder, recusa (mantem o original). O silencio
 /// nunca vira um paste.
-pub const PREVIEW_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+pub const PREVIEW_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
 // ---------------------------------------------------------------------------------------
 // Windows: o hook real
@@ -130,9 +139,10 @@ mod imp {
     use windows::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, DispatchMessageW, MsgWaitForMultipleObjectsEx, PeekMessageW,
         SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, HC_ACTION, HHOOK,
-        KBDLLHOOKSTRUCT, MSG, MSLLHOOKSTRUCT, MWMO_INPUTAVAILABLE, PM_REMOVE, QS_ALLINPUT,
-        WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP,
-        WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_SYSKEYDOWN, WM_SYSKEYUP,
+        KBDLLHOOKSTRUCT, LLKHF_INJECTED, LLMHF_INJECTED, MSG, MSLLHOOKSTRUCT, MWMO_INPUTAVAILABLE,
+        PM_REMOVE, QS_ALLINPUT, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN,
+        WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_SYSKEYDOWN,
+        WM_SYSKEYUP, WM_XBUTTONDOWN,
     };
 
     // O callback e um `extern "system" fn` e nao captura estado: comunica pela decisao global.
@@ -145,6 +155,8 @@ mod imp {
     // O gate decide no key-DOWN, mas so LARGA o hook depois de ver a tecla subir: ver
     // `drain_until_released`.
     static RELEASED: AtomicU8 = AtomicU8::new(0);
+    static OWNED: AtomicU8 = AtomicU8::new(0);
+    static PAGE_DELTA: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
     const IGN_ENTER: u8 = 1;
     const IGN_ESC: u8 = 2;
@@ -153,6 +165,8 @@ mod imp {
         match vk {
             0x0D => IGN_ENTER,
             0x1B => IGN_ESC,
+            0x21 => 4,
+            0x22 => 8,
             _ => 0,
         }
     }
@@ -163,6 +177,35 @@ mod imp {
             let kb = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
             let vk = kb.vkCode;
             let bit = ignore_bit(vk);
+            if matches!(vk, 0x21 | 0x22) {
+                let down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
+                let up = msg == WM_KEYUP || msg == WM_SYSKEYUP;
+                if up {
+                    IGNORE_HELD.fetch_and(!bit, Ordering::SeqCst);
+                    if OWNED.load(Ordering::SeqCst) & bit != 0 {
+                        RELEASED.fetch_or(bit, Ordering::SeqCst);
+                        OWNED.fetch_and(!bit, Ordering::SeqCst);
+                        return LRESULT(1);
+                    }
+                }
+                if down && OWNED.load(Ordering::SeqCst) & bit != 0 {
+                    RELEASED.fetch_and(!bit, Ordering::SeqCst);
+                    if HOOK_DECISION.load(Ordering::SeqCst) != 0 {
+                        return LRESULT(1);
+                    }
+                }
+                if down
+                    && IGNORE_HELD.load(Ordering::SeqCst) & bit == 0
+                    && HOOK_DECISION.load(Ordering::SeqCst) == 0
+                {
+                    OWNED.fetch_or(bit, Ordering::SeqCst);
+                    RELEASED.fetch_and(!bit, Ordering::SeqCst);
+                    PAGE_DELTA.fetch_add(if vk == 0x22 { 1 } else { -1 }, Ordering::SeqCst);
+                    return LRESULT(1);
+                }
+                return CallNextHookEx(None, code, wparam, lparam);
+            }
+
             // Teclas que NAO sao o Enter nem o Esc: se decidirem alguma coisa (a pessoa continuou
             // a escrever), marcam a decisao e seguem o seu caminho na mesma. Nunca se consomem, e
             // por isso este ramo cai sempre no `CallNextHookEx` la em baixo.
@@ -188,34 +231,46 @@ mod imp {
                 let ignoring = IGNORE_HELD.load(Ordering::SeqCst) & bit != 0;
                 if is_up {
                     IGNORE_HELD.fetch_and(!bit, Ordering::SeqCst);
-                    RELEASED.fetch_or(bit, Ordering::SeqCst);
-                    return LRESULT(1); // consome o key-up de Enter/Esc para nao deixar cauda
+                    if OWNED.load(Ordering::SeqCst) & bit != 0 {
+                        RELEASED.fetch_or(bit, Ordering::SeqCst);
+                        OWNED.fetch_and(!bit, Ordering::SeqCst);
+                        return LRESULT(1);
+                    }
                 }
                 if is_down {
                     // Uma descida FRESCA apaga o "ja subiu" da pressao anterior desta mesma
                     // tecla. Sem isto o `RELEASED` era um trinco: num toque duplo rapido, o
                     // drain via o bit da PRIMEIRA subida, dava a tecla por largada e o hook caia
                     // com a segunda pressao ainda em baixo, despejando o auto-repeat na app.
-                    RELEASED.fetch_and(!bit, Ordering::SeqCst);
-                    if !ignoring {
+                    if OWNED.load(Ordering::SeqCst) & bit != 0 {
+                        RELEASED.fetch_and(!bit, Ordering::SeqCst);
+                        return LRESULT(1);
+                    }
+                    if !ignoring && HOOK_DECISION.load(Ordering::SeqCst) == 0 {
                         if let KeyVerdict::Decide { decision, .. } = classify_key(vk) {
-                            HOOK_DECISION.store(
-                                if decision == Decision::Accept { 1 } else { 2 },
-                                Ordering::SeqCst,
-                            );
+                            if HOOK_DECISION
+                                .compare_exchange(
+                                    0,
+                                    if decision == Decision::Accept { 1 } else { 2 },
+                                    Ordering::SeqCst,
+                                    Ordering::SeqCst,
+                                )
+                                .is_ok()
+                            {
+                                OWNED.fetch_or(bit, Ordering::SeqCst);
+                                RELEASED.fetch_and(!bit, Ordering::SeqCst);
+                                return LRESULT(1);
+                            }
                         }
                     }
-                    return LRESULT(1); // consome: a app em foco nunca ve este Enter/Esc
                 }
             }
         }
         CallNextHookEx(None, code, wparam, lparam)
     }
 
-    /// Teto da espera pelo key-up da tecla da decisao. Uma tecla presa (ou um key-up que o hook
-    /// nunca chega a ver) nunca pode pendurar o refine: ao fim disto seguimos na mesma.
-    const RELEASE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
-
+    // Owned input tails cannot expire while a key is still held. Other input keeps passing
+    // through the pump; the next interaction waits for this owner to retire.
     /// Bombeia mensagens, com o hook AINDA INSTALADO, ate a tecla `bit` subir de verdade.
     ///
     /// Sem isto o gate devolvia `Accept` no key-DOWN do Enter e o hook caia logo a seguir: o
@@ -228,17 +283,13 @@ mod imp {
     /// GetAsyncKeyState ja provou mentir nesta app quando ha um hotkey global registado).
     fn drain_until_released(bit: u8) {
         let start = std::time::Instant::now();
-        while RELEASED.load(Ordering::SeqCst) & bit == 0 {
+        while RELEASED.load(Ordering::SeqCst) & bit != bit {
             let mut msg = MSG::default();
             while unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE) }.as_bool() {
                 unsafe {
                     let _ = TranslateMessage(&msg);
                     DispatchMessageW(&msg);
                 }
-            }
-            if start.elapsed() >= RELEASE_TIMEOUT {
-                log::warn!("gate: key-up never seen (bit={bit}); proceeding after timeout");
-                return;
             }
             unsafe {
                 MsgWaitForMultipleObjectsEx(None, 10, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
@@ -260,8 +311,14 @@ mod imp {
 
     /// Corre o gate numa thread dedicada com message pump (o LL hook so entrega o callback na
     /// thread que instala E bombeia mensagens). Bloqueante: chamar fora do runtime tokio.
-    pub fn run_gate_blocking(should_cancel: impl Fn() -> bool) -> Decision {
+    pub fn run_gate_blocking(should_cancel: impl Fn() -> bool, on_page: impl Fn(i32)) -> Decision {
+        let _input_owner = super::input_lease();
+        if should_cancel() {
+            return Decision::Reject;
+        }
         HOOK_DECISION.store(0, Ordering::SeqCst);
+        OWNED.store(0, Ordering::SeqCst);
+        PAGE_DELTA.store(0, Ordering::SeqCst);
         RELEASED.store(0, Ordering::SeqCst);
         // Marca as teclas ja premidas agora (bit alto do GetAsyncKeyState) para as ignorar ate
         // uma descida fresca. Evita um falso Accept do Enter que ainda estava em baixo.
@@ -274,22 +331,40 @@ mod imp {
                 held |= IGN_ESC;
             }
         }
+        for (vk, bit) in [(0x21, 4), (0x22, 8)] {
+            if unsafe { GetAsyncKeyState(vk) as u16 & 0x8000 != 0 } {
+                held |= bit;
+            }
+        }
         IGNORE_HELD.store(held, Ordering::SeqCst);
 
-        log::info!("gate: starting (held_at_install={held})");
+        log::debug!("gate: starting");
         let hmod = unsafe { GetModuleHandleW(None) }.unwrap_or_default();
         let hook = match unsafe {
             SetWindowsHookExW(WH_KEYBOARD_LL, Some(ll_proc), Some(HINSTANCE(hmod.0)), 0)
         } {
             Ok(h) => h,
-            // Nao conseguimos instalar o hook: degrada para colar (nunca perde um refine bom).
+            // Missing confirmation must never authorize replacement.
             Err(e) => {
-                log::warn!("gate: HOOK INSTALL FAILED ({e}); pasting without approval");
-                return Decision::Accept;
+                log::warn!("gate: hook installation failed ({e}); application rejected");
+                return Decision::Reject;
             }
         };
         let _guard = HookGuard(hook);
-        let start = std::time::Instant::now();
+        let mouse = unsafe {
+            SetWindowsHookExW(
+                WH_MOUSE_LL,
+                Some(input_watch_mouse_proc),
+                Some(HINSTANCE(hmod.0)),
+                0,
+            )
+        };
+        let Ok(mouse) = mouse else {
+            return Decision::Reject;
+        };
+        let _mouse_guard = HookGuard(mouse);
+
+        let mut start = std::time::Instant::now();
 
         loop {
             // 1) Bombeia mensagens: serve o callback do LL hook.
@@ -304,15 +379,22 @@ mod imp {
             //    tecla premida: enquanto o dedo estiver em baixo, o hook tem de continuar a
             //    engolir as repeticoes automaticas, senao vazam para a app (num terminal, um
             //    Enter vazado submete o prompt sozinho).
+            let page_delta = PAGE_DELTA.swap(0, Ordering::SeqCst);
+            if page_delta != 0 {
+                on_page(page_delta);
+                start = std::time::Instant::now();
+            }
             match HOOK_DECISION.load(Ordering::SeqCst) {
                 1 => {
                     log::info!("gate: ACCEPT (Enter consumed by hook)");
-                    drain_until_released(IGN_ENTER);
+                    drain_until_released(OWNED.load(Ordering::SeqCst));
                     return Decision::Accept;
                 }
                 2 => {
                     log::info!("gate: REJECT (Esc consumed by hook)");
-                    drain_until_released(IGN_ESC);
+                    if OWNED.load(Ordering::SeqCst) != 0 {
+                        drain_until_released(OWNED.load(Ordering::SeqCst));
+                    }
                     return Decision::Reject;
                 }
                 _ => {}
@@ -320,11 +402,13 @@ mod imp {
             // 3) Cancel externo (hotkey durante o preview) -> recusa.
             if should_cancel() {
                 log::info!("gate: REJECT (cancelled)");
+                drain_until_released(OWNED.load(Ordering::SeqCst));
                 return Decision::Reject;
             }
             // 4) Prazo total -> recusa (nunca colar sem aprovacao explicita).
             if start.elapsed() >= PREVIEW_TIMEOUT {
                 log::info!("gate: REJECT (timeout, no key seen)");
+                drain_until_released(OWNED.load(Ordering::SeqCst));
                 return Decision::Reject;
             }
             // 5) Espera eficiente: acorda ja no input (Enter/Esc imediato), senao 50ms para
@@ -342,7 +426,10 @@ mod imp {
         use tauri::Manager;
         let (tx, rx) = tokio::sync::oneshot::channel();
         std::thread::spawn(move || {
-            let d = run_gate_blocking(|| app.state::<crate::state::AppState>().dismissed(run_id));
+            let d = run_gate_blocking(
+                || app.state::<crate::state::AppState>().dismissed(run_id),
+                |delta| crate::flow::move_preview_page(&app, run_id, delta),
+            );
             let _ = tx.send(d); // se o lado async caiu (app a sair), o send falha inofensivamente
         });
         rx.await.unwrap_or(Decision::Reject)
@@ -366,6 +453,19 @@ mod imp {
             let kb = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
             let is_down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
             let is_up = msg == WM_KEYUP || msg == WM_SYSKEYUP;
+            if kb.flags.contains(LLKHF_INJECTED) || WATCH_RELEASED.load(Ordering::SeqCst) != 0 {
+                return CallNextHookEx(None, code, wparam, lparam);
+            }
+            // Continued editing invalidates this run, but the user's input always passes through.
+            if is_down
+                && kb.vkCode != 0x1B
+                && matches!(classify_key(kb.vkCode), KeyVerdict::Decide { .. })
+            {
+                let _ = WATCH_DECIDED.compare_exchange(0, 2, Ordering::SeqCst, Ordering::SeqCst);
+            }
+            if WATCH_DECIDED.load(Ordering::SeqCst) == 2 {
+                return CallNextHookEx(None, code, wparam, lparam);
+            }
             if is_down || is_up {
                 let verdict = super::classify_watch_event(
                     kb.vkCode,
@@ -395,6 +495,26 @@ mod imp {
         CallNextHookEx(None, code, wparam, lparam)
     }
 
+    unsafe extern "system" fn input_watch_mouse_proc(
+        code: i32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        if code == HC_ACTION as i32 {
+            let event = &*(lparam.0 as *const MSLLHOOKSTRUCT);
+            if event.flags & LLMHF_INJECTED == 0
+                && matches!(
+                    wparam.0 as u32,
+                    WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN
+                )
+            {
+                let _ = WATCH_DECIDED.compare_exchange(0, 2, Ordering::SeqCst, Ordering::SeqCst);
+                let _ = HOOK_DECISION.compare_exchange(0, 2, Ordering::SeqCst, Ordering::SeqCst);
+            }
+        }
+        CallNextHookEx(None, code, wparam, lparam)
+    }
+
     /// Handle do watcher. `stop_and_join` para o hook E espera que ele caia, e e OBRIGATORIO
     /// antes de instalar o gate do preview: dois hooks LL vivos a consumir Esc davam o Esc do
     /// preview engolido pelo watcher. O `Drop` cobre os returns precoces do flow (so para, sem
@@ -417,6 +537,9 @@ mod imp {
     impl Drop for EscWatcher {
         fn drop(&mut self) {
             self.stop.store(true, Ordering::SeqCst);
+            if let Some(join) = self.join.take() {
+                let _ = join.join();
+            }
         }
     }
 
@@ -434,6 +557,10 @@ mod imp {
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let stop2 = stop.clone();
         let join = std::thread::spawn(move || {
+            let _input_owner = super::input_lease();
+            if stop2.load(Ordering::SeqCst) {
+                return;
+            }
             WATCH_DECIDED.store(0, Ordering::SeqCst);
             WATCH_RELEASED.store(0, Ordering::SeqCst);
             // Um Esc ja em baixo na instalacao e da app do utilizador, nao nosso: fica marcado
@@ -454,13 +581,31 @@ mod imp {
                 Err(e) => {
                     // Sem hook nao ha Esc-cancel neste ciclo; o atalho continua a cancelar.
                     // Nunca falhar o refine por causa de observabilidade de teclado.
-                    log::warn!("esc-watch: hook install failed ({e}); Esc won't cancel this cycle");
+                    log::warn!(
+                        "input-watch: hook install failed ({e}); automatic application cancelled"
+                    );
+                    app.state::<crate::state::AppState>()
+                        .request_dismiss(run_id);
                     return;
                 }
             };
             let _guard = HookGuard(hook);
+            let mouse = unsafe {
+                SetWindowsHookExW(
+                    WH_MOUSE_LL,
+                    Some(input_watch_mouse_proc),
+                    Some(HINSTANCE(hmod.0)),
+                    0,
+                )
+            };
+            let Ok(mouse) = mouse else {
+                app.state::<crate::state::AppState>()
+                    .request_dismiss(run_id);
+                return;
+            };
+            let _mouse_guard = HookGuard(mouse);
+
             let mut notified = false;
-            let watch_start = std::time::Instant::now();
             loop {
                 let mut msg = MSG::default();
                 while unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE) }.as_bool() {
@@ -471,13 +616,14 @@ mod imp {
                 }
                 if WATCH_DECIDED.load(Ordering::SeqCst) != 0 && !notified {
                     notified = true;
-                    log::info!("[run {run_id}] esc-watch: Esc consumido, a dispensar a espera");
+                    log::info!("[run {run_id}] input changed; automatic application cancelled");
                     app.state::<crate::state::AppState>()
                         .request_dismiss(run_id);
                 }
                 // Depois de decidir, o hook so vive para engolir a cauda da pressao; visto o
                 // key-up, ja nao ha nada a proteger.
-                let released = WATCH_RELEASED.load(Ordering::SeqCst) != 0;
+                let released = WATCH_RELEASED.load(Ordering::SeqCst) != 0
+                    || WATCH_DECIDED.load(Ordering::SeqCst) == 2;
                 if notified && released {
                     break;
                 }
@@ -487,14 +633,8 @@ mod imp {
                 // app do utilizador, que e a regra que este ficheiro inteiro existe para
                 // respeitar. Fica-se ate ao key-up, com teto para uma tecla presa nao pendurar
                 // a thread.
-                if stop2.load(Ordering::SeqCst) {
-                    if !notified || released {
-                        break;
-                    }
-                    if watch_start.elapsed() > RELEASE_TIMEOUT {
-                        log::warn!("esc-watch: key-up nunca visto; a largar o hook na mesma");
-                        break;
-                    }
+                if stop2.load(Ordering::SeqCst) && (!notified || released) {
+                    break;
                 }
                 unsafe {
                     MsgWaitForMultipleObjectsEx(None, 50, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
@@ -602,10 +742,8 @@ mod imp {
                         return LRESULT(1);
                     }
                 }
-                WM_LBUTTONUP => {
-                    if PICKER_CLICK_TAIL.swap(0, Ordering::SeqCst) != 0 {
-                        return LRESULT(1); // cauda do clique que ja consumimos
-                    }
+                WM_LBUTTONUP if PICKER_CLICK_TAIL.swap(0, Ordering::SeqCst) != 0 => {
+                    return LRESULT(1);
                 }
                 _ => {}
             }
@@ -640,7 +778,6 @@ mod imp {
                     // Cada tecla que o picker VE fica registada. A primeira utilizacao real
                     // acabou com a lista oito segundos aberta sem nada acontecer, e sem isto nao
                     // havia como distinguir "nao carregou" de "carregou e o hook nao viu".
-                    log::debug!("picker: tecla vk={vk:#x} -> {verdict:?}");
                 }
                 match verdict {
                     PickerVerdict::Move(delta) => {
@@ -718,8 +855,9 @@ mod imp {
     /// por inatividade com uma seta ainda premida despejava o auto-repeat dela na app, e o caret
     /// da pessoa andava sozinho depois de o menu desaparecer.
     fn drain_picker_held() {
-        let inicio = std::time::Instant::now();
-        while PICKER_HELD.load(Ordering::SeqCst) != 0 && inicio.elapsed() < RELEASE_TIMEOUT {
+        while PICKER_HELD.load(Ordering::SeqCst) != 0
+            || PICKER_CLICK_TAIL.load(Ordering::SeqCst) != 0
+        {
             let mut m = MSG::default();
             while unsafe { PeekMessageW(&mut m, None, 0, 0, PM_REMOVE) }.as_bool() {
                 unsafe {
@@ -741,6 +879,10 @@ mod imp {
         on_move: impl Fn(usize),
         on_follow: impl Fn(i32, i32),
     ) -> PickerOutcome {
+        let _input_owner = super::input_lease();
+        if should_cancel() {
+            return PickerOutcome::Cancelled;
+        }
         PICKER_DECISION.store(0, Ordering::SeqCst);
         PICKER_HELD.store(0, Ordering::SeqCst);
         PICKER_MOVED.store(0, Ordering::SeqCst);
@@ -785,6 +927,7 @@ mod imp {
             }
         };
         let mut last_activity = std::time::Instant::now();
+        let mut last_follow = std::time::Instant::now();
         log::info!("picker: aberto ({len} linhas, indice inicial {initial})");
 
         loop {
@@ -799,7 +942,10 @@ mod imp {
                 last_activity = std::time::Instant::now();
                 on_move(PICKER_INDEX.load(Ordering::SeqCst) as usize);
             }
-            if PICKER_FOLLOW.swap(0, Ordering::SeqCst) != 0 {
+            if PICKER_FOLLOW.swap(0, Ordering::SeqCst) != 0
+                || last_follow.elapsed() >= std::time::Duration::from_millis(500)
+            {
+                last_follow = std::time::Instant::now();
                 // De proposito SEM tocar no `last_activity`: mexer o rato e o que a pessoa faz o
                 // dia inteiro, e um menu que se mantivesse aberto por causa disso ficava la para
                 // sempre. Quem o esquecer ve-o fechar; quem o estiver a usar carrega numa tecla,
@@ -891,7 +1037,7 @@ pub fn run_picker_blocking(
 /// (cola direto), sem hook, sem descarte silencioso, sem meio-event-tap de macOS.
 #[cfg(not(windows))]
 pub async fn gate(_app: tauri::AppHandle, _run_id: u64) -> Decision {
-    Decision::Accept
+    Decision::Reject
 }
 
 #[cfg(test)]

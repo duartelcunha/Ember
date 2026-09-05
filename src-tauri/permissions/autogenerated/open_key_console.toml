@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-open-key-console"
+description = "Enables the open_key_console command without any pre-configured scope."
+commands.allow = ["open_key_console"]
+
+[[permission]]
+identifier = "deny-open-key-console"
+description = "Denies the open_key_console command without any pre-configured scope."
+commands.deny = ["open_key_console"]

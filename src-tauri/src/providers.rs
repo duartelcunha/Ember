@@ -125,6 +125,11 @@ async fn call_once(
     on_delta: &(dyn Fn(&str) + Send + Sync),
 ) -> Result<String, OutcomeClass> {
     let protocol = wire_of(provider, credential);
+    if matches!(protocol, Wire::OpenAiChat)
+        && crate::connection::ProviderConnection::parse(pctx.openai_base_url).is_err()
+    {
+        return Err(OutcomeClass::Payload);
+    }
     let build = |endpoint: &str| match (protocol, credential) {
         (Wire::Gemini, Credential::Key(key)) => Some(
             client
@@ -180,13 +185,10 @@ async fn call_once(
             log::error!("bug: passo com credencial que nao serve para {provider:?}");
             return Err(OutcomeClass::Payload);
         };
-        let r = match builder.send().await {
-            Ok(r) => r,
-            Err(_) => {
-                return Err(OutcomeClass::Transient {
-                    retry_after_ms: None,
-                })
-            }
+        let r = match tokio::time::timeout(std::time::Duration::from_secs(30), builder.send()).await
+        {
+            Ok(Ok(r)) => r,
+            _ => return Err(OutcomeClass::Uncertain),
         };
         let last = i + 1 == endpoints.len();
         if r.status().as_u16() == 404 && !last {
@@ -209,19 +211,13 @@ async fn call_once(
         // Nao-200: mesmo com stream:true, um erro (auth/payload/rate-limit) chega como um
         // JSON normal, nao SSE, por isso lemos o corpo inteiro aqui (so neste ramo).
         outcome => {
-            let body: Option<Value> = resp.json().await.ok();
+            let body: Option<Value> = bounded_json(resp).await;
             // O corpo do erro era lido e deitado fora: ficavamos a saber a CLASSE (rate-limit)
             // mas nunca o motivo que o provider explica ("free-models-per-day", "requires
             // credits", "model not found"...). Sem isto e impossivel dizer ao utilizador o que
             // fazer. Nao ha segredos aqui: e a mensagem de erro do provider, nunca a chave nem o
             // texto do utilizador. Truncado, para um corpo grande nao inundar o log.
-            if let Some(b) = body.as_ref() {
-                let s = b.to_string();
-                let head: String = s.chars().take(400).collect();
-                log::warn!("{provider:?} HTTP {status} body: {head}");
-            } else {
-                log::warn!("{provider:?} HTTP {status} (no JSON body)");
-            }
+            log::warn!("{provider:?} request failed with HTTP {status}");
             match outcome {
                 // Chave Gemini invalida vem como 400 (classificado Payload). Reclassifica
                 // como Auth para disparar o fallback: a outra familia tem chave diferente.
@@ -274,26 +270,32 @@ async fn consume_stream(
     let mut stream = resp.bytes_stream();
     let mut byte_buf: Vec<u8> = Vec::new();
     let mut text_acc = String::new();
+    let mut complete = false;
+    let mut received = 0usize;
+    let mut last_progress = std::time::Instant::now();
 
     loop {
-        let chunk = match tokio::time::timeout(STREAM_STALL_TIMEOUT, stream.next()).await {
+        let chunk = match tokio::time::timeout(
+            STREAM_STALL_TIMEOUT.saturating_sub(last_progress.elapsed()),
+            stream.next(),
+        )
+        .await
+        {
             Ok(Some(Ok(bytes))) => bytes,
-            Ok(Some(Err(_))) => {
-                return Err(OutcomeClass::Transient {
-                    retry_after_ms: None,
-                })
-            }
+            Ok(Some(Err(_))) => return Err(OutcomeClass::Uncertain),
             Ok(None) => break, // EOF: o provider fechou a ligacao normalmente.
             Err(_) => {
                 // Stall: nenhum byte novo dentro do timeout. Trata como transitorio; o
                 // retry ou o fallback tentam de novo (o `select!` em flow.rs continua a
                 // poder cancelar isto a qualquer momento, independentemente deste timeout).
-                return Err(OutcomeClass::Transient {
-                    retry_after_ms: None,
-                });
+                return Err(OutcomeClass::Uncertain);
             }
         };
 
+        received = received.saturating_add(chunk.len());
+        if received > 8 * 1024 * 1024 {
+            return Err(OutcomeClass::Payload);
+        }
         byte_buf.extend_from_slice(&chunk);
         let (events, rest) = wire::split_sse_events(&byte_buf);
         byte_buf = rest;
@@ -311,7 +313,14 @@ async fn consume_stream(
                         if wire::gemini_is_truncated(&v) {
                             return Err(OutcomeClass::Truncated);
                         }
+                        if v.pointer("/candidates/0/finishReason")
+                            .and_then(Value::as_str)
+                            == Some("STOP")
+                        {
+                            complete = true;
+                        }
                         if let Some(delta) = wire::gemini_stream_text_delta(&v) {
+                            last_progress = std::time::Instant::now();
                             on_delta(&delta);
                             text_acc.push_str(&delta);
                         }
@@ -321,6 +330,7 @@ async fn consume_stream(
                     // isso e aqui que se garante que so o texto final e acumulado.
                     Wire::Codex => match codex::codex_stream_event(&v) {
                         codex::CodexStreamEvent::TextDelta(delta) => {
+                            last_progress = std::time::Instant::now();
                             on_delta(&delta);
                             text_acc.push_str(&delta);
                         }
@@ -339,6 +349,9 @@ async fn consume_stream(
                             // resposta boa ficava presa ate o watchdog de stall disparar e virava
                             // um retry de 60 segundos. Com texto acumulado, acabou aqui.
                             if !text_acc.trim().is_empty() {
+                                if status != "completed" {
+                                    return Err(OutcomeClass::Truncated);
+                                }
                                 return Ok(text_acc);
                             }
                         }
@@ -346,23 +359,23 @@ async fn consume_stream(
                         // um erro nosso. Vai por ContentPolicy, que ja tem mensagem propria e nao
                         // manda o utilizador procurar um problema de chave ou de rede.
                         codex::CodexStreamEvent::Refusal(reason) => {
-                            log::warn!("codex refusal: {reason}");
+                            let _ = reason;
+                            log::warn!("codex: content policy refusal");
                             return Err(OutcomeClass::ContentPolicy);
                         }
                         codex::CodexStreamEvent::Failed { message } => {
-                            log::warn!("codex stream failed: {message}");
+                            log::warn!("codex: stream failed");
                             return Err(if codex::codex_is_content_policy(&message) {
                                 OutcomeClass::ContentPolicy
                             } else {
-                                OutcomeClass::Transient {
-                                    retry_after_ms: None,
-                                }
+                                OutcomeClass::Uncertain
                             });
                         }
                         codex::CodexStreamEvent::Other => {}
                     },
                     Wire::OpenAiChat => match wire::openai_stream_event(&v) {
                         OpenAiStreamEvent::ContentDelta(delta) => {
+                            last_progress = std::time::Instant::now();
                             on_delta(&delta);
                             text_acc.push_str(&delta);
                         }
@@ -372,6 +385,14 @@ async fn consume_stream(
                             log::debug!("openai reasoning delta: {} chars", r.len());
                         }
                         OpenAiStreamEvent::Stopped { finish_reason } => {
+                            if let Some(delta) = v
+                                .pointer("/choices/0/delta/content")
+                                .and_then(Value::as_str)
+                            {
+                                text_acc.push_str(delta);
+                                on_delta(delta);
+                            }
+                            complete = finish_reason == "stop";
                             let fake = json!({ "choices": [{ "finish_reason": finish_reason }] });
                             if wire::openai_is_content_policy(&fake) {
                                 return Err(OutcomeClass::ContentPolicy);
@@ -385,14 +406,15 @@ async fn consume_stream(
                 }
             }
         }
+        if complete && !text_acc.trim().is_empty() {
+            return Ok(text_acc);
+        }
     }
 
     // Sem texto acumulado (stream terminou sem nenhuma tranche util): mesmo tratamento que
     // uma resposta vazia na versao nao-streaming, transitorio, retry/fallback tratam.
-    if text_acc.trim().is_empty() {
-        Err(OutcomeClass::Transient {
-            retry_after_ms: None,
-        })
+    if !complete || text_acc.trim().is_empty() {
+        Err(OutcomeClass::Uncertain)
     } else {
         Ok(text_acc)
     }
@@ -502,11 +524,20 @@ pub async fn validate(
     key: &str,
     pctx: &ProviderCtx<'_>,
 ) -> Probe {
+    if provider == Provider::OpenAi
+        && crate::connection::ProviderConnection::parse(pctx.openai_base_url).is_err()
+    {
+        return Probe {
+            check: KeyCheck::NetworkError,
+            models: Vec::new(),
+        };
+    }
     let result = match provider {
         Provider::Gemini => {
             client
                 .get("https://generativelanguage.googleapis.com/v1beta/models")
                 .header("x-goog-api-key", key)
+                .timeout(std::time::Duration::from_secs(20))
                 .send()
                 .await
         }
@@ -514,6 +545,7 @@ pub async fn validate(
             client
                 .get(wire::openai_models_url(pctx.openai_base_url))
                 .header("Authorization", format!("Bearer {key}"))
+                .timeout(std::time::Duration::from_secs(20))
                 .send()
                 .await
         }
@@ -523,12 +555,12 @@ pub async fn validate(
             // O corpo e a listagem de modelos. Se nao vier ou vier num formato que nao
             // reconhecemos, a chave continua valida e a lista fica vazia ("nao sei"): a
             // descoberta e um extra, nunca uma razao para declarar uma chave boa como ma.
-            let models = match resp.json::<serde_json::Value>().await {
-                Ok(body) => match provider {
+            let models = match bounded_json(resp).await {
+                Some(body) => match provider {
                     Provider::Gemini => ember_core::models::parse_gemini_models(&body),
                     Provider::OpenAi => ember_core::models::parse_openai_models(&body),
                 },
-                Err(_) => Vec::new(),
+                None => Vec::new(),
             };
             Probe {
                 check: KeyCheck::Valid,
@@ -536,8 +568,12 @@ pub async fn validate(
             }
         }
         // Qualquer resposta HTTP (401/403/etc.) e o provider a recusar a chave.
-        Ok(_) => Probe {
-            check: KeyCheck::Invalid,
+        Ok(response) => Probe {
+            check: if matches!(response.status().as_u16(), 401 | 403) {
+                KeyCheck::Invalid
+            } else {
+                KeyCheck::NetworkError
+            },
             models: Vec::new(),
         },
         // Falha de transporte (sem rede, DNS, timeout): nao diz nada sobre a chave.
@@ -545,5 +581,82 @@ pub async fn validate(
             check: KeyCheck::NetworkError,
             models: Vec::new(),
         },
+    }
+}
+
+async fn bounded_json(response: reqwest::Response) -> Option<Value> {
+    let mut stream = response.bytes_stream();
+    let mut bytes = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.ok()?;
+        if bytes.len().saturating_add(chunk.len()) > 2 * 1024 * 1024 {
+            return None;
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&bytes).ok()
+}
+
+#[cfg(test)]
+mod stream_regressions {
+    use super::*;
+    use std::io::{Read, Write};
+
+    async fn response(body: &str) -> reqwest::Response {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let body = body.to_owned();
+        std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = [0u8; 1024];
+            let _ = socket.read(&mut request).unwrap();
+            write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+        });
+        Client::new()
+            .get(format!("http://{address}/synthetic"))
+            .send()
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn partial_openai_stream_is_never_a_final_result() {
+        let body = "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n";
+        assert_eq!(
+            consume_stream(Wire::OpenAiChat, response(body).await, &|_| {}).await,
+            Err(OutcomeClass::Uncertain)
+        );
+    }
+
+    #[tokio::test]
+    async fn final_delta_is_kept_when_completion_shares_the_event() {
+        let body = "data: {\"choices\":[{\"delta\":{\"content\":\"final\"},\"finish_reason\":\"stop\"}]}\n\n";
+        assert_eq!(
+            consume_stream(Wire::OpenAiChat, response(body).await, &|_| {}).await,
+            Ok("final".into())
+        );
+    }
+
+    #[tokio::test]
+    async fn gemini_requires_explicit_completion() {
+        for (finish, expected) in [
+            ("", Err(OutcomeClass::Uncertain)),
+            (",\"finishReason\":\"STOP\"", Ok("done".into())),
+        ] {
+            let body = format!("data: {{\"candidates\":[{{\"content\":{{\"parts\":[{{\"text\":\"done\"}}]}}{finish}}}]}}\n\n");
+            assert_eq!(
+                consume_stream(Wire::Gemini, response(&body).await, &|_| {}).await,
+                expected
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn oversized_json_is_rejected_before_deserialization() {
+        let body = format!("{{\"value\":\"{}\"}}", "x".repeat(2 * 1024 * 1024));
+        assert!(bounded_json(response(&body).await).await.is_none());
     }
 }

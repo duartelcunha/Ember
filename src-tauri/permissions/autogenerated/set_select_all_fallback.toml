@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-select-all-fallback"
+description = "Enables the set_select_all_fallback command without any pre-configured scope."
+commands.allow = ["set_select_all_fallback"]
+
+[[permission]]
+identifier = "deny-set-select-all-fallback"
+description = "Denies the set_select_all_fallback command without any pre-configured scope."
+commands.deny = ["set_select_all_fallback"]

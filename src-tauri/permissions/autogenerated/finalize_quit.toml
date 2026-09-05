@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-finalize-quit"
+description = "Enables the finalize_quit command without any pre-configured scope."
+commands.allow = ["finalize_quit"]
+
+[[permission]]
+identifier = "deny-finalize-quit"
+description = "Denies the finalize_quit command without any pre-configured scope."
+commands.deny = ["finalize_quit"]

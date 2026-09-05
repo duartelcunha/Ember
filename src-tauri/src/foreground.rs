@@ -203,8 +203,14 @@ fn foreground_exe() -> Option<String> {
 /// Sem esta verificacao, uma chamada de dezenas de segundos seguida de dez de preview podia
 /// acabar a colar o texto de uma app dentro de outra: entre a captura e o paste ninguem
 /// perguntava se o alvo ainda era o mesmo.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TargetSnapshot {
+    pub window: (u64, u32),
+    pub control: u64,
+}
+
 #[cfg(windows)]
-pub fn foreground_target() -> Option<(u64, u32)> {
+pub fn foreground_target() -> Option<TargetSnapshot> {
     use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
     unsafe {
         let hwnd = GetForegroundWindow();
@@ -213,17 +219,36 @@ pub fn foreground_target() -> Option<(u64, u32)> {
         }
         let mut pid: u32 = 0;
         GetWindowThreadProcessId(hwnd, Some(&mut pid));
-        Some((hwnd.0 as u64, pid))
+        let mut gui = windows::Win32::UI::WindowsAndMessaging::GUITHREADINFO {
+            cbSize: std::mem::size_of::<windows::Win32::UI::WindowsAndMessaging::GUITHREADINFO>()
+                as u32,
+            ..Default::default()
+        };
+        windows::Win32::UI::WindowsAndMessaging::GetGUIThreadInfo(0, &mut gui).ok()?;
+        if pid == 0 || gui.hwndFocus.0.is_null() {
+            return None;
+        }
+        Some(TargetSnapshot {
+            window: (hwnd.0 as u64, pid),
+            control: gui.hwndFocus.0 as u64,
+        })
     }
 }
 
 #[cfg(not(windows))]
-pub fn foreground_target() -> Option<(u64, u32)> {
+pub fn foreground_target() -> Option<TargetSnapshot> {
     None
 }
 
 /// A janela em foco ainda e a do inicio do ciclo? A regra e pura e testada
 /// (`ember_core::selection::paste_allowed`); aqui so se le o estado do SO.
-pub fn same_target(target: Option<(u64, u32)>) -> bool {
-    ember_core::selection::paste_allowed(target, foreground_target())
+pub fn same_target(target: Option<TargetSnapshot>) -> bool {
+    match (target, foreground_target()) {
+        (Some(target), Some(current)) => {
+            target.control != 0
+                && target.control == current.control
+                && ember_core::selection::paste_allowed(Some(target.window), Some(current.window))
+        }
+        _ => false,
+    }
 }

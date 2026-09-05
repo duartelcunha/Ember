@@ -1,20 +1,7 @@
-//! Cache de refinamentos ja pagos.
-//!
-//! Existe por uma razao so: **nunca pagar duas vezes pelo mesmo texto**. Antes, qualquer
-//! interrupcao (Esc, segunda tecla, uma tecla qualquer durante o preview, o timeout de 10s do
-//! preview, o clipboard ocupado no paste) deitava fora uma resposta que o provider ja tinha
-//! cobrado, e a reaccao natural do utilizador - carregar no atalho outra vez - pagava-a de novo.
-//!
-//! A chave e o texto NORMALIZADO mais tudo o que muda o resultado: o modo, o projeto ativo e uma
-//! impressao digital do system prompt. Mudar o perfil ou o projeto tem de dar um miss, senao a
-//! cache serve um refine feito com outras regras.
-//!
-//! Ha dois tipos de acerto:
-//! - **exato** (apos normalizacao): sempre seguro, pode aplicar-se sem perguntar. Espacos a mais,
-//!   uma quebra de linha no fim ou uma indentacao diferente nao mudam o que o modelo diria.
-//! - **parecido** (>= 95% de semelhanca): NAO e seguro aplicar sozinho. Esses 5% de diferenca sao
-//!   precisamente a edicao que a pessoa acabou de fazer ao texto; colar o refine antigo por cima
-//!   revertia-a em silencio. Por isso so se oferece com o preview ligado, onde ela ve e aprova.
+//! Exact result cache keyed by original bytes and request context.
+//! The native path supplies a SHA-256 identity for the processing version, connection,
+//! credentials, provider chain and request options. The fuzzy API remains for compatibility
+//! but is never used for automatic replacement.
 
 use serde::{Deserialize, Serialize};
 
@@ -29,26 +16,10 @@ pub const DEFAULT_TTL_MS: u64 = 24 * 60 * 60 * 1000;
 /// Semelhanca minima para oferecer um acerto "parecido".
 pub const SIMILAR_MIN: f64 = 0.95;
 
-/// Normaliza o texto para efeitos de chave: tira espacos nas pontas e colapsa qualquer corrida
-/// de espacos/tabs/quebras num espaco so.
-///
-/// So isto, de proposito. Baixar a caixa ou tirar pontuacao faria "texto diferente" parecer o
-/// mesmo, e o refine de um titulo em maiusculas nao serve para o mesmo titulo em minusculas.
+/// Preserve all input bytes in the cache key.
 pub fn normalize_text(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut in_space = false;
-    for c in s.trim().chars() {
-        if c.is_whitespace() {
-            in_space = true;
-        } else {
-            if in_space && !out.is_empty() {
-                out.push(' ');
-            }
-            in_space = false;
-            out.push(c);
-        }
-    }
-    out
+    // Whitespace is semantic in code, markdown and command input.
+    s.to_owned()
 }
 
 /// Impressao digital estavel de uma string (FNV-1a 64).
@@ -73,6 +44,8 @@ pub struct CacheKey {
     pub mode: RefineMode,
     pub project: Option<String>,
     pub prompt_fp: u64,
+    #[serde(default)]
+    pub context_digest: Option<String>,
 }
 
 impl CacheKey {
@@ -82,6 +55,7 @@ impl CacheKey {
             mode,
             project: project.map(str::to_owned),
             prompt_fp: fingerprint(system_prompt),
+            context_digest: None,
         }
     }
 
@@ -91,6 +65,7 @@ impl CacheKey {
         self.mode == other.mode
             && self.project == other.project
             && self.prompt_fp == other.prompt_fp
+            && self.context_digest == other.context_digest
     }
 }
 
@@ -248,14 +223,14 @@ mod tests {
     }
 
     #[test]
-    fn whitespace_differences_are_the_same_text() {
+    fn whitespace_differences_are_not_exact_cache_hits() {
         // Reencaminhar o mesmo paragrafo com uma quebra de linha a mais nao e texto novo, e
         // pagar por isso outra vez era o desperdicio mais banal que havia.
         let mut c = RefineCache::default();
         c.insert(key("  fix   this\n\n text  "), entry("Fixed."), NOW);
         assert_eq!(
             c.lookup(&key("fix this text"), NOW).map(|e| e.refined),
-            Some("Fixed.".into())
+            None
         );
     }
 

@@ -7,6 +7,10 @@ use crate::modifiers::{decide_neutralize, ModifierState, NeutralizeDecision};
 pub trait SelectionIo {
     fn clip_get(&mut self) -> Option<String>;
     fn clip_set(&mut self, s: &str);
+    fn clip_clear(&mut self);
+    fn clip_revision(&self) -> Option<u64> {
+        None
+    }
     /// Que modificadores (Ctrl/Shift/Alt/Win) estao fisicamente premidos agora.
     fn modifiers_held(&mut self) -> ModifierState;
     /// Liberta modificadores fisicos do hotkey (Ctrl/Shift/Alt) antes de simular.
@@ -130,13 +134,8 @@ pub fn capture(
     // texto NAO-vazio a entrada, foi a seleccao a ser copiada ao selecionar. Usa-o. O
     // preview-before-paste (recomendado em terminais) deixa o utilizador confirmar, cobrindo o
     // raro caso de nao ter selecionado nada e haver clipboard antigo.
-    if text.is_none() && terminal {
-        if let Some(s) = saved.as_deref() {
-            if !s.trim().is_empty() && s != sentinel {
-                text = Some(s.to_string());
-            }
-        }
-    }
+    // A terminal's previous clipboard has no selection provenance. Never substitute it
+    // for a failed copy, even when copy-on-select is enabled by the terminal.
     // Fallback select-all (nunca em terminal, ver a doc acima): nao havia seleccao, mas pode
     // muito bem haver texto no campo em foco. Seleciona tudo e copia outra vez. A seleccao fica
     // VIVA depois disto, por isso o paste a seguir substitui o campo em vez de acrescentar.
@@ -180,11 +179,32 @@ pub fn replace(
     io.clip_set(refined);
     let armed = io.clip_get().as_deref() == Some(refined);
     if armed {
+        let revision = io.clip_revision();
         io.send_paste();
         io.sleep_ms(settle_ms);
+        restore_owned(io, saved, refined, revision);
     }
-    restore(io, saved);
     armed
+}
+
+/// Restore only a value still owned by this transaction, including an initially empty clipboard.
+pub fn restore_owned(
+    io: &mut impl SelectionIo,
+    saved: &Option<String>,
+    owned: &str,
+    revision: Option<u64>,
+) -> bool {
+    if io.clip_get().as_deref() != Some(owned)
+        || (revision.is_some() && io.clip_revision() != revision)
+    {
+        return false;
+    }
+    if let Some(saved) = saved {
+        io.clip_set(saved);
+    } else {
+        io.clip_clear();
+    }
+    true
 }
 
 /// Restaura o clipboard original (best-effort: so texto).
@@ -226,13 +246,19 @@ pub fn flatten_for_terminal(text: &str) -> String {
 /// seria pior do que colar.
 pub fn paste_allowed(target: Option<(u64, u32)>, now: Option<(u64, u32)>) -> bool {
     match (target, now) {
-        (Some((thwnd, tpid)), Some((nhwnd, npid))) => thwnd == nhwnd || tpid == npid,
-        _ => true,
+        (Some((thwnd, tpid)), Some((nhwnd, npid))) => {
+            thwnd != 0 && tpid != 0 && thwnd == nhwnd && tpid == npid
+        }
+        _ => false,
     }
 }
 
 /// Clampa a posicao (x,y) de uma janela wxh a uma area de trabalho, para o orb
 /// nunca sair do ecra.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Keep the existing public geometry API compatible"
+)]
 pub fn clamp_pos(
     x: i32,
     y: i32,
@@ -257,6 +283,10 @@ pub fn clamp_pos(
 /// para mostrar um orb pequeno desviava-se muito do cursor perto das bordas do ecra: o
 /// clamp continha a janela toda, nao o pontinho visivel la dentro. O `content_dx/dy`
 /// generico permite conteudo alinhado a esquerda (pilula) e nao so centrado (orb).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Keep the existing public geometry API compatible"
+)]
 pub fn clamp_window_for_content(
     win_x: i32,
     win_y: i32,
@@ -321,6 +351,11 @@ mod tests {
                 self.clipboard = Some(s.to_string());
             }
         }
+        fn clip_clear(&mut self) {
+            if !self.frozen {
+                self.clipboard = None;
+            }
+        }
         fn modifiers_held(&mut self) -> ModifierState {
             self.held
         }
@@ -373,7 +408,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_fallback_uses_copy_on_select_clipboard_when_synthetic_copy_does_nothing() {
+    fn terminal_does_not_refine_stale_clipboard_when_copy_fails() {
         // Copy-on-select (ex. Windows Terminal): a seleccao ja esta no clipboard a entrada, e o
         // Ctrl+Shift+C sintetico nao muda nada (selection=None). Em terminal, usamos o `saved`.
         let mut io = FakeIo {
@@ -382,7 +417,7 @@ mod tests {
             ..Default::default()
         };
         let c = capture(&mut io, SENT, 5, 1, NEUT, true, false);
-        assert_eq!(c.text, Some("selected via mouse".into()));
+        assert_eq!(c.text, None);
         assert!(c.armed);
     }
 
@@ -673,10 +708,10 @@ mod tests {
     }
 
     #[test]
-    fn paste_is_allowed_when_the_app_recreated_its_window() {
+    fn paste_is_rejected_when_the_app_recreated_its_window() {
         // Electron (Slack, VS Code) troca de HWND ao mudar de vista. Recusar aqui seria recusar
         // em uso normal; o que importa e nao aterrar noutra aplicacao.
-        assert!(paste_allowed(Some((10, 100)), Some((11, 100))));
+        assert!(!paste_allowed(Some((10, 100)), Some((11, 100))));
     }
 
     #[test]
@@ -685,8 +720,11 @@ mod tests {
     }
 
     #[test]
-    fn paste_is_allowed_when_there_is_nothing_to_compare() {
-        assert!(paste_allowed(None, Some((20, 200))));
-        assert!(paste_allowed(Some((10, 100)), None));
+    fn paste_is_rejected_when_there_is_nothing_to_compare() {
+        assert!(!paste_allowed(None, Some((20, 200))));
+        assert!(!paste_allowed(Some((10, 100)), None));
+        assert!(!paste_allowed(None, None));
+        assert!(!paste_allowed(Some((0, 0)), Some((0, 0))));
+        assert!(!paste_allowed(Some((10, 100)), Some((10, 200))));
     }
 }

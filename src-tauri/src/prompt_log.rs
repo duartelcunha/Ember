@@ -40,6 +40,7 @@ pub fn path(app: &AppHandle) -> Option<PathBuf> {
 
 /// O que se guarda de um refine. Nomes curtos de proposito: sao milhares de linhas.
 pub struct Record<'a> {
+    pub generation: u64,
     pub mode: &'a str,
     pub provider: &'a str,
     pub model: &'a str,
@@ -53,7 +54,30 @@ pub struct Record<'a> {
 
 /// Acrescenta uma linha. Best-effort de ponta a ponta: isto e observabilidade, e um disco cheio
 /// ou uma permissao negada NUNCA pode fazer falhar um refine que ja correu bem.
+static WRITER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub fn set_enabled(app: &AppHandle, enabled: bool) -> Result<(), String> {
+    let _writer = WRITER.lock().map_err(|_| "Prompt log unavailable")?;
+    let mut cfg = crate::config::load(app);
+    cfg.save_prompts = enabled;
+    crate::config::save(app, &cfg).map_err(|e| e.to_string())?;
+    app.state::<crate::state::AppState>()
+        .prompt_generation
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    Ok(())
+}
+
 pub fn append(app: &AppHandle, rec: &Record<'_>) {
+    let _writer = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    if !crate::config::load(app).save_prompts
+        || app
+            .state::<crate::state::AppState>()
+            .prompt_generation
+            .load(std::sync::atomic::Ordering::SeqCst)
+            != rec.generation
+    {
+        return;
+    }
     let Some(p) = path(app) else { return };
     if let Some(dir) = p.parent() {
         let _ = std::fs::create_dir_all(dir);

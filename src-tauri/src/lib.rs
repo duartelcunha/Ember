@@ -1,8 +1,13 @@
 // Evita a consola extra no Windows em release.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod atomic_file;
+#[cfg(windows)]
+mod clipboard_snapshot;
 mod commands;
 mod config;
+mod connection;
+mod floating;
 mod flow;
 mod foreground;
 mod logging;
@@ -18,6 +23,7 @@ mod providers;
 mod refine_store;
 mod secrets;
 mod selection;
+mod selection_guard;
 mod state;
 
 use std::sync::atomic::Ordering;
@@ -26,7 +32,7 @@ use ember_core::model::RefineMode;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
 use tauri::window::Color;
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewWindow, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
@@ -35,7 +41,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 /// ESPELHADAS no frontend: `SPARK_SIZE` (Orb.tsx), `p-2` (Overlay.tsx), `ml-10` (Pill.tsx) e o
 /// `width`/`height` da janela "overlay" (tauri.conf.json). Muda uma, muda a outra, senao a
 /// orbita descentra-se do ponteiro.
-use ember_core::overlay_geom::{self as geom, DEFAULT_LAYOUT as LAYOUT};
+use ember_core::overlay_geom as geom;
 
 /// Um monitor como o SO o descreve: retangulo completo (para saber onde o cursor esta), area
 /// util (para clampar sem meter a pilula por baixo da barra de tarefas) e a ESCALA DELE.
@@ -80,55 +86,6 @@ fn monitors_of(w: &WebviewWindow) -> Vec<MonitorInfo> {
 /// nao pertence a ecra nenhum - vai-se ao mais PROXIMO. Antes caia-se no monitor da JANELA, que
 /// durante o seguimento e o de onde ela veio: o cursor passava para o outro ecra e a orb ficava
 /// colada a fronteira do anterior, que e exatamente o "a orb nao passa para o segundo monitor".
-pub(crate) fn monitor_at_point(w: &WebviewWindow, px: i32, py: i32) -> (geom::Rect, f64) {
-    let mons = monitors_of(w);
-    let rects: Vec<geom::Rect> = mons.iter().map(|m| m.full).collect();
-    match geom::monitor_for_point(px, py, &rects) {
-        Some((r, from_fallback)) => {
-            let idx = rects.iter().position(|m| *m == r).unwrap_or(0);
-            if from_fallback {
-                warn_monitor_fallback(px, py, &rects, idx);
-            }
-            (mons[idx].work, mons[idx].scale)
-        }
-        // O SO nao soube listar monitores. Ultimo recurso: o monitor da janela, com a escala
-        // dela. Nao ha melhor palpite, e sem isto a janela ficava sem clamp nenhum.
-        None => {
-            log::warn!("overlay: available_monitors() vazio; a usar o monitor da janela");
-            let r = match w.current_monitor() {
-                Ok(Some(m)) => {
-                    let p = m.position();
-                    let s = m.size();
-                    geom::Rect::new(p.x, p.y, s.width as i32, s.height as i32)
-                }
-                _ => geom::Rect::new(0, 0, 1920, 1080),
-            };
-            (r, w.scale_factor().unwrap_or(1.0))
-        }
-    }
-}
-
-/// Avisa (no maximo uma vez por 2s, isto corre a 120fps) que o ponto nao caiu em monitor nenhum.
-/// Antes este caminho era mudo e o sintoma so aparecia no ecra.
-fn warn_monitor_fallback(px: i32, py: i32, rects: &[geom::Rect], chosen: usize) {
-    use std::sync::atomic::AtomicU64;
-    static LAST: AtomicU64 = AtomicU64::new(0);
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
-    let prev = LAST.load(Ordering::Relaxed);
-    if now.saturating_sub(prev) < 2000 {
-        return;
-    }
-    LAST.store(now, Ordering::Relaxed);
-    log::warn!(
-        "overlay: ponto ({px}, {py}) fora de todos os monitores {rects:?}; usado o mais proximo (idx {chosen})"
-    );
-}
-
-/// Obtem (ou cria) uma janela declarada com `create:false`. NAO a mostra (o caller decide
-/// posicao/foco antes de `show`, para o orb nao piscar na posicao errada).
 pub(crate) fn get_or_create_window(app: &AppHandle, label: &str) -> Option<WebviewWindow> {
     if let Some(w) = app.get_webview_window(label) {
         return Some(w);
@@ -166,31 +123,6 @@ pub(crate) fn get_or_create_window(app: &AppHandle, label: &str) -> Option<Webvi
 }
 
 /// O que a overlay mostra agora, para a geometria saber que caixa manter visivel.
-fn overlay_phase(app: &AppHandle) -> geom::Phase {
-    let st = app.state::<state::AppState>();
-    if st.orb_visible.load(Ordering::SeqCst) {
-        geom::Phase::Orb {
-            labels: st.orb_labels.load(Ordering::SeqCst),
-        }
-    } else {
-        geom::Phase::Pill
-    }
-}
-
-/// Top-left desejado da janela do overlay para o cursor atual, no monitor onde o cursor esta.
-///
-/// So resolve o CONTEXTO (onde esta o cursor, em que monitor, a que escala); a matematica e
-/// pura e vive em `ember_core::overlay_geom`, com testes para o layout de dois ecras.
-fn orb_target(app: &AppHandle, w: &WebviewWindow) -> Option<((i32, i32), f64)> {
-    let c = app.cursor_position().ok()?;
-    let (mon, scale) = monitor_at_point(w, c.x as i32, c.y as i32);
-    Some((
-        geom::overlay_geometry((c.x, c.y), mon, scale, overlay_phase(app), &LAYOUT),
-        scale,
-    ))
-}
-
-/// Posiciona o orb junto ao cursor (snap), mostra-o sem foco e arranca o loop de seguimento.
 pub(crate) fn show_orb_at_cursor(app: &AppHandle) {
     let Some(w) = get_or_create_window(app, "overlay") else {
         return;
@@ -206,14 +138,8 @@ pub(crate) fn show_orb_at_cursor(app: &AppHandle) {
     let _ = w.set_always_on_top(true);
     // Transparente sobre outras apps: nunca intercetar cliques.
     let _ = w.set_ignore_cursor_events(true);
-    if let Some(((x, y), scale)) = orb_target(app, &w) {
-        // Tamanho ANTES da posicao: se o ciclo anterior acabou noutro monitor, a janela ainda
-        // tem o tamanho fisico da escala de la, e um clamp contra o tamanho errado punha o orb
-        // ao lado do ponteiro no primeiro frame.
-        apply_scale(&w, scale);
-        let _ = w.set_position(PhysicalPosition::new(x, y));
-        log_overlay_placement(&w, (x, y), scale);
-    }
+    let mut surface = floating::Surface::new(app.clone(), w.clone(), "ember://overlay-at");
+    surface.follow();
     let _ = w.show();
     // NB: nao chamamos set_focus. O paste tem de aterrar na app em foco, nao na nossa.
 
@@ -228,199 +154,21 @@ pub(crate) fn show_orb_at_cursor(app: &AppHandle) {
         .fetch_add(1, Ordering::SeqCst)
         + 1;
     let app2 = app.clone();
-    tauri::async_runtime::spawn(async move { orb_follow_loop(app2, gen).await });
+    tauri::async_runtime::spawn(async move { orb_follow_loop(app2, gen, surface).await });
 }
 
-/// Poe a janela com o tamanho fisico que a escala pede. Idempotente (o tao ja redimensiona no
-/// WM_DPICHANGED); esta chamada existe porque o WebView2 numa janela transparente as vezes fica
-/// com a superficie do tamanho antigo depois de mudar de DPI e a pintura sai cortada.
-fn apply_scale(w: &WebviewWindow, scale: f64) {
-    let (ew, eh) = geom::expected_window_physical(scale, &LAYOUT);
-    if let Ok(cur) = w.outer_size() {
-        if cur.width == ew && cur.height == eh {
-            return;
-        }
-    }
-    let _ = w.set_size(tauri::PhysicalSize::new(ew, eh));
-}
-
-/// Uma linha por exibicao com TUDO o que decide a posicao. Sem isto, um relato de "a orb nao
-/// passa para o segundo monitor" nao tinha como ser diagnosticado a posteriori: o log nao tinha
-/// uma unica linha de geometria.
-fn log_overlay_placement(w: &WebviewWindow, target: (i32, i32), scale: f64) {
-    let mons: Vec<String> = monitors_of(w)
-        .iter()
-        .map(|m| {
-            format!(
-                "[{},{} {}x{} @{}]",
-                m.full.x, m.full.y, m.full.w, m.full.h, m.scale
-            )
-        })
-        .collect();
-    log::info!(
-        "overlay: mostrada em {target:?} escala {scale} (janela {:?}, monitores {})",
-        w.outer_size().map(|s| (s.width, s.height)).ok(),
-        mons.join(" ")
-    );
-}
-
-/// Segue o cursor com suavizacao exponencial (lerp) enquanto o orb esta visivel, para um
-/// arrasto fluido tipo Apple em vez de saltos. Termina quando `hide_orb` esconde. Usa um
-/// `interval` a 120fps (nao `sleep`, que acumula deriva). A suavizacao usa o dt REAL via
-/// `alpha = 1 - exp(-dt/tau)`: assim mantem a mesma sensacao mesmo que um tick atrase (um
-/// factor fixo por frame mudava de velocidade com o frame-rate, um bug subtil de engasgo).
-async fn orb_follow_loop(app: AppHandle, gen: u64) {
-    let Some(w) = app.get_webview_window("overlay") else {
-        return;
-    };
-    let mut tick = tokio::time::interval(std::time::Duration::from_secs_f64(1.0 / 120.0));
-    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-
-    // Constante de tempo da suavizacao da PILULA do preview (a faisca segue rigida, ver
-    // abaixo): cobre ~63% da distancia ao alvo a cada tau segundos. A pilula tem texto para
-    // ler; desliza atras do cursor e assenta assim que ele para. Era 0.22 e ficava atras de
-    // mais; 0.12 chega ao cursor num terco do tempo sem perseguir aos saltos.
-    const PILL_TAU: f64 = 0.12;
-    let mut current: Option<(f64, f64)> = None;
-    let mut last = tokio::time::Instant::now();
-    // Escala do monitor onde o cursor estava no frame anterior, para detetar a travessia entre
-    // ecras com DPI diferente (o unico momento em que a janela precisa de mudar de tamanho).
-    let mut last_scale = w.scale_factor().unwrap_or(1.0);
-
-    // Reacao da estrela ao movimento: emitimos o vetor de "puxao" (cursor - estrela) para o
-    // overlay, que inclina/estica a estrela na direcao do movimento. ADAPTATIVO: numa maquina
-    // que aguenta os 120fps emitimos a cada frame; se comeca a atrasar, baixamos para 60 e depois
-    // 30fps (menos IPC), medido pelo tempo REAL de frame suavizado. So o ritmo de emissao muda;
-    // o seguimento da janela mantem-se sempre a 120fps.
-
-    // A janela ja foi vista visivel alguma vez neste ciclo?
-    //
-    // Isto existe por causa de uma corrida REAL, e nao por cautela. O `show()` e chamado da
-    // thread do atalho global, e o Tauri despacha-o para a thread principal: quando este ciclo
-    // corre a primeira volta, a janela pode ainda nao estar visivel. A versao anterior fazia
-    // `break` nesse caso, e o resultado era o pior possivel: o seguimento morria ANTES do
-    // primeiro frame e a pilula ficava parada no sitio onde nasceu, para o resto do ciclo.
-    // Enquanto nunca foi visivel, esperamos; so depois de a ter visto e que "invisivel" quer
-    // mesmo dizer "acabou".
-    let mut seen_visible = false;
-    // Teto para essa espera: se a janela nunca aparecer (falha a mostrar), nao ficamos com um
-    // ciclo a 120fps para sempre.
-    let started = tokio::time::Instant::now();
-    const SHOW_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
-
+async fn orb_follow_loop(app: AppHandle, gen: u64, mut surface: floating::Surface) {
+    let mut tick = tokio::time::interval(std::time::Duration::from_millis(16));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
-        // Nasceu um ciclo de seguimento mais novo: a janela e dele.
-        if app
-            .state::<state::AppState>()
-            .follow_gen
-            .load(Ordering::SeqCst)
-            != gen
+        tick.tick().await;
+        let state = app.state::<state::AppState>();
+        if state.follow_gen.load(Ordering::SeqCst) != gen
+            || !state.follow_cursor.load(Ordering::SeqCst)
         {
-            return;
-        }
-        match w.is_visible() {
-            Ok(true) => seen_visible = true,
-            _ if seen_visible => break,
-            _ if started.elapsed() > SHOW_GRACE => {
-                log::warn!("overlay: nunca ficou visivel em {SHOW_GRACE:?}; seguimento desiste");
-                break;
-            }
-            _ => {
-                // Ainda a aparecer. Salta o frame sem desistir do ciclo.
-                tick.tick().await;
-                continue;
-            }
-        }
-        // O seguimento acaba quando o ciclo acaba: nas pilulas de RESULTADO, que sao passageiras
-        // e nada pedem. A do PREVIEW continua a seguir, porque essa espera uma resposta e tem de
-        // estar onde a pessoa esta a olhar.
-        //
-        // Ao sair NAO se salta para o cursor. Antes fazia-se, e dava um salto visivel: a janela
-        // vinha atras do rato com suavizacao (fica sempre um pouco atras), e o reposicionamento
-        // final apagava essa distancia de uma vez. Carregar em Esc no preview via-se como a
-        // pilula a mudar de sitio no instante em que respondia. Agora fica onde estava e so se
-        // garante que cabe no ecra, que era a unica razao para haver reposicionamento aqui.
-        if !app
-            .state::<state::AppState>()
-            .follow_cursor
-            .load(Ordering::SeqCst)
-        {
-            match current {
-                Some((cx, cy)) => {
-                    // MESMA regra de clamp do seguimento, e nao a da janela inteira. Eram duas:
-                    // a posicao vinha calculada pela caixa visivel e a saida continha a janela
-                    // toda, portanto ao aprovar o preview a pilula saltava de sitio no instante
-                    // em que se carregava em Enter.
-                    let phase = overlay_phase(&app);
-                    // O monitor e o do CURSOR. Passar aqui o canto da janela era um erro
-                    // silencioso: junto a borda esquerda ou de cima, esse canto cai no monitor
-                    // do lado e a pilula era clampada ao ecra errado.
-                    let point = app
-                        .cursor_position()
-                        .map(|c| (c.x as i32, c.y as i32))
-                        .unwrap_or((cx.round() as i32, cy.round() as i32));
-                    let (mon, scale) = monitor_at_point(&w, point.0, point.1);
-                    let (nx, ny) = geom::clamp_window(cx, cy, mon, scale, phase, &LAYOUT);
-                    let _ = w.set_position(PhysicalPosition::new(nx, ny));
-                }
-                // Nunca chegou a haver posicao suavizada (saiu no primeiro frame): ai o alvo do
-                // cursor e a unica referencia que existe.
-                None => {
-                    if let Some(((x, y), _)) = orb_target(&app, &w) {
-                        let _ = w.set_position(PhysicalPosition::new(x, y));
-                    }
-                }
-            }
             break;
         }
-        let now = tokio::time::Instant::now();
-        let dt = (now - last).as_secs_f64();
-        last = now;
-        if let Some(((tx, ty), scale)) = orb_target(&app, &w) {
-            // Travessia de monitor com DPI diferente: a janela ainda tem o tamanho fisico do
-            // ecra anterior e o WebView2 pode ficar com a superficie cortada. Redimensiona-se
-            // para o tamanho que a escala nova pede e re-emite-se o estado, que forca o webview
-            // a repintar. Sem isto, o orb atravessava e ficava um retangulo meio pintado.
-            if (scale - last_scale).abs() > f64::EPSILON {
-                log::info!(
-                    "overlay: escala {last_scale} -> {scale} ao atravessar de monitor; a redimensionar"
-                );
-                apply_scale(&w, scale);
-                crate::flow::re_emit_state(&app);
-                last_scale = scale;
-                // O alvo foi calculado com a escala nova mas com a janela ainda com o tamanho
-                // velho: recalcula-se no frame seguinte, ja com o tamanho certo.
-                current = None;
-                tick.tick().await;
-                continue;
-            }
-            let (tx, ty) = (tx as f64, ty as f64);
-            let (nx, ny) = match current {
-                // Primeiro frame: snap ao alvo (sem arrasto a partir do canto).
-                None => (tx, ty),
-                Some((cx, cy)) => {
-                    if app
-                        .state::<state::AppState>()
-                        .orb_visible
-                        .load(Ordering::SeqCst)
-                    {
-                        // FAISCA: colada ao cursor, sem suavizacao. O arrasto deslocava o
-                        // centro da orbita e a faisca parecia nadar atras do rato; a vida
-                        // visual vem da propria orbita, o seguimento so tem de estar certo.
-                        (tx, ty)
-                    } else {
-                        let alpha = 1.0 - (-dt / PILL_TAU).exp();
-                        (cx + (tx - cx) * alpha, cy + (ty - cy) * alpha)
-                    }
-                }
-            };
-            let _ = w.set_position(PhysicalPosition::new(nx.round() as i32, ny.round() as i32));
-            current = Some((nx, ny));
-
-            // (A emissao ember://orb-motion morreu com a estrela: o tilt era o unico
-            // consumidor do vetor de puxao, e a faisca segue rigida. Menos um IPC por frame.)
-        }
-        tick.tick().await;
+        surface.follow();
     }
 }
 
@@ -504,49 +252,12 @@ pub(crate) fn now_ms() -> u64 {
 /// ser preciso, se ha um fallback conhecido-bom, e escreve no cache de saude. Cumpre a regra da
 /// casa: o fallback e validado a entrada, nao no momento da falha.
 async fn prevalidate_providers(app: AppHandle) {
-    use ember_core::model::Provider;
-    let state = app.state::<state::AppState>();
     let cfg = config::load(&app);
-    // A cor do projeto ativo tem de estar pronta antes do primeiro refine, senao o primeiro orb
-    // do arranque sairia sem ela e so os seguintes e que tomavam a cor.
-    commands::refresh_orb_accent(&state, &cfg);
-    let pctx = providers::ProviderCtx {
-        openai_base_url: &cfg.openai_base_url,
-    };
-    for provider in cfg.provider_order() {
-        // Modo subscricao: nao ha chave para provar, prova-se a sessao. Renovar o token aqui e o
-        // que faz com que o primeiro refine do dia nao pague a espera da renovacao.
-        if provider == Provider::OpenAi && cfg.openai_auth == config::OpenAiAuth::ChatGpt {
-            let probe = oauth::probe(&state).await;
-            if let Ok(mut m) = state.key_checks.lock() {
-                m.insert(provider, (probe.check, now_ms()));
-            }
-            log::info!(
-                "prevalidate {provider:?} (sessao ChatGPT): {:?} ({} modelos)",
-                probe.check,
-                probe.models.len()
-            );
-            models_cache::absorb(&app, &state, provider, &probe.models);
-            continue;
-        }
-        // Bug A: ler pelo try_get. Um cofre bloqueado (Err) nao rebenta o arranque: loga e salta.
-        // O caminho do refine vai, a seu tempo, reportar KeyStore honestamente quando for preciso.
-        match secrets::try_get(provider) {
-            Ok(Some(key)) => {
-                let probe = providers::validate(&state.http, provider, &key, &pctx).await;
-                if let Ok(mut m) = state.key_checks.lock() {
-                    m.insert(provider, (probe.check, now_ms()));
-                }
-                log::info!(
-                    "prevalidate {provider:?}: {:?} ({} modelos)",
-                    probe.check,
-                    probe.models.len()
-                );
-                models_cache::absorb(&app, &state, provider, &probe.models);
-            }
-            Ok(None) => {}
-            Err(_) => log::warn!("prevalidate {provider:?}: keyring read failed, skipping"),
-        }
+    commands::refresh_orb_accent(&app.state::<state::AppState>(), &cfg);
+    for provider in ["gemini", "openai"] {
+        let _ =
+            commands::validate_key(app.clone(), app.state::<state::AppState>(), provider.into())
+                .await;
     }
 }
 
@@ -728,20 +439,14 @@ fn register_one(app: &AppHandle, hotkey: &str, action: HotkeyAction) -> Result<(
             // Guarda de reentrancia. Se ja houver um refine a decorrer, esta segunda tecla
             // CANCELA-o (em vez de arrancar um segundo fluxo, que corromperia o clipboard).
             let st = app.state::<state::AppState>();
-            if st.busy.swap(true, Ordering::SeqCst) {
-                // Ja ha um ciclo a decorrer: esta tecla DISPENSA a espera. Nao mata a chamada ao
-                // modelo, que segue ate ao fim numa tarefa propria e guarda o refinado; antes
-                // matava-a, o provider cobrava na mesma e o resultado ia para o lixo. O atalho
-                // seguinte sobre o mesmo texto junta-se a essa chamada ou usa o que ela guardou.
-                let run = st.run_seq.load(Ordering::SeqCst);
-                log::info!("[run {run}] hotkey: dispensado pela segunda tecla");
-                st.request_dismiss(run);
-                return;
-            }
-            let run_id = st.run_seq.fetch_add(1, Ordering::SeqCst) + 1;
-            // Este ciclo passa a ser o dono da overlay: um `hide_after` de um ciclo anterior
-            // (a pilula ainda no ecra) compara com isto e deixa de lhe mexer.
-            st.hide_gen.store(run_id, Ordering::SeqCst);
+            let run_id = match st.begin_run() {
+                Ok(id) => id,
+                Err(id) => {
+                    st.request_dismiss(id);
+                    return;
+                }
+            };
+            let lease = flow::RunLease::new(app.clone(), run_id);
             let cfg = config::load(app);
             // Deteta o terminal E captura o titulo da janela (para contexto de projeto) ANTES de
             // mostrar o orb: a app em foco ainda e o alvo, o nosso orb nao rouba o foco.
@@ -781,20 +486,7 @@ fn register_one(app: &AppHandle, hotkey: &str, action: HotkeyAction) -> Result<(
             show_orb_at_cursor(app);
             let app = app.clone();
             tauri::async_runtime::spawn(async move {
-                flow::run(app.clone(), opts).await;
-                // Rede de seguranca para um caminho de saida que nao passe pelo `finish`, mas
-                // SO se este ciclo ainda for o dono.
-                //
-                // Incondicional era um bug a serio: o `finish` liberta a guarda e so depois
-                // espera pela pilula (~2s), portanto quando o `run` termina ja pode haver outro
-                // ciclo a decorrer. Libertar ai punha a `false` a guarda DELE, e a tecla
-                // seguinte arrancava um terceiro refine em paralelo: dois hooks LL de teclado
-                // vivos ao mesmo tempo (regra 3 do CLAUDE.md) e dois a armar o clipboard.
-                let st = app.state::<state::AppState>();
-                let current = st.hide_gen.load(Ordering::SeqCst);
-                if ember_core::may_release_guard(current, run_id) {
-                    st.busy.store(false, Ordering::SeqCst);
-                }
+                flow::run(app.clone(), opts, lease).await;
             });
         }
     })
@@ -877,6 +569,12 @@ pub fn run() {
         .manage(state::AppState::new())
         .invoke_handler(tauri::generate_handler![
             commands::get_settings,
+            refine_store::legacy_results_present,
+            refine_store::delete_legacy_results,
+            commands::get_context_snapshot,
+            floating::floating_position,
+            flow::overlay_snapshot,
+            picker::picker_snapshot,
             commands::set_model,
             commands::set_openai_base_url,
             commands::set_hotkey,
@@ -923,6 +621,10 @@ pub fn run() {
             commands::get_diagnostics,
         ])
         .setup(|app| {
+            let initial = config::load(app.handle());
+            if secrets::migrate_legacy_openai(&initial.openai_base_url).is_err() {
+                log::warn!("credentials: existing connection key could not be migrated");
+            }
             build_tray(app)?;
             let handle = app.handle().clone();
 
@@ -930,12 +632,21 @@ pub fn run() {
             // dinheiro gasto e o mesmo texto voltava a ser cobrado no arranque seguinte.
             if config::load(&handle).keep_results {
                 let cache = refine_store::load(&handle);
+                if let Ok(mut slot) = handle.state::<state::AppState>().persisted_store.lock() { *slot = cache.clone(); }
                 if let Ok(mut slot) = handle.state::<state::AppState>().store.lock() {
                     *slot = cache;
                 }
-            } else {
-                refine_store::forget(&handle);
             }
+
+            let maintenance_app = handle.clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                    if maintenance_app.state::<state::AppState>().quitting.load(Ordering::SeqCst) { break; }
+                    let app = maintenance_app.clone();
+                    let _ = tauri::async_runtime::spawn_blocking(move || refine_store::maintain(&app)).await;
+                }
+            });
 
             let is_install = match handle.path().app_data_dir() {
                 Ok(app_dir) => {
@@ -1103,4 +814,9 @@ pub fn run() {
                 }
             }
         });
+}
+
+#[cfg(windows)]
+pub fn purge_credentials_for_uninstall() -> Result<(), String> {
+    secrets::purge_for_uninstall()
 }
