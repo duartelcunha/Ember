@@ -3,7 +3,7 @@
 ## Decision and behavior
 
 Keep the existing pixel artwork. Anchor its 15 by 15 logical pixel ring independently
-of the SVG padding and project labels, 10 logical pixels beside the cursor and 2 below.
+of the SVG padding and project labels, 18 logical pixels beside the cursor and 6 below.
 Near an edge, change sides with hysteresis and clamp within the work area. Native events
 carry a geometry generation, physical origin, size and scale. The frontend hides content
 until the window dimensions and DPI agree, then applies the latest cursor sample per frame.
@@ -103,3 +103,25 @@ new prerelease or installation. No candidate version is incremented by this impl
 The `-RequireMixedDpi` run refused qualification before moving the cursor because both
 connected displays were 96 DPI.
 macOS and Linux native parity remain production blockers.
+
+## Pointer anchoring follow-up
+
+The running rc.2 still uses its published geometry. The follow-up also corrects a difference
+in the pending frontend: review and result cards now share the orb's logical pixel
+cursor gap. Visual feedback found the initially requested 10 by 2 gap too close, so the
+shared gap is now 18 beside and 6 below. At a stationary cursor, reducing the review to a result pill cannot switch
+sides merely because the smaller content would fit. Moving the pointer or changing monitor
+geometry permits normal side selection again. Fractional sizes are retained and the edge
+facing the cursor is snapped to physical pixels, avoiding width-dependent rounding drift.
+
+The added rendered-component regression first failed at `314 !== 310`. It now checks
+review, acceptance-result and orb transitions at 100%, 125%, 150%, 175% and 200%, including
+negative monitor origins, with at most half a physical pixel of rounding. `npm test`
+reports 14 passing tests. Rust still reports 53 shell and 347 core tests passing;
+`npm run build` completed in 15.82 seconds. The acceptance test exercises the state emitted
+after Enter; it does not claim to exercise the native keyboard hook or actual paste.
+
+Two additional native smoke attempts at the initial spacing stopped when foreground
+ownership changed to another application. Work-area bounds matched in every recorded sample;
+the fixture did not own foreground focus. These interrupted attempts are not qualification
+passes for this follow-up. Mixed-DPI and real Enter/paste qualification remain pending.

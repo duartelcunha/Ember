@@ -29,7 +29,7 @@ function announcement(s: OverlayState): string | null {
 /** Raiz do overlay junto ao cursor: orb (refining) ou pilha (success/error/hint). */
 export function Overlay() {
   const s = useOverlayState();
-  const floating = useFloatingPosition("ember://overlay-at", s.phase === "refining" ? "orb" : "surface");
+  const floating = useFloatingPosition("ember://overlay-at", s.phase === "refining" ? "orb" : "card");
   const labels = useFloatingPosition("ember://overlay-at", "labels");
   const status = announcement(s);
   return (

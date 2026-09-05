@@ -87,7 +87,7 @@ test("UI components preserve geometry and asynchronous ownership", async (t) => 
     await page.waitForSelector('.ember-orb-row svg');
     await presented();
     const ink = await page.$eval('.ember-orb-row svg', e => { const r = e.getBoundingClientRect(); return { x: r.x + 22, y: r.y + 2 }; });
-    assert.equal(ink.x, 310); assert.equal(ink.y, 182);
+    assert.equal(ink.x, 318); assert.equal(ink.y, 186);
     await send('ember://overlay-at', { sequence: 1001, generation: 3, ready: false, scale: 2, width: 800, height: 600, x: 300, y: 180, originX: 0, originY: 0 });
     await presented();
     assert.equal(await page.$eval('.ember-floating', e => getComputedStyle(e).visibility), 'hidden');
@@ -95,6 +95,32 @@ test("UI components preserve geometry and asynchronous ownership", async (t) => 
     await presented();
     assert.equal(await page.$eval('.ember-floating', e => getComputedStyle(e).visibility), 'visible');
     await capture('orb-anchor');
+    await t.test('acceptance keeps the cursor-facing edge when review becomes a pill or orb', async () => {
+      let sequence = 110;
+      for (const scale of [1, 1.25, 1.5, 1.75, 2]) {
+        const near = (actual, expected) => assert.ok(Math.abs(actual - expected) <= .51 / scale, `${actual} is not within half a physical pixel of ${expected} at ${scale}`);
+        await page.setViewport({ width: 800, height: 600, deviceScaleFactor: scale });
+        await send('ember://overlay-at', { sequence: 2000 + sequence, generation: sequence, ready: true, scale, width: 800 * scale, height: 600 * scale, x: -1000 + 300 * scale, y: -500 + 180 * scale, originX: -1000, originY: -500 });
+        await send('ember://state', { sequence: sequence++, runId: 5, phase: 'preview', preview: { original: ['Original'], result: ['Result'], page: 0 } });
+        await presented();
+        let card = await bounds();
+        near(card.x, 318); near(card.y, 186);
+        await send('ember://overlay-at', { sequence: 2000 + sequence, generation: sequence, ready: true, scale, width: 800 * scale, height: 600 * scale, x: -1000 + 600 * scale, y: -500 + 180 * scale, originX: -1000, originY: -500 });
+        await presented();
+        card = await bounds();
+        near(card.right, 582);
+        // This is the state emitted after native Enter acceptance and application.
+        // The browser test does not replace qualification of the native input hook.
+        await send('ember://state', { sequence: sequence++, runId: 5, phase: 'success', message: 'Sent' });
+        await presented();
+        card = await bounds();
+        near(card.right, 582); near(card.y, 186);
+        await send('ember://state', { sequence: sequence++, runId: 5, phase: 'refining' });
+        await presented();
+        const ring = await page.$eval('.ember-orb-row svg', e => { const r = e.getBoundingClientRect(); return { right: r.x + 37, y: r.y + 2 }; });
+        near(ring.right, 582); near(ring.y, 186);
+      }
+    });
     await page.goto(`http://127.0.0.1:${port}/__ember-test/picker`);
     await page.waitForFunction(() => window.__pickerReady === true && document.querySelector('.ember-floating'));
     await send('ember://picker', { sequence: 20, rows: Array.from({ length: 20 }, (_, i) => ({ id: `${i}`, name: `Project ${i}`, color: '#fd8c3c', icon: 'sparkle' })), index: 19, open: true, chosen: null });
