@@ -56,6 +56,11 @@ jobs:
       - name: Rust lint
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+      - name: Release publication guard regressions
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/publication-guards.test.ps1
+
       - name: Frontend regression tests
         run: npm test
 

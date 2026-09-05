@@ -6,7 +6,7 @@ not production approval.
 
 ## Implementation ledger
 
-The approved six-stage plan is **partially implemented**. Production release approval remains blocked. A Windows evaluation candidate is being prepared through the signed prerelease workflow; publication and installation are recorded separately below. This ledger supersedes production claims in older audits
+The approved six-stage plan is **partially implemented**. Production release approval remains blocked. Windows evaluation candidate 1.1.0-rc.1 is published and installed locally; its signature, migration and two-monitor picker smoke results are recorded in [native qualification evidence](native-qualification.md). This ledger supersedes production claims in older audits
 and demonstration recordings. Baseline: `179e397`, `feat/picker-follows-the-pointer`.
 
 | Area | Required evidence | State |
@@ -16,8 +16,8 @@ and demonstration recordings. Baseline: `179e397`, `feat/picker-follows-the-poin
 | Overlay and project picker | Shared monitor surface, measured DOM bounds, sequence snapshots, paging, reduced motion | Browser and geometry tests pass; native matrix open |
 | Context and projects | None/Auto/Pinned behavior, resolved snapshot inspector, draft revisions, bounded imports, source fingerprint | Global source authorization and full scope hierarchy open |
 | Persistence and connections | Endpoint-bound keys, encrypted opt-in results, generations, atomic config, bounded streams | Deterministic native race/failure tests open |
-| Platform parity | Three-OS CI configuration and real Linux credential backend | macOS/Linux input/clipboard/target adapters not implemented |
-| Distribution | Explicit prerelease, pinned tooling, opt-in uninstall data removal | Signing, native qualification and recovery matrix open |
+| Platform parity | Three-OS CI passed tests, strict lint and frontend build; real Linux credential backend | macOS/Linux input/clipboard/target adapters not implemented |
+| Distribution | Signed updater candidate published and installed, pinned tooling, opt-in uninstall data removal | Publisher signing/notarization, wider native qualification and recovery matrix open |
 
 ## Findings and implementation
 
@@ -147,8 +147,7 @@ model quality scores are claimed.
 and unsoundness notices also require platform-specific review. No blanket audit suppression
 was added. A lockfile advisory without an active chain is not proof of binary exploitability.
 
-The local WSL distribution has no Cargo or required WebKit/pkg-config environment. macOS
-hardware is unavailable here. CI configuration is not evidence that either platform built.
+The local WSL distribution has no Cargo or required WebKit/pkg-config environment. macOS hardware is unavailable here. GitHub run [33941268636](https://github.com/duartelcunha/Ember/actions/runs/33941268636) passed Rust tests, strict Clippy, browser regressions, TypeScript and frontend build on Windows, macOS and Ubuntu 24.04. This establishes CI compilation and automated checks, not native functional parity.
 
 ## Release boundary
 
@@ -189,3 +188,15 @@ is separate from production promotion. The signature verification utility can be
 with `cargo run --locked -p ember --example verify_update -- <installer> <signature>`.
 
 Cross-platform CI initially found Windows-only dead code in macOS/Linux builds. The pure key ownership decisions and their six regressions now live in ember-core; only native adapter entry points are platform-gated. Strict lint remains enabled.
+
+The candidate delivery workflow completed successfully. Tag `v1.1.0-rc.1` points to the
+qualified merge commit `5fc4b14d56eeb6f76fa4ba1b54e91bb2a0f367aa`. The release contains
+the NSIS installer, detached signature, `latest.json` and `SHA256SUMS.txt`; stable latest
+remains `v1.0.0`. Release-please was reconciled after publication and its erroneous
+pre-publication downgrade proposal was closed. Remaining production work is tracked in
+[issue #26](https://github.com/duartelcunha/Ember/issues/26).
+
+Follow-up publication guards reject an already published release and a draft whose source
+revision differs from the checkout, before downloading or uploading artifacts. The real
+PowerShell script passes three command-mocked regressions, including the matching-source
+path reaching artifact verification. The tests do not issue remote mutations.
