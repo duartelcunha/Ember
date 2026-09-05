@@ -41,6 +41,7 @@ pub struct SettingsDto {
     /// "sem chave", diz que nao conseguiu verificar.
     key_store_error: Option<String>,
     profile_text: String,
+    profile_limit_bytes: usize,
     profile_source: &'static str,
     profile_path: Option<String>,
     profile_sources: Vec<ember_core::profile_import::Source>,
@@ -159,6 +160,7 @@ fn build_dto(_app: &AppHandle, cfg: &config::Config) -> SettingsDto {
         chatgpt_account: session.and_then(|s| s.account_label),
         key_store_error,
         profile_text: resolved.profile.text,
+        profile_limit_bytes: ember_core::prompt::MAX_PROFILE_BYTES,
         profile_source: source_str(resolved.profile.source),
         profile_path: resolved.path,
         profile_sources: cfg.profile_sources.clone(),
@@ -1533,9 +1535,10 @@ pub(crate) async fn prepare_refine(
             "projectSource": project_source,
             "profileSource": resolved.path,
             "profileSources": cfg.profile_sources,
-            "profile": ember_core::prompt::cap_profile(&ember_core::project::redact_secrets(&resolved.profile.text), ember_core::prompt::MAX_PROFILE_CHARS),
-            "profileTruncated": resolved.profile.text.len() > ember_core::prompt::MAX_PROFILE_CHARS,
-            "profileInvalid": resolved.profile.text.trim().len() > ember_core::prompt::MAX_PROFILE_CHARS,
+            "profile": ember_core::prompt::profile_data(&resolved.profile.text),
+            "profileTruncated": resolved.profile.text.len() > ember_core::prompt::MAX_PROFILE_BYTES,
+            "profileRedacted": ember_core::project::redact_secrets(&resolved.profile.text) != resolved.profile.text.lines().collect::<Vec<_>>().join("\n"),
+            "profileInvalid": resolved.profile.text.trim().len() > ember_core::prompt::MAX_PROFILE_BYTES,
             "projectContext": project_block,
             "reason": if selected.is_some() && used.is_none() { "Selected project has an empty brief" }
                 else if selection == "none" { "Project context explicitly disabled" }
@@ -1544,7 +1547,7 @@ pub(crate) async fn prepare_refine(
             "configRevision": cfg.revision,
         }));
     }
-    if resolved.profile.text.trim().len() > ember_core::prompt::MAX_PROFILE_CHARS {
+    if resolved.profile.text.trim().len() > ember_core::prompt::MAX_PROFILE_BYTES {
         return Err(ember_core::CoreError::InvalidProfile);
     }
     let chain = build_chain(app, state, &cfg).await?;

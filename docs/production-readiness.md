@@ -228,3 +228,14 @@ Publication guards reported `3 passed; 0 failed`; version consistency reported `
 The four browser captures in `target/profile-browser-evidence` were inspected locally.
 They use synthetic fixtures and mocked IPC. Publication and installation evidence will be
 recorded after the new candidate passes the qualified release workflow.
+
+Compatibility review found an existing approved profile larger than the old 2,000-byte cap.
+The reviewed profile budget is now 8 KiB and is supplied to Settings by the backend. The UI
+shows the size used on every request. Existing profiles within that budget remain complete;
+larger profiles still require explicit editing. Inspector and provider use the same redaction
+and escaping function. Neutralizing a delimiter cannot truncate text at the budget boundary.
+
+Budget compatibility validation: `cargo test --workspace --locked --quiet` reported 49 shell
+and 342 core tests passing; `npm test` reported 8 passing, 0 failing; `npm run build` completed
+with 5,095 modules in 10.51 seconds. The earlier candidate workflow was cancelled before
+artifact generation so the next publication uses this corrected source revision.

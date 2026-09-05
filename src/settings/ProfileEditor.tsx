@@ -21,7 +21,8 @@ export function ProfileEditor({ settings, onSaved }: { settings: EmberSettings; 
     // Only a persisted profile change replaces the draft; unrelated settings refreshes do not.
   }, [persisted]);
   useEffect(() => () => { epoch.current++; }, []);
-  const tooLong = new TextEncoder().encode(text.trim()).length > 2000;
+  const profileBytes = new TextEncoder().encode(text.trim()).length;
+  const tooLong = profileBytes > settings.profileLimitBytes;
 
   async function importFiles() {
     const operation = ++epoch.current;
@@ -66,6 +67,7 @@ export function ProfileEditor({ settings, onSaved }: { settings: EmberSettings; 
     <Textarea aria-labelledby="profile-heading" className="h-[clamp(140px,38vh,420px)] min-h-0 resize-none overflow-y-auto"
       value={text} disabled={saving} onChange={event => { epoch.current++; setText(event.target.value); }}
       placeholder="Your writing preferences and technical facts." />
+    <p className="text-xs text-fg-muted">{profileBytes.toLocaleString()} / {settings.profileLimitBytes.toLocaleString()} bytes. This profile is included in every refinement.</p>
     {tooLong && <p role="alert" className="text-sm text-error">This profile is too long. Shorten it before saving. The imported draft has not been truncated.</p>}
     {warnings.length > 0 && <div role="status" className="space-y-2 text-xs text-fg-muted">{warnings.map((warning, index) => <p key={index}>{warning}</p>)}</div>}
     {sources.length > 0 && <details className="text-xs text-fg-muted"><summary className="cursor-pointer">Import provenance ({sources.length} sources)</summary>
