@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-reload-profile"
+description = "Enables the reload_profile command without any pre-configured scope."
+commands.allow = ["reload_profile"]
+
+[[permission]]
+identifier = "deny-reload-profile"
+description = "Denies the reload_profile command without any pre-configured scope."
+commands.deny = ["reload_profile"]

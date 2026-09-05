@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-save-prompts"
+description = "Enables the set_save_prompts command without any pre-configured scope."
+commands.allow = ["set_save_prompts"]
+
+[[permission]]
+identifier = "deny-set-save-prompts"
+description = "Denies the set_save_prompts command without any pre-configured scope."
+commands.deny = ["set_save_prompts"]

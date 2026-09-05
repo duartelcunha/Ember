@@ -28,6 +28,9 @@ use tauri::{AppHandle, Manager};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    #[serde(default)]
+    pub schema_version: u32,
+    pub revision: u64,
     pub gemini_model: String,
     /// Modelo do provider OpenAI-compatible (default fallback). Id livre; a UI aceita Custom.
     pub openai_model: String,
@@ -87,11 +90,8 @@ pub struct Config {
     /// melhorar o prompting com casos reais. Default OFF, e por privacidade: ao contrario do log
     /// normal, isto leva o TEXTO do utilizador para disco. Ver `prompt_log`.
     pub save_prompts: bool,
-    /// Guarda em disco os refinados ja pagos, para uma interrupcao (Esc, uma tecla durante o
-    /// preview, o clipboard ocupado, fechar a app) nao custar dinheiro: o atalho seguinte sobre
-    /// o mesmo texto reaproveita em vez de pagar. Default ON, ao contrario do `save_prompts`:
-    /// este ficheiro existe para o utilizador, nao para nos, e sem ele a cache morre no fecho.
-    /// Guarda texto do utilizador; desligar apaga o que la esta (ver `refine_store::forget`).
+    /// Results remain in session memory unless encrypted retention is explicitly enabled.
+    /// Disabling retention deletes retained files; legacy data is preserved during migration.
     pub keep_results: bool,
     /// Modo debug: abre as devtools nas settings e mostra o painel de diagnostico. O ficheiro
     /// de log capta sempre; isto controla a superficie visivel ao utilizador. Default off.
@@ -133,6 +133,8 @@ pub const SELECT_ALL_MAX_CHARS: (usize, usize) = (500, 100_000);
 impl Default for Config {
     fn default() -> Self {
         Self {
+            schema_version: 1,
+            revision: 0,
             gemini_model: DEFAULT_GEMINI_MODEL.to_string(),
             openai_model: DEFAULT_OPENAI_MODEL.to_string(),
             gemini_model_auto: true,
@@ -154,7 +156,7 @@ impl Default for Config {
             capture_step_ms: 10,
             paste_settle_ms: 90,
             save_prompts: false,
-            keep_results: true,
+            keep_results: false,
             debug_mode: false,
             project_context: false,
             preview_before_paste: false,
@@ -346,9 +348,198 @@ impl Config {
     }
 }
 
+fn config_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|d| d.join("config.json"))
+}
+
+/// Carrega a config do disco; devolve defaults se nao existir ou estiver corrompida.
+static CONFIG_WRITER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub fn load(app: &AppHandle) -> Config {
+    let _writer = CONFIG_WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    load_unlocked(app)
+}
+
+fn load_unlocked(app: &AppHandle) -> Config {
+    config_path(app)
+        .and_then(|p| read_at(&p).ok())
+        .unwrap_or_default()
+}
+
+fn read_at(path: &std::path::Path) -> std::io::Result<Config> {
+    use std::io::Read;
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Config::default()),
+        Err(error) => return Err(error),
+    };
+    let mut bytes = Vec::new();
+    file.take(4 * 1024 * 1024 + 1).read_to_end(&mut bytes)?;
+    if bytes.len() > 4 * 1024 * 1024 {
+        return Err(std::io::Error::other(
+            "Configuration exceeds the size limit",
+        ));
+    }
+    match serde_json::from_slice::<Config>(&bytes) {
+        Ok(mut cfg) => {
+            if cfg.schema_version > 1 {
+                return Err(std::io::Error::other(
+                    "Configuration belongs to a newer Ember version",
+                ));
+            }
+            if cfg.schema_version == 0 {
+                // The old default was on, so its boolean does not establish consent to the
+                // new retention policy. Preserve the original before migrating to memory only.
+                let backup = path.with_extension(format!("json.v0-{}.bak", crate::now_ms()));
+                use std::io::Write;
+                let mut file = fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(backup)?;
+                file.write_all(&bytes)?;
+                file.sync_all()?;
+                cfg.keep_results = false;
+                cfg.schema_version = 1;
+                cfg.revision = cfg
+                    .revision
+                    .checked_add(1)
+                    .ok_or_else(|| std::io::Error::other("Revision exhausted"))?;
+                crate::atomic_file::write(path, &serde_json::to_vec_pretty(&cfg)?)?;
+            }
+            Ok(cfg.sanitize())
+        }
+        Err(_) => {
+            // Copy into a unique backup before removing the corrupt original. Never overwrite
+            // an earlier recovery file, and never authorize a save if backup fails.
+            let backup = path.with_extension(format!(
+                "json.corrupt-{}-{}.bak",
+                crate::now_ms(),
+                std::process::id()
+            ));
+            use std::io::Write;
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&backup)?;
+            file.write_all(&bytes)?;
+            file.sync_all()?;
+            fs::remove_file(path)?;
+            log::warn!("config: corrupt configuration preserved in a recovery file");
+            Ok(Config::default())
+        }
+    }
+}
+
+/// Grava a config no disco (cria o diretorio se preciso).
+pub fn save(app: &AppHandle, cfg: &Config) -> std::io::Result<()> {
+    let path = config_path(app)
+        .ok_or_else(|| std::io::Error::other("Configuration directory unavailable"))?;
+    save_at(&path, cfg)
+}
+
+fn save_at(path: &std::path::Path, cfg: &Config) -> std::io::Result<()> {
+    let _writer = CONFIG_WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let current = read_at(path)?;
+    if current.revision != cfg.revision {
+        return Err(std::io::Error::other(
+            "Settings changed concurrently. Reload and retry.",
+        ));
+    }
+    let mut cfg = cfg.clone().sanitize();
+    cfg.revision = current
+        .revision
+        .checked_add(1)
+        .ok_or_else(|| std::io::Error::other("Revision exhausted"))?;
+    let bytes = serde_json::to_vec_pretty(&cfg)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    crate::atomic_file::write(path, &bytes)
+}
+
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::field_reassign_with_default,
+        reason = "Tests deliberately mutate one setting at a time"
+    )]
     use super::*;
+
+    fn test_folder() -> PathBuf {
+        let suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let folder =
+            std::env::temp_dir().join(format!("ember-config-test-{}-{suffix}", std::process::id()));
+        fs::create_dir(&folder).unwrap();
+        folder
+    }
+
+    #[test]
+    fn legacy_default_retention_requires_fresh_consent_and_preserves_original() {
+        let folder = test_folder();
+        let path = folder.join("config.json");
+        let original = br#"{"keep_results":true,"theme":"cream"}"#;
+        fs::write(&path, original).unwrap();
+        let migrated = read_at(&path).unwrap();
+        assert_eq!(migrated.schema_version, 1);
+        assert!(!migrated.keep_results);
+        assert_eq!(migrated.theme, "cream");
+        assert_eq!(read_at(&path).unwrap(), migrated);
+        let backup = fs::read_dir(&folder)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| p.extension().is_some_and(|e| e == "bak"))
+            .unwrap();
+        assert_eq!(fs::read(backup).unwrap(), original);
+        let mut consented = migrated;
+        consented.keep_results = true;
+        save_at(&path, &consented).unwrap();
+        assert!(read_at(&path).unwrap().keep_results);
+        fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn stale_writer_cannot_erase_another_setting() {
+        let folder = test_folder();
+        let path = folder.join("config.json");
+        let first = Config {
+            theme: "dark".into(),
+            ..Config::default()
+        };
+        let stale = Config {
+            keep_results: true,
+            ..Config::default()
+        };
+        save_at(&path, &first).unwrap();
+        assert!(save_at(&path, &stale).is_err());
+        let current = read_at(&path).unwrap();
+        assert_eq!(current.theme, "dark");
+        assert!(!current.keep_results);
+        assert_eq!(current.revision, 1);
+        fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn corrupt_configuration_is_preserved_before_recovery() {
+        let folder = test_folder();
+        let path = folder.join("config.json");
+        fs::write(&path, "{broken configuration").unwrap();
+        let recovered = read_at(&path).unwrap();
+        assert_eq!(recovered.revision, 0);
+        let backup = fs::read_dir(&folder)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        assert_eq!(fs::read_to_string(backup).unwrap(), "{broken configuration");
+        save_at(&path, &recovered).unwrap();
+        assert_eq!(read_at(&path).unwrap().revision, 1);
+        fs::remove_dir_all(folder).unwrap();
+    }
 
     #[test]
     fn sanitize_clamps_timing_out_of_range() {
@@ -653,6 +844,7 @@ mod tests {
             brief: "Escreve curto.".into(),
             folder: None,
             source_path: None,
+            source_fingerprint: None,
             accent_custom: None,
         }];
         assert_eq!(c.sanitize().active_project.as_deref(), Some("fantasma"));
@@ -687,49 +879,4 @@ mod tests {
         c2.openai_base_url = "   ".into();
         assert_eq!(c2.sanitize().openai_base_url, d.openai_base_url);
     }
-}
-
-fn config_path(app: &AppHandle) -> Option<PathBuf> {
-    app.path()
-        .app_config_dir()
-        .ok()
-        .map(|d| d.join("config.json"))
-}
-
-/// Carrega a config do disco; devolve defaults se nao existir ou estiver corrompida.
-pub fn load(app: &AppHandle) -> Config {
-    let Some(p) = config_path(app) else {
-        return Config::default();
-    };
-    let Ok(s) = fs::read_to_string(&p) else {
-        return Config::default();
-    };
-    match serde_json::from_str::<Config>(&s) {
-        Ok(cfg) => cfg.sanitize(),
-        Err(e) => {
-            // Ficheiro corrompido: preserva-o (config.json.bak) antes de seguir com defaults,
-            // senao o proximo save escrevia por cima e a config do utilizador perdia-se sem
-            // deixar rasto para recuperar.
-            log::warn!("config: corrupt config.json ({e}); backing up to .bak and using defaults");
-            if let Err(e) = fs::rename(&p, p.with_extension("json.bak")) {
-                log::warn!("config: could not back up corrupt config: {e}");
-            }
-            Config::default()
-        }
-    }
-}
-
-/// Grava a config no disco (cria o diretorio se preciso).
-pub fn save(app: &AppHandle, cfg: &Config) -> std::io::Result<()> {
-    if let Some(p) = config_path(app) {
-        if let Some(dir) = p.parent() {
-            fs::create_dir_all(dir)?;
-        }
-        // Serializa antes de escrever: um erro (improvavel) nunca deve truncar o ficheiro
-        // para vazio (o antigo unwrap_or_default escrevia "" e apagava tudo).
-        let s = serde_json::to_string_pretty(cfg)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        fs::write(p, s)?;
-    }
-    Ok(())
 }

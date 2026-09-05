@@ -198,7 +198,14 @@ pub fn gemini_stream_text_delta(chunk: &Value) -> Option<String> {
 /// `reasoning`: outros endpoints OpenAI-compatible rejeitam/ignoram campos desconhecidos de
 /// forma inconsistente). Host-match tolerante a scheme/porta.
 pub fn openai_is_openrouter(base_url: &str) -> bool {
-    base_url.contains("openrouter.ai")
+    let Some(authority) = base_url
+        .strip_prefix("https://")
+        .map(|s| s.split('/').next().unwrap_or(""))
+    else {
+        return false;
+    };
+    authority.eq_ignore_ascii_case("openrouter.ai")
+        || authority.eq_ignore_ascii_case("openrouter.ai:443")
 }
 
 /// URL do endpoint de chat. Tira uma barra final defensivamente (um base URL escrito a mao com
@@ -837,5 +844,21 @@ mod tests {
         assert!(!openai_is_truncated(&json!({
             "choices": [{ "finish_reason": "stop" }]
         })));
+    }
+}
+
+#[cfg(test)]
+mod origin_regressions {
+    #[test]
+    fn openrouter_identity_requires_exact_https_authority() {
+        assert!(super::openai_is_openrouter("https://openrouter.ai/api/v1"));
+        for url in [
+            "https://openrouter.ai.attacker.invalid/v1",
+            "https://attacker.invalid/openrouter.ai",
+            "https://openrouter.ai@attacker.invalid/v1",
+            "http://openrouter.ai/api/v1",
+        ] {
+            assert!(!super::openai_is_openrouter(url));
+        }
     }
 }

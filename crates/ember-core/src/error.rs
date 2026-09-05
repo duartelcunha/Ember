@@ -19,6 +19,8 @@ use thiserror::Error;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OutcomeClass {
     Success,
+    /// The request may have been processed. Never retry automatically.
+    Uncertain,
     Transient {
         retry_after_ms: Option<u64>,
     },
@@ -37,6 +39,10 @@ pub enum OutcomeClass {
 /// Erros de dominio. Sao o `reason` em `Decision::Fail` e o retorno dos parsers de wire.
 #[derive(Debug, Clone, PartialEq, Eq, Error, Serialize, Deserialize)]
 pub enum CoreError {
+    #[error(
+        "The request ended without a complete result and may have been charged. Retry explicitly."
+    )]
+    Uncertain,
     #[error("todos os providers falharam (erros transitorios esgotados)")]
     AllProvidersFailed,
     #[error("sem providers configurados")]

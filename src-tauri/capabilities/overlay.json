@@ -2,8 +2,12 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "overlay",
   "description": "Permissoes minimas da janela overlay (hot path).",
-  "windows": ["overlay"],
+  "windows": [
+    "overlay"
+  ],
   "permissions": [
-    "core:default"
+    "core:default",
+    "allow-floating-position",
+    "allow-overlay-snapshot"
   ]
 }

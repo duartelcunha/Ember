@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-preview-before-paste"
+description = "Enables the set_preview_before_paste command without any pre-configured scope."
+commands.allow = ["set_preview_before_paste"]
+
+[[permission]]
+identifier = "deny-set-preview-before-paste"
+description = "Denies the set_preview_before_paste command without any pre-configured scope."
+commands.deny = ["set_preview_before_paste"]

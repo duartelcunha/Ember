@@ -291,10 +291,7 @@ pub fn derive_accent(hex: &str) -> Option<ResolvedAccent> {
     let mid = oklch::to_oklch(oklch::parse_hex(hex)?);
     let stop = |l: f64, c: f64| oklch::to_hex(oklch::to_srgb_in_gamut(Oklch { l, c, h: mid.h }));
     Some(ResolvedAccent {
-        raw: stop(
-            (mid.l - RAW_DELTA_L).clamp(0.10, 0.60),
-            mid.c * RAW_CHROMA,
-        ),
+        raw: stop((mid.l - RAW_DELTA_L).clamp(0.10, 0.60), mid.c * RAW_CHROMA),
         mid: oklch::to_hex(oklch::to_srgb_in_gamut(mid)),
         glow: stop(
             (mid.l + GLOW_DELTA_L).clamp(0.85, 0.97),
@@ -381,6 +378,8 @@ pub struct Project {
     /// O ficheiro concreto que foi lido dessa pasta.
     #[serde(default)]
     pub source_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_fingerprint: Option<String>,
     /// A custom `#rrggbb` accent, which wins over `accent` when it parses.
     ///
     /// Additive and optional on purpose: every config already on disk stays valid and needs no
@@ -528,33 +527,30 @@ pub fn picker_size(rows: usize) -> (u32, u32) {
     )
 }
 
-/// Sobre que linha esta o ponteiro, dadas as coordenadas do rato e a geometria da janela, tudo em
-/// pixeis FISICOS (e o que o hook do rato entrega).
+/// Onde desenhar a lista DENTRO da janela do picker, em px CSS.
 ///
-/// Devolve `None` fora da janela e fora da zona das linhas (a linha de ajuda no fundo nao e
-/// selecionavel). `first` e o indice da primeira linha visivel, para a lista deslizada tambem
-/// responder ao rato.
-#[allow(clippy::too_many_arguments)]
-pub fn picker_row_at(
-    mx: i32,
-    my: i32,
-    win_x: i32,
-    win_y: i32,
-    win_w: i32,
-    pad: i32,
-    item_h: i32,
-    visible_rows: usize,
-    first: usize,
-) -> Option<usize> {
-    if item_h <= 0 || mx < win_x || mx >= win_x + win_w {
-        return None;
-    }
-    let rel = my - win_y - pad;
-    if rel < 0 {
-        return None;
-    }
-    let linha = (rel / item_h) as usize;
-    (linha < visible_rows).then_some(first + linha)
+/// A janela cobre o monitor inteiro e nao se mexe; quem anda com o rato e a lista, por
+/// `transform` dentro dela. Mover a janela em si era o caminho obvio e esta errado: a bolha tem
+/// `backdrop-filter`, e arrastar uma janela com desfoque obriga o compositor a re-amostrar o
+/// fundo a cada frame, que foi exatamente o ranger que se viu no ecra.
+///
+/// Entra em fisicos (o cursor e a area do monitor, como o SO os da) e sai em CSS px relativos ao
+/// canto da janela, que e a unica unidade que a UI entende. O clamp mantem a lista inteira dentro
+/// da area util, incluindo quando o cursor esta encostado a borda de baixo ou da direita.
+pub fn picker_pill_pos(
+    cursor: (i32, i32),
+    offset: (i32, i32),
+    area: (i32, i32, i32, i32),
+    scale: f64,
+    pill_logical: (u32, u32),
+) -> (f64, f64) {
+    let (ax, ay, aw, ah) = (area.0 as f64, area.1 as f64, area.2 as f64, area.3 as f64);
+    let (pw, ph) = (pill_logical.0 as f64 * scale, pill_logical.1 as f64 * scale);
+    // `.min` antes de `.max`, e nao `clamp`: numa area mais pequena do que a lista os limites
+    // cruzam-se, e `clamp` com min > max entra em panico. Assim a lista fica encostada ao canto.
+    let x = ((cursor.0 + offset.0) as f64).min(ax + aw - pw).max(ax);
+    let y = ((cursor.1 + offset.1) as f64).min(ay + ah - ph).max(ay);
+    ((x - ax) / scale, (y - ay) / scale)
 }
 
 /// Move o indice com wrap nos extremos. Wrap e nao clamp: numa lista curta, "Down no fim volta
@@ -713,6 +709,7 @@ Testes antes do codigo.",
             brief: "Escreve curto.".into(),
             folder: None,
             source_path: None,
+            source_fingerprint: None,
             accent_custom: None,
         }
     }
@@ -761,8 +758,16 @@ Testes antes do codigo.",
                 let d = (hue(x) - hue(&a.mid)).abs();
                 d.min(360.0 - d)
             };
-            assert!(drift(&a.raw) < 12.0, "{hex}: raw hue drifted {}", drift(&a.raw));
-            assert!(drift(&a.glow) < 12.0, "{hex}: glow hue drifted {}", drift(&a.glow));
+            assert!(
+                drift(&a.raw) < 12.0,
+                "{hex}: raw hue drifted {}",
+                drift(&a.raw)
+            );
+            assert!(
+                drift(&a.glow) < 12.0,
+                "{hex}: glow hue drifted {}",
+                drift(&a.glow)
+            );
         }
     }
 
@@ -771,7 +776,9 @@ Testes antes do codigo.",
         // The orb is a three-stop gradient. If the dark and pale stops land close together the
         // gradient flattens into a blob, and the accent stops telling the user anything. The
         // clamps in `derive_accent` are what stop that, so this is the test that pins them.
-        for hex in ["#000000", "#050505", "#ffffff", "#fafafa", "#ff0000", "#00ff00", "#0000ff"] {
+        for hex in [
+            "#000000", "#050505", "#ffffff", "#fafafa", "#ff0000", "#00ff00", "#0000ff",
+        ] {
             let a = derive_accent(hex).expect("valid hex");
             let spread = lightness(&a.glow) - lightness(&a.raw);
             assert!(
@@ -977,20 +984,30 @@ Testes antes do codigo.",
     }
 
     #[test]
-    fn picker_maps_the_pointer_to_the_row_under_it() {
-        // Janela em (100, 200), 240 de largura, 8 de padding, linhas de 34.
-        let at = |mx, my| picker_row_at(mx, my, 100, 200, 240, 8, 34, 3, 0);
-        assert_eq!(at(150, 208), Some(0), "topo da primeira linha");
-        assert_eq!(at(150, 241), Some(0), "fundo da primeira linha");
-        assert_eq!(at(150, 243), Some(1));
-        assert_eq!(at(150, 277), Some(2));
-        // Fora: acima do padding, abaixo das linhas (zona da ajuda), e fora da largura.
-        assert_eq!(at(150, 201), None);
-        assert_eq!(at(150, 320), None, "a linha de ajuda nao e selecionavel");
-        assert_eq!(at(99, 250), None);
-        assert_eq!(at(340, 250), None);
-        // Lista deslizada: a primeira linha visivel e a 4, e o rato em cima dela da 4.
-        assert_eq!(picker_row_at(150, 208, 100, 200, 240, 8, 34, 3, 4), Some(4));
+    fn the_list_follows_the_cursor_inside_the_window_and_never_leaves_the_screen() {
+        let area = (0, 0, 1920, 1080);
+        let pill = (240, 138);
+        let at = |x, y| picker_pill_pos((x, y), (14, 18), area, 1.0, pill);
+        // No meio: canto superior-esquerdo da lista ao lado do ponteiro, como um menu de contexto.
+        assert_eq!(at(500, 400), (514.0, 418.0));
+        // Encostado ao canto inferior-direito: a lista sobe e recua o que precisar para caber.
+        assert_eq!(at(1915, 1075), (1920.0 - 240.0, 1080.0 - 138.0));
+        // Fora da area (o cursor saltou para outro monitor antes de a janela o acompanhar).
+        assert_eq!(at(-300, -300), (0.0, 0.0));
+    }
+
+    #[test]
+    fn the_list_position_comes_back_in_css_pixels_on_a_scaled_monitor() {
+        // Monitor secundario a 150%: a UI raciocina em px CSS, portanto o resultado e dividido
+        // pela escala e relativo ao canto da janela, nao ao canto do ecra virtual.
+        let pos = picker_pill_pos(
+            (2000, 500),
+            (14, 18),
+            (1920, 0, 1920, 1080),
+            1.5,
+            (240, 138),
+        );
+        assert_eq!(pos, ((2014.0 - 1920.0) / 1.5, (518.0 - 0.0) / 1.5));
     }
 
     #[test]

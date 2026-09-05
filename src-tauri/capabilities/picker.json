@@ -6,6 +6,8 @@
     "picker"
   ],
   "permissions": [
-    "core:default"
+    "core:default",
+    "allow-floating-position",
+    "allow-picker-snapshot"
   ]
 }

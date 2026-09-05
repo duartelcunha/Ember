@@ -24,6 +24,9 @@ pub struct Scan {
     pub file_name: Option<String>,
     /// Linhas do ficheiro escolhido, para a pessoa perceber a dimensao do que vai enviar.
     pub lines: usize,
+    pub source_fingerprint: String,
+    pub source_paths: Vec<String>,
+    pub warnings: Vec<String>,
     /// Todos os candidatos que existem na pasta, com o peso de cada um. E o que torna a escolha
     /// explicavel: da para ver que o `CLAUDE.md` de uma linha perdeu para o `AGENTS.md`.
     pub candidates: Vec<Candidate>,
@@ -52,14 +55,149 @@ pub struct Candidate {
     pub chosen: bool,
 }
 
-fn read_capped(path: &Path) -> Option<String> {
-    let meta = std::fs::metadata(path).ok()?;
-    if !meta.is_file() || meta.len() > MAX_SOURCE_BYTES {
+fn read_capped(path: &Path, root: &Path) -> Option<String> {
+    let root = root.canonicalize().ok()?;
+    let path = path.canonicalize().ok()?;
+    if !path.starts_with(&root) {
         return None;
     }
-    // `read_to_string` falha em binario, que e o que queremos: um ficheiro que nao e texto nunca
-    // pode entrar num prompt.
-    std::fs::read_to_string(path).ok()
+    crate::profile::read_bounded(&path, MAX_SOURCE_BYTES).ok()
+}
+
+struct Sources {
+    root: PathBuf,
+    visited: std::collections::HashSet<PathBuf>,
+    active: std::collections::HashSet<PathBuf>,
+    values: Vec<(Found, String)>,
+    warnings: Vec<String>,
+    bytes: usize,
+    oversized: bool,
+}
+
+impl Sources {
+    fn visit(&mut self, found: Found, depth: usize) {
+        let Ok(path) = found.path.canonicalize() else {
+            self.warnings
+                .push("A source could not be resolved and was excluded.".into());
+            return;
+        };
+        if !path.starts_with(&self.root) || !path.is_file() {
+            self.warnings.push(
+                "A source outside the selected directory or not a regular file was excluded."
+                    .into(),
+            );
+            return;
+        }
+        if self.active.contains(&path) {
+            self.warnings
+                .push("A cyclic local import was excluded.".into());
+            return;
+        }
+        if self.visited.contains(&path) {
+            return;
+        }
+        if depth > 8 || self.visited.len() >= 32 {
+            self.warnings.push(
+                "Local import limit reached (8 levels, 32 files). Some sources were excluded."
+                    .into(),
+            );
+            return;
+        }
+        self.visited.insert(path.clone());
+        let Ok(text) = crate::profile::read_bounded(&path, MAX_SOURCE_BYTES) else {
+            self.warnings
+                .push("A source was excluded: unreadable, too large or not UTF-8.".into());
+            return;
+        };
+        self.bytes += text.len();
+        if self.bytes > MAX_SOURCE_BYTES as usize {
+            self.oversized = true;
+            return;
+        }
+        let imports: Vec<_> = text
+            .lines()
+            .filter_map(|line| {
+                let value = line.trim().strip_prefix('@')?.trim().trim_matches('"');
+                Some(value.to_owned())
+            })
+            .collect();
+        self.values.push((
+            Found {
+                path: path.clone(),
+                kind: found.kind,
+            },
+            text,
+        ));
+        self.active.insert(path.clone());
+        for import in imports {
+            let relative = Path::new(&import);
+            // Only explicit local Markdown imports are followed. No URLs, globs or home paths.
+            if relative.is_absolute()
+                || import.contains(':')
+                || import.starts_with('~')
+                || relative
+                    .extension()
+                    .is_none_or(|e| e.to_str().is_none_or(|e| !e.eq_ignore_ascii_case("md")))
+            {
+                self.warnings.push("An unsupported import was excluded. Use a relative Markdown path on its own @ line.".into());
+                continue;
+            }
+            self.visit(
+                Found {
+                    path: path.parent().unwrap_or(&self.root).join(relative),
+                    kind: found.kind,
+                },
+                depth + 1,
+            );
+        }
+        self.active.remove(&path);
+    }
+}
+
+fn collect(folder: &Path) -> (Vec<(Found, String)>, Vec<String>) {
+    let Ok(root) = folder.canonicalize() else {
+        return (
+            Vec::new(),
+            vec!["The selected directory is unavailable.".into()],
+        );
+    };
+    let mut sources = Sources {
+        root,
+        visited: Default::default(),
+        active: Default::default(),
+        values: Vec::new(),
+        warnings: Vec::new(),
+        bytes: 0,
+        oversized: false,
+    };
+    for found in project::candidates_in(folder, &|p| p.exists()) {
+        sources.visit(found, 0);
+    }
+    if sources.oversized {
+        sources.values.clear();
+        sources
+            .warnings
+            .push("Combined sources exceed 512 KiB. Extraction is disabled.".into());
+    }
+    (sources.values, sources.warnings)
+}
+
+fn fingerprint(sources: &[(Found, String)]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    for (source, text) in sources {
+        hash.update(source.path.to_string_lossy().as_bytes());
+        hash.update([0]);
+        hash.update(text.as_bytes());
+        hash.update([0]);
+    }
+    format!("{:x}", hash.finalize())
+}
+
+pub fn source_changed(project: &core::Project) -> Option<bool> {
+    let folder = Path::new(project.folder.as_deref()?);
+    let saved = project.source_fingerprint.as_deref()?;
+    Some(fingerprint(&collect(folder).0) != saved)
 }
 
 fn short_name(p: &Path) -> String {
@@ -71,12 +209,7 @@ fn short_name(p: &Path) -> String {
 /// Le os candidatos da pasta e diz qual serve. NAO envia nada para lado nenhum: existe
 /// precisamente para a pessoa ver o que seria enviado antes de decidir.
 pub fn scan(folder: &Path) -> Scan {
-    let found: Vec<Found> = project::candidates_in(folder, &|p| p.exists());
-    let with_text: Vec<(Found, String)> = found
-        .into_iter()
-        .filter_map(|f| read_capped(&f.path).map(|t| (f, t)))
-        .collect();
-
+    let (with_text, warnings) = collect(folder);
     let chosen = core::pick_source(&with_text).map(|f| f.path.clone());
     let candidates = with_text
         .iter()
@@ -101,6 +234,12 @@ pub fn scan(folder: &Path) -> Scan {
     };
 
     Scan {
+        source_fingerprint: fingerprint(&with_text),
+        source_paths: with_text
+            .iter()
+            .map(|(f, _)| f.path.to_string_lossy().into_owned())
+            .collect(),
+        warnings,
         file_name: chosen.as_ref().map(|p| short_name(p)),
         source_path: chosen.map(|p| p.to_string_lossy().into_owned()),
         lines,
@@ -120,6 +259,7 @@ fn subfolders_with_context(root: &Path) -> Vec<Subfolder> {
         return Vec::new();
     };
     let mut dirs: Vec<PathBuf> = entries
+        .take(256)
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| p.is_dir())
@@ -134,7 +274,7 @@ fn subfolders_with_context(root: &Path) -> Vec<Subfolder> {
         .filter_map(|dir| {
             let cands: Vec<(Found, String)> = project::candidates_in(dir, &|p| p.exists())
                 .into_iter()
-                .filter_map(|f| read_capped(&f.path).map(|t| (f, t)))
+                .filter_map(|f| read_capped(&f.path, root).map(|t| (f, t)))
                 .collect();
             let escolhido = core::pick_source(&cands)?;
             Some(Subfolder {
@@ -150,8 +290,8 @@ fn subfolders_with_context(root: &Path) -> Vec<Subfolder> {
 /// Porque e que a destilacao nao deu um brief. Todas terminam no mesmo sitio na UI (projeto criado
 /// com brief vazio e um botao de tentar outra vez), mas a mensagem tem de dizer a verdade.
 pub enum DistillFail {
+    SourceChanged,
     NoSource,
-    Unreadable,
     Provider(ember_core::CoreError),
     NothingUseful,
     Rejected,
@@ -160,16 +300,16 @@ pub enum DistillFail {
 impl DistillFail {
     pub fn message(&self) -> String {
         match self {
+            DistillFail::SourceChanged => "Sources changed since the folder was scanned. Select the folder again before extracting.".into(),
             DistillFail::NoSource => {
                 "No conventions file in that folder. Write the brief yourself below.".into()
             }
-            DistillFail::Unreadable => "Couldn't read that file (too big, or not text).".into(),
             DistillFail::Provider(e) => format!(
                 "Couldn't reach the model to read it ({}). Try again.",
                 crate::commands::friendly_error(e)
             ),
             DistillFail::NothingUseful => {
-                "That file has plenty in it, but nothing about how to WRITE. Write the brief \
+                "That file has plenty in it, but no useful writing preferences or technical facts. Write the brief \
                  yourself below."
                     .into()
             }
@@ -192,16 +332,36 @@ pub async fn distill(
     app: &AppHandle,
     state: &AppState,
     folder: &Path,
+    expected_fingerprint: Option<&str>,
 ) -> Result<(String, PathBuf), DistillFail> {
-    let scan = scan(folder);
-    let Some(path) = scan.source_path.as_ref().map(PathBuf::from) else {
+    let (sources, _) = collect(folder);
+    if sources.is_empty() {
         return Err(DistillFail::NoSource);
-    };
-    let Some(bruto) = read_capped(&path) else {
-        return Err(DistillFail::Unreadable);
-    };
-    let fonte = project::redact_secrets(&bruto);
-
+    }
+    if expected_fingerprint.is_some_and(|expected| expected != fingerprint(&sources)) {
+        return Err(DistillFail::SourceChanged);
+    }
+    let path = sources[0].0.path.clone();
+    // All known root documents participate. Paths label data; they never grant authority.
+    let fonte = sources
+        .iter()
+        .map(|(found, text)| {
+            format!(
+                "Source: {}\n{}",
+                found
+                    .path
+                    .strip_prefix(
+                        folder
+                            .canonicalize()
+                            .unwrap_or_else(|_| folder.to_path_buf())
+                    )
+                    .unwrap_or(&found.path)
+                    .display(),
+                project::redact_secrets(text)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
     let cfg = crate::config::load(app);
     let chain = crate::commands::build_chain(app, state, &cfg)
         .await
@@ -231,13 +391,6 @@ pub async fn distill(
     .await
     .map_err(DistillFail::Provider)?;
 
-    log::info!(
-        "destilacao: {} lidas de {} ({} chars de resposta)",
-        scan.lines,
-        path.display(),
-        resp.text.len()
-    );
-
     match core::validate_brief(&resp.text, &project::redact_secrets) {
         Ok(brief) => Ok((brief, path)),
         Err(core::BriefError::NothingUseful) => Err(DistillFail::NothingUseful),
@@ -245,5 +398,39 @@ pub async fn distill(
             log::warn!("destilacao rejeitada: {e:?}");
             Err(DistillFail::Rejected)
         }
+    }
+}
+
+#[cfg(test)]
+mod source_tests {
+    use super::*;
+    #[test]
+    fn imports_are_bounded_scoped_and_part_of_the_source_revision() {
+        let root = std::env::temp_dir().join(format!(
+            "ember-source-test-{}-{}",
+            std::process::id(),
+            crate::now_ms()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(
+            root.join("CLAUDE.md"),
+            "Writing: concise.\n@facts.md\n@../outside.md\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("facts.md"),
+            "Architecture: Rust core.\n@CLAUDE.md\n",
+        )
+        .unwrap();
+        let (sources, warnings) = collect(&root);
+        assert_eq!(sources.len(), 2);
+        assert!(warnings.iter().any(|w| w.contains("cyclic")));
+        assert!(warnings.len() >= 2);
+        let before = fingerprint(&sources);
+        std::fs::write(root.join("facts.md"), "Architecture: revised.\n").unwrap();
+        assert_ne!(fingerprint(&collect(&root).0), before);
+        std::fs::remove_file(root.join("CLAUDE.md")).unwrap();
+        std::fs::remove_file(root.join("facts.md")).unwrap();
+        std::fs::remove_dir(root).unwrap();
     }
 }

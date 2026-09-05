@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-accent-from-wheel"
+description = "Enables the accent_from_wheel command without any pre-configured scope."
+commands.allow = ["accent_from_wheel"]
+
+[[permission]]
+identifier = "deny-accent-from-wheel"
+description = "Denies the accent_from_wheel command without any pre-configured scope."
+commands.deny = ["accent_from_wheel"]

@@ -9,6 +9,8 @@
 pub enum FlowOutcome {
     /// A captura em si falhou (spawn_blocking ou `RealIo::new` deu erro).
     CaptureFailed,
+    /// The focused field cannot prove its editable element and selection identity.
+    TargetUnverifiable,
     /// O clipboard tem conteudo que a app nao sabe preservar (ficheiros, RTF, ...).
     UnpreservableClipboard,
     /// O sentinela nao armou: outra app tinha o clipboard ocupado no momento da captura.
@@ -25,7 +27,7 @@ pub enum FlowOutcome {
     Cancelled,
     /// O texto refinado nao chegou a ser armado no clipboard antes do paste.
     PasteFailed,
-    /// Refinamento e paste bem sucedidos.
+    /// A replacement shortcut was sent. This does not prove the destination accepted it.
     Success { provider: String },
     /// O refinamento falhou; `message` ja vem amigavel (de `friendly_error`).
     RefineFailed { message: String },
@@ -75,6 +77,15 @@ pub struct OverlayFeedback {
 /// tempo visivel, e um cancelamento (feedback so confirmativo) desaparece mais depressa.
 pub fn feedback_for(outcome: FlowOutcome) -> OverlayFeedback {
     match outcome {
+        FlowOutcome::TargetUnverifiable => OverlayFeedback {
+            phase: "hint",
+            message: Some(
+                "Can't verify this field. Select text in an accessible editor and try again."
+                    .into(),
+            ),
+            provider: None,
+            hide_after_ms: 3500,
+        },
         FlowOutcome::CaptureFailed => OverlayFeedback {
             phase: "error",
             message: Some("Couldn't read the selection.".into()),
@@ -130,7 +141,7 @@ pub fn feedback_for(outcome: FlowOutcome) -> OverlayFeedback {
         },
         FlowOutcome::Success { provider } => OverlayFeedback {
             phase: "success",
-            message: None,
+            message: Some("Paste sent. Check your text.".into()),
             provider: Some(provider),
             hide_after_ms: 2000,
         },
@@ -175,7 +186,7 @@ pub fn feedback_for(outcome: FlowOutcome) -> OverlayFeedback {
         },
         FlowOutcome::ReusedFromCache => OverlayFeedback {
             phase: "success",
-            message: Some("Refined \u{00b7} reused".into()),
+            message: Some("Cached result sent. Check your text.".into()),
             provider: None,
             hide_after_ms: 1600,
         },
@@ -242,12 +253,12 @@ mod tests {
     }
 
     #[test]
-    fn success_carries_the_provider_and_no_message() {
+    fn sending_input_does_not_claim_verified_replacement() {
         let fb = feedback_for(FlowOutcome::Success {
             provider: "Claude".into(),
         });
         assert_eq!(fb.phase, "success");
-        assert_eq!(fb.message, None);
+        assert_eq!(fb.message.as_deref(), Some("Paste sent. Check your text."));
         assert_eq!(fb.provider.as_deref(), Some("Claude"));
     }
 

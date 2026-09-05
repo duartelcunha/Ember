@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-capture-timing"
+description = "Enables the set_capture_timing command without any pre-configured scope."
+commands.allow = ["set_capture_timing"]
+
+[[permission]]
+identifier = "deny-set-capture-timing"
+description = "Denies the set_capture_timing command without any pre-configured scope."
+commands.deny = ["set_capture_timing"]

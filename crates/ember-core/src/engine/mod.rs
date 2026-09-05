@@ -61,62 +61,19 @@ pub enum EngineResult {
     Degrade(DegradeReason),
 }
 
-/// Fase 1 (pura): prepara a seleccao para o modelo. Normaliza -> mascara codigo/URLs ->
-/// escapa marcadores. A ordem importa: mascarar ANTES de escapar protege o conteudo de codigo
-/// (que vira token) de ser tocado pelo escape, e um `[/EMBER_INPUT]` dentro de codigo nunca
-/// chega ao modelo (vai mascarado).
-/// Teto de caracteres abaixo do qual uma seleccao curta e olhada com desconfianca. Acima disto
-/// ha sempre frase que chegue para valer a pena refinar.
-const TRIVIAL_MAX_CHARS: usize = 20;
-/// Palavras maximas de uma seleccao trivial. Duas ("tester aasdd") nao tem estrutura para
-/// melhorar; a partir de tres ja pode haver uma frase curta a serio.
-const TRIVIAL_MAX_WORDS: usize = 2;
-
-/// Vale a pena gastar uma chamada ao modelo com este texto?
-///
-/// Existe por causa de um caso real: refinar "tester aasdd" custou 3,8 segundos e uma chamada
-/// para devolver exatamente a mesma coisa. Pagar para descobrir que nao havia nada a melhorar e
-/// desperdicio, e desperdicio que o utilizador ve.
-///
-/// A regra e DELIBERADAMENTE conservadora, porque o erro caro e o falso positivo: saltar um
-/// refine que a pessoa queria e pior do que gastar uma chamada a mais. So salta o que e curto E
-/// tem pouquissimas palavras E nao tem sinal nenhum de frase.
-pub fn is_worth_refining(text: &str, mode: RefineMode) -> bool {
-    // O modo Turbo existe para PEGAR num fragmento e o expandir (ver `output_budget`, que lhe da
-    // um teto proprio precisamente para entradas curtas). Saltar "ship monday" em Turbo era
-    // desligar o atalho exatamente no caso para que ele foi feito.
-    if mode == RefineMode::Turbo {
-        return true;
-    }
-    let t = text.trim();
-    if t.is_empty() {
-        return false;
-    }
-    if t.chars().count() > TRIVIAL_MAX_CHARS {
-        return true;
-    }
-    // Fora do ASCII nao se decide nada. A contagem de palavras assenta em espacos, e o japones,
-    // o chines e o tailandes escrevem frases inteiras sem nenhum: uma frase de quinze
-    // caracteres contava como UMA palavra e era descartada em silencio. Como o erro caro aqui e
-    // saltar um refine que a pessoa queria, tudo o que nao seja ASCII simples passa.
-    if !t.is_ascii() {
-        return true;
-    }
-    // Pontuacao e sinal de que ha frase, mesmo curta ("nao, obrigado").
-    if t.chars()
-        .any(|c| matches!(c, '.' | '!' | '?' | ',' | ';' | ':'))
-    {
-        return true;
-    }
-    t.split_whitespace().count() > TRIVIAL_MAX_WORDS
+/// An explicit refine request can contain a short misspelling. Only empty input is skipped.
+pub fn is_worth_refining(text: &str, _mode: RefineMode) -> bool {
+    !text.trim().is_empty()
 }
 
 pub fn precondition(raw_selection: &str, mode: RefineMode) -> Prepared {
-    let (normalized, eol) = normalize::normalize_input(raw_selection);
-    let spans = mask::scan_spans(&normalized);
-    let input_was_single_fence = mask::is_single_fence(&normalized, &spans);
-    let (masked, table) = mask::mask(&normalized, &spans);
-    let masked_input = normalize::escape_input_markers(&masked);
+    // Preserve original bytes before normalizing prose, including mixed line endings.
+    let spans = mask::scan_spans(raw_selection);
+    let input_was_single_fence = mask::is_single_fence(raw_selection, &spans);
+    let (masked, table) = mask::mask(raw_selection, &spans);
+    let (normalized, _) = normalize::normalize_input(&masked);
+    let eol = normalize::detect_eol(raw_selection);
+    let masked_input = normalize::escape_input_markers(&normalized);
     Prepared {
         masked_input,
         spans: table,
@@ -138,8 +95,9 @@ pub fn postprocess(raw_model_text: &str, prepared: &Prepared) -> EngineResult {
     if !guard::check_preservation(&prepared.spans, &stripped) {
         return EngineResult::Degrade(DegradeReason::PreservationViolation);
     }
-    let restored = mask::unmask(&stripped, &prepared.spans);
-    let finalized = finalize::finalize(&restored, prepared.eol);
+    // Cleanup must never see protected bytes, otherwise it corrupts code whitespace.
+    let cleaned = finalize::finalize(&stripped, prepared.eol);
+    let finalized = mask::unmask(&cleaned, &prepared.spans);
     if guard::is_effectively_empty(&finalized) {
         return EngineResult::Degrade(DegradeReason::EmptyAfterCleanup);
     }
@@ -158,6 +116,45 @@ mod golds {
     //! Um gold por arquetipo: (input, output cru do modelo, modo) -> Paste esperado | Degrade.
     //! Fixa o comportamento do motor como barra de regressao (facto, nao opiniao).
     use super::*;
+
+    #[test]
+    fn protected_code_keeps_whitespace_unicode_and_mixed_line_endings() {
+        let input = "Please fix this:\r\n```text\r\na  \r\n\r\n\r\n👩\u{200d}💻\u{00a0}\n```\r\n";
+        let prepared = precondition(input, RefineMode::Polish);
+        assert_eq!(
+            postprocess(&prepared.masked_input, &prepared),
+            EngineResult::Paste(input.into())
+        );
+    }
+
+    #[test]
+    fn repeated_reordered_and_unknown_spans_are_rejected() {
+        let prepared = precondition(
+            "See https://example.com/a and https://example.com/b",
+            RefineMode::Polish,
+        );
+        let tokens: Vec<_> = prepared.spans.tokens().collect();
+        for output in [
+            format!("{} {} {}", tokens[0], tokens[0], tokens[1]),
+            format!("{} {}", tokens[1], tokens[0]),
+            format!("{} {} {{{{EMBER_SPAN_99}}}}", tokens[0], tokens[1]),
+        ] {
+            assert_eq!(
+                postprocess(&output, &prepared),
+                EngineResult::Degrade(DegradeReason::PreservationViolation)
+            );
+        }
+    }
+
+    #[test]
+    fn prose_preserves_joiners_used_by_emoji_and_scripts() {
+        let input = "👩\u{200d}💻 می\u{200c}روم";
+        let prepared = precondition(input, RefineMode::Polish);
+        assert_eq!(
+            postprocess(&prepared.masked_input, &prepared),
+            EngineResult::Paste(input.into())
+        );
+    }
 
     fn run(input: &str, model_out: &str, mode: RefineMode) -> EngineResult {
         let prepared = precondition(input, mode);
@@ -268,7 +265,7 @@ mod preflight {
             RefineMode::Polish
         ));
         assert!(is_worth_refining("我们明天开会", RefineMode::Polish));
-        assert!(is_worth_refining("ola mundo", RefineMode::Polish) == false);
+        assert!(is_worth_refining("ola mundo", RefineMode::Polish));
         assert!(is_worth_refining("olá mundo", RefineMode::Polish));
     }
 
@@ -281,13 +278,13 @@ mod preflight {
     }
 
     #[test]
-    fn a_selection_with_nothing_to_improve_never_reaches_the_model() {
+    fn short_text_is_not_silently_skipped() {
         // O caso que motivou isto: duas palavras sem estrutura, 3,8s e uma chamada para
         // devolver o mesmo texto.
-        assert!(!is_worth_refining("tester aasdd", RefineMode::Polish));
-        assert!(!is_worth_refining("asdf", RefineMode::Polish));
+        assert!(is_worth_refining("tester aasdd", RefineMode::Polish));
+        assert!(is_worth_refining("asdf", RefineMode::Polish));
         assert!(!is_worth_refining("   ", RefineMode::Polish));
-        assert!(!is_worth_refining("hello world", RefineMode::Polish));
+        assert!(is_worth_refining("hello world", RefineMode::Polish));
     }
 
     #[test]

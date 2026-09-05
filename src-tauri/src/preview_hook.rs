@@ -7,122 +7,24 @@
 //! O `unsafe` do Win32 vive todo aqui, isolado. As pecas puras (`classify_key`, `Decision`,
 //! `PREVIEW_TIMEOUT`) sao cross-platform e testadas em qualquer SO.
 
-/// O que o utilizador decidiu no gate.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Decision {
-    /// Aplicar: colar o texto refinado (Enter).
-    Accept,
-    /// Recusar: manter o original, nao colar nada (Esc, timeout, ou hotkey durante o gate).
-    Reject,
+#[cfg(windows)]
+use ember_core::input::{
+    classify_key, classify_watch_event, KeyVerdict, WatchVerdict, PREVIEW_TIMEOUT,
+};
+pub use ember_core::input::{Decision, PickerOutcome};
+
+// Capture, application and keyboard hooks share one native input owner.
+static INPUT_OWNER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub(crate) fn input_lease() -> std::sync::MutexGuard<'static, ()> {
+    INPUT_OWNER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
-
-/// O que o hook faz com uma tecla premida durante o gate.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum KeyVerdict {
-    /// Nao decide nada e a tecla segue o seu caminho normal.
-    PassThrough,
-    /// Decide o gate. `consume` = a tecla NAO chega a app em foco.
-    Decide { decision: Decision, consume: bool },
-}
-
-/// Modificadores puros. Premir Shift ou Ctrl nao e "continuar a trabalhar", e o inicio de um
-/// atalho ou de uma maiuscula: se contassem, o preview fugia mal a pessoa encostasse a um deles.
-fn is_modifier(vk: u32) -> bool {
-    matches!(
-        vk,
-        0x10 | 0x11 | 0x12 // Shift / Ctrl / Alt genericos
-            | 0x14 // Caps Lock
-            | 0x5B | 0x5C // Win esquerda/direita
-            | 0xA0..=0xA5 // Shift/Ctrl/Alt esquerda e direita
-    )
-}
-
-/// Classificador puro: o que uma tecla premida significa no gate. Testavel em qualquer SO.
-///
-/// Enter e Esc respondem a pergunta e sao CONSUMIDOS, para o Enter nao meter uma newline no
-/// editor por baixo. Qualquer outra tecla (que nao seja um modificador) quer dizer que a pessoa
-/// seguiu em frente e ja nao esta a olhar para o preview: mantem-se o original e a pilula sai da
-/// frente, mas a tecla NAO e consumida, porque ela estava a escrever na app dela e engolir-lhe um
-/// caracter seria pior do que qualquer pilula esquecida.
-pub fn classify_key(vk: u32) -> KeyVerdict {
-    match vk {
-        0x0D => KeyVerdict::Decide {
-            decision: Decision::Accept,
-            consume: true,
-        }, // VK_RETURN
-        0x1B => KeyVerdict::Decide {
-            decision: Decision::Reject,
-            consume: true,
-        }, // VK_ESCAPE
-        vk if is_modifier(vk) => KeyVerdict::PassThrough,
-        _ => KeyVerdict::Decide {
-            decision: Decision::Reject,
-            consume: false,
-        },
-    }
-}
-
-// ---------------------------------------------------------------------------------------
-// Watcher de Esc durante o refine (cancelar "anytime")
-// ---------------------------------------------------------------------------------------
-
-/// O que o watcher faz com um evento de teclado durante o refine. So o Esc lhe interessa; e um
-/// hook muito mais estreito que o do gate, porque durante o refine o utilizador continua a
-/// trabalhar na app dele e NADA do que ele escreve nos diz respeito.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum WatchVerdict {
-    /// Esc fresco: cancela o refine e CONSOME a tecla (o utilizador carregou para nos parar; se a
-    /// tecla seguisse, a app dele tambem a recebia e fechava um dialog qualquer).
-    Cancel,
-    /// Cauda da pressao que ja consumimos (repeticoes e key-up): continua a consumir, senao o
-    /// resto da pressao vazava para a app.
-    ConsumeTail,
-    /// Key-up de um Esc que ja estava premido QUANDO o watcher instalou: a pressao era da app
-    /// dele, o up e dela. Passa, e a partir daqui o proximo Esc ja conta.
-    ReleaseHeld,
-    /// Tudo o resto, Esc herdado incluido: passa intocado.
-    Pass,
-}
-
-/// Classificador puro do watcher. `ignoring_held` = o Esc ja estava em baixo na instalacao;
-/// `decided` = ja consumimos um keydown fresco e estamos a engolir a cauda.
-pub fn classify_watch_event(
-    vk: u32,
-    is_down: bool,
-    ignoring_held: bool,
-    decided: bool,
-) -> WatchVerdict {
-    if vk != 0x1B {
-        return WatchVerdict::Pass;
-    }
-    if decided {
-        // Depois de decidir, TUDO o que for Esc e cauda da nossa pressao ate ao key-up.
-        return WatchVerdict::ConsumeTail;
-    }
-    if is_down {
-        if ignoring_held {
-            // Auto-repeat de uma pressao que comecou antes de nos: e da app dele.
-            return WatchVerdict::Pass;
-        }
-        return WatchVerdict::Cancel;
-    }
-    if ignoring_held {
-        return WatchVerdict::ReleaseHeld;
-    }
-    WatchVerdict::Pass
-}
-
-/// Prazo total do gate: se o utilizador nao responder, recusa (mantem o original). O silencio
-/// nunca vira um paste.
-pub const PREVIEW_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-
-// ---------------------------------------------------------------------------------------
-// Windows: o hook real
-// ---------------------------------------------------------------------------------------
 
 #[cfg(windows)]
 mod imp {
-    use super::{classify_key, Decision, KeyVerdict, PREVIEW_TIMEOUT};
+    use super::{classify_key, Decision, KeyVerdict, PickerOutcome, PREVIEW_TIMEOUT};
     use std::sync::atomic::{AtomicU8, Ordering};
     use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -130,9 +32,10 @@ mod imp {
     use windows::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, DispatchMessageW, MsgWaitForMultipleObjectsEx, PeekMessageW,
         SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, HC_ACTION, HHOOK,
-        KBDLLHOOKSTRUCT, MSG, MSLLHOOKSTRUCT, MWMO_INPUTAVAILABLE, PM_REMOVE, QS_ALLINPUT,
-        WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP,
-        WM_MOUSEMOVE, WM_SYSKEYDOWN, WM_SYSKEYUP,
+        KBDLLHOOKSTRUCT, LLKHF_INJECTED, LLMHF_INJECTED, MSG, MSLLHOOKSTRUCT, MWMO_INPUTAVAILABLE,
+        PM_REMOVE, QS_ALLINPUT, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN,
+        WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_SYSKEYDOWN,
+        WM_SYSKEYUP, WM_XBUTTONDOWN,
     };
 
     // O callback e um `extern "system" fn` e nao captura estado: comunica pela decisao global.
@@ -145,6 +48,8 @@ mod imp {
     // O gate decide no key-DOWN, mas so LARGA o hook depois de ver a tecla subir: ver
     // `drain_until_released`.
     static RELEASED: AtomicU8 = AtomicU8::new(0);
+    static OWNED: AtomicU8 = AtomicU8::new(0);
+    static PAGE_DELTA: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
     const IGN_ENTER: u8 = 1;
     const IGN_ESC: u8 = 2;
@@ -153,6 +58,8 @@ mod imp {
         match vk {
             0x0D => IGN_ENTER,
             0x1B => IGN_ESC,
+            0x21 => 4,
+            0x22 => 8,
             _ => 0,
         }
     }
@@ -163,6 +70,35 @@ mod imp {
             let kb = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
             let vk = kb.vkCode;
             let bit = ignore_bit(vk);
+            if matches!(vk, 0x21 | 0x22) {
+                let down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
+                let up = msg == WM_KEYUP || msg == WM_SYSKEYUP;
+                if up {
+                    IGNORE_HELD.fetch_and(!bit, Ordering::SeqCst);
+                    if OWNED.load(Ordering::SeqCst) & bit != 0 {
+                        RELEASED.fetch_or(bit, Ordering::SeqCst);
+                        OWNED.fetch_and(!bit, Ordering::SeqCst);
+                        return LRESULT(1);
+                    }
+                }
+                if down && OWNED.load(Ordering::SeqCst) & bit != 0 {
+                    RELEASED.fetch_and(!bit, Ordering::SeqCst);
+                    if HOOK_DECISION.load(Ordering::SeqCst) != 0 {
+                        return LRESULT(1);
+                    }
+                }
+                if down
+                    && IGNORE_HELD.load(Ordering::SeqCst) & bit == 0
+                    && HOOK_DECISION.load(Ordering::SeqCst) == 0
+                {
+                    OWNED.fetch_or(bit, Ordering::SeqCst);
+                    RELEASED.fetch_and(!bit, Ordering::SeqCst);
+                    PAGE_DELTA.fetch_add(if vk == 0x22 { 1 } else { -1 }, Ordering::SeqCst);
+                    return LRESULT(1);
+                }
+                return CallNextHookEx(None, code, wparam, lparam);
+            }
+
             // Teclas que NAO sao o Enter nem o Esc: se decidirem alguma coisa (a pessoa continuou
             // a escrever), marcam a decisao e seguem o seu caminho na mesma. Nunca se consomem, e
             // por isso este ramo cai sempre no `CallNextHookEx` la em baixo.
@@ -188,34 +124,46 @@ mod imp {
                 let ignoring = IGNORE_HELD.load(Ordering::SeqCst) & bit != 0;
                 if is_up {
                     IGNORE_HELD.fetch_and(!bit, Ordering::SeqCst);
-                    RELEASED.fetch_or(bit, Ordering::SeqCst);
-                    return LRESULT(1); // consome o key-up de Enter/Esc para nao deixar cauda
+                    if OWNED.load(Ordering::SeqCst) & bit != 0 {
+                        RELEASED.fetch_or(bit, Ordering::SeqCst);
+                        OWNED.fetch_and(!bit, Ordering::SeqCst);
+                        return LRESULT(1);
+                    }
                 }
                 if is_down {
                     // Uma descida FRESCA apaga o "ja subiu" da pressao anterior desta mesma
                     // tecla. Sem isto o `RELEASED` era um trinco: num toque duplo rapido, o
                     // drain via o bit da PRIMEIRA subida, dava a tecla por largada e o hook caia
                     // com a segunda pressao ainda em baixo, despejando o auto-repeat na app.
-                    RELEASED.fetch_and(!bit, Ordering::SeqCst);
-                    if !ignoring {
+                    if OWNED.load(Ordering::SeqCst) & bit != 0 {
+                        RELEASED.fetch_and(!bit, Ordering::SeqCst);
+                        return LRESULT(1);
+                    }
+                    if !ignoring && HOOK_DECISION.load(Ordering::SeqCst) == 0 {
                         if let KeyVerdict::Decide { decision, .. } = classify_key(vk) {
-                            HOOK_DECISION.store(
-                                if decision == Decision::Accept { 1 } else { 2 },
-                                Ordering::SeqCst,
-                            );
+                            if HOOK_DECISION
+                                .compare_exchange(
+                                    0,
+                                    if decision == Decision::Accept { 1 } else { 2 },
+                                    Ordering::SeqCst,
+                                    Ordering::SeqCst,
+                                )
+                                .is_ok()
+                            {
+                                OWNED.fetch_or(bit, Ordering::SeqCst);
+                                RELEASED.fetch_and(!bit, Ordering::SeqCst);
+                                return LRESULT(1);
+                            }
                         }
                     }
-                    return LRESULT(1); // consome: a app em foco nunca ve este Enter/Esc
                 }
             }
         }
         CallNextHookEx(None, code, wparam, lparam)
     }
 
-    /// Teto da espera pelo key-up da tecla da decisao. Uma tecla presa (ou um key-up que o hook
-    /// nunca chega a ver) nunca pode pendurar o refine: ao fim disto seguimos na mesma.
-    const RELEASE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
-
+    // Owned input tails cannot expire while a key is still held. Other input keeps passing
+    // through the pump; the next interaction waits for this owner to retire.
     /// Bombeia mensagens, com o hook AINDA INSTALADO, ate a tecla `bit` subir de verdade.
     ///
     /// Sem isto o gate devolvia `Accept` no key-DOWN do Enter e o hook caia logo a seguir: o
@@ -228,17 +176,13 @@ mod imp {
     /// GetAsyncKeyState ja provou mentir nesta app quando ha um hotkey global registado).
     fn drain_until_released(bit: u8) {
         let start = std::time::Instant::now();
-        while RELEASED.load(Ordering::SeqCst) & bit == 0 {
+        while RELEASED.load(Ordering::SeqCst) & bit != bit {
             let mut msg = MSG::default();
             while unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE) }.as_bool() {
                 unsafe {
                     let _ = TranslateMessage(&msg);
                     DispatchMessageW(&msg);
                 }
-            }
-            if start.elapsed() >= RELEASE_TIMEOUT {
-                log::warn!("gate: key-up never seen (bit={bit}); proceeding after timeout");
-                return;
             }
             unsafe {
                 MsgWaitForMultipleObjectsEx(None, 10, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
@@ -260,8 +204,14 @@ mod imp {
 
     /// Corre o gate numa thread dedicada com message pump (o LL hook so entrega o callback na
     /// thread que instala E bombeia mensagens). Bloqueante: chamar fora do runtime tokio.
-    pub fn run_gate_blocking(should_cancel: impl Fn() -> bool) -> Decision {
+    pub fn run_gate_blocking(should_cancel: impl Fn() -> bool, on_page: impl Fn(i32)) -> Decision {
+        let _input_owner = super::input_lease();
+        if should_cancel() {
+            return Decision::Reject;
+        }
         HOOK_DECISION.store(0, Ordering::SeqCst);
+        OWNED.store(0, Ordering::SeqCst);
+        PAGE_DELTA.store(0, Ordering::SeqCst);
         RELEASED.store(0, Ordering::SeqCst);
         // Marca as teclas ja premidas agora (bit alto do GetAsyncKeyState) para as ignorar ate
         // uma descida fresca. Evita um falso Accept do Enter que ainda estava em baixo.
@@ -274,22 +224,40 @@ mod imp {
                 held |= IGN_ESC;
             }
         }
+        for (vk, bit) in [(0x21, 4), (0x22, 8)] {
+            if unsafe { GetAsyncKeyState(vk) as u16 & 0x8000 != 0 } {
+                held |= bit;
+            }
+        }
         IGNORE_HELD.store(held, Ordering::SeqCst);
 
-        log::info!("gate: starting (held_at_install={held})");
+        log::debug!("gate: starting");
         let hmod = unsafe { GetModuleHandleW(None) }.unwrap_or_default();
         let hook = match unsafe {
             SetWindowsHookExW(WH_KEYBOARD_LL, Some(ll_proc), Some(HINSTANCE(hmod.0)), 0)
         } {
             Ok(h) => h,
-            // Nao conseguimos instalar o hook: degrada para colar (nunca perde um refine bom).
+            // Missing confirmation must never authorize replacement.
             Err(e) => {
-                log::warn!("gate: HOOK INSTALL FAILED ({e}); pasting without approval");
-                return Decision::Accept;
+                log::warn!("gate: hook installation failed ({e}); application rejected");
+                return Decision::Reject;
             }
         };
         let _guard = HookGuard(hook);
-        let start = std::time::Instant::now();
+        let mouse = unsafe {
+            SetWindowsHookExW(
+                WH_MOUSE_LL,
+                Some(input_watch_mouse_proc),
+                Some(HINSTANCE(hmod.0)),
+                0,
+            )
+        };
+        let Ok(mouse) = mouse else {
+            return Decision::Reject;
+        };
+        let _mouse_guard = HookGuard(mouse);
+
+        let mut start = std::time::Instant::now();
 
         loop {
             // 1) Bombeia mensagens: serve o callback do LL hook.
@@ -304,15 +272,22 @@ mod imp {
             //    tecla premida: enquanto o dedo estiver em baixo, o hook tem de continuar a
             //    engolir as repeticoes automaticas, senao vazam para a app (num terminal, um
             //    Enter vazado submete o prompt sozinho).
+            let page_delta = PAGE_DELTA.swap(0, Ordering::SeqCst);
+            if page_delta != 0 {
+                on_page(page_delta);
+                start = std::time::Instant::now();
+            }
             match HOOK_DECISION.load(Ordering::SeqCst) {
                 1 => {
                     log::info!("gate: ACCEPT (Enter consumed by hook)");
-                    drain_until_released(IGN_ENTER);
+                    drain_until_released(OWNED.load(Ordering::SeqCst));
                     return Decision::Accept;
                 }
                 2 => {
                     log::info!("gate: REJECT (Esc consumed by hook)");
-                    drain_until_released(IGN_ESC);
+                    if OWNED.load(Ordering::SeqCst) != 0 {
+                        drain_until_released(OWNED.load(Ordering::SeqCst));
+                    }
                     return Decision::Reject;
                 }
                 _ => {}
@@ -320,11 +295,13 @@ mod imp {
             // 3) Cancel externo (hotkey durante o preview) -> recusa.
             if should_cancel() {
                 log::info!("gate: REJECT (cancelled)");
+                drain_until_released(OWNED.load(Ordering::SeqCst));
                 return Decision::Reject;
             }
             // 4) Prazo total -> recusa (nunca colar sem aprovacao explicita).
             if start.elapsed() >= PREVIEW_TIMEOUT {
                 log::info!("gate: REJECT (timeout, no key seen)");
+                drain_until_released(OWNED.load(Ordering::SeqCst));
                 return Decision::Reject;
             }
             // 5) Espera eficiente: acorda ja no input (Enter/Esc imediato), senao 50ms para
@@ -342,7 +319,10 @@ mod imp {
         use tauri::Manager;
         let (tx, rx) = tokio::sync::oneshot::channel();
         std::thread::spawn(move || {
-            let d = run_gate_blocking(|| app.state::<crate::state::AppState>().dismissed(run_id));
+            let d = run_gate_blocking(
+                || app.state::<crate::state::AppState>().dismissed(run_id),
+                |delta| crate::flow::move_preview_page(&app, run_id, delta),
+            );
             let _ = tx.send(d); // se o lado async caiu (app a sair), o send falha inofensivamente
         });
         rx.await.unwrap_or(Decision::Reject)
@@ -366,6 +346,19 @@ mod imp {
             let kb = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
             let is_down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
             let is_up = msg == WM_KEYUP || msg == WM_SYSKEYUP;
+            if kb.flags.contains(LLKHF_INJECTED) || WATCH_RELEASED.load(Ordering::SeqCst) != 0 {
+                return CallNextHookEx(None, code, wparam, lparam);
+            }
+            // Continued editing invalidates this run, but the user's input always passes through.
+            if is_down
+                && kb.vkCode != 0x1B
+                && matches!(classify_key(kb.vkCode), KeyVerdict::Decide { .. })
+            {
+                let _ = WATCH_DECIDED.compare_exchange(0, 2, Ordering::SeqCst, Ordering::SeqCst);
+            }
+            if WATCH_DECIDED.load(Ordering::SeqCst) == 2 {
+                return CallNextHookEx(None, code, wparam, lparam);
+            }
             if is_down || is_up {
                 let verdict = super::classify_watch_event(
                     kb.vkCode,
@@ -395,6 +388,26 @@ mod imp {
         CallNextHookEx(None, code, wparam, lparam)
     }
 
+    unsafe extern "system" fn input_watch_mouse_proc(
+        code: i32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        if code == HC_ACTION as i32 {
+            let event = &*(lparam.0 as *const MSLLHOOKSTRUCT);
+            if event.flags & LLMHF_INJECTED == 0
+                && matches!(
+                    wparam.0 as u32,
+                    WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN
+                )
+            {
+                let _ = WATCH_DECIDED.compare_exchange(0, 2, Ordering::SeqCst, Ordering::SeqCst);
+                let _ = HOOK_DECISION.compare_exchange(0, 2, Ordering::SeqCst, Ordering::SeqCst);
+            }
+        }
+        CallNextHookEx(None, code, wparam, lparam)
+    }
+
     /// Handle do watcher. `stop_and_join` para o hook E espera que ele caia, e e OBRIGATORIO
     /// antes de instalar o gate do preview: dois hooks LL vivos a consumir Esc davam o Esc do
     /// preview engolido pelo watcher. O `Drop` cobre os returns precoces do flow (so para, sem
@@ -417,6 +430,9 @@ mod imp {
     impl Drop for EscWatcher {
         fn drop(&mut self) {
             self.stop.store(true, Ordering::SeqCst);
+            if let Some(join) = self.join.take() {
+                let _ = join.join();
+            }
         }
     }
 
@@ -434,6 +450,10 @@ mod imp {
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let stop2 = stop.clone();
         let join = std::thread::spawn(move || {
+            let _input_owner = super::input_lease();
+            if stop2.load(Ordering::SeqCst) {
+                return;
+            }
             WATCH_DECIDED.store(0, Ordering::SeqCst);
             WATCH_RELEASED.store(0, Ordering::SeqCst);
             // Um Esc ja em baixo na instalacao e da app do utilizador, nao nosso: fica marcado
@@ -454,13 +474,31 @@ mod imp {
                 Err(e) => {
                     // Sem hook nao ha Esc-cancel neste ciclo; o atalho continua a cancelar.
                     // Nunca falhar o refine por causa de observabilidade de teclado.
-                    log::warn!("esc-watch: hook install failed ({e}); Esc won't cancel this cycle");
+                    log::warn!(
+                        "input-watch: hook install failed ({e}); automatic application cancelled"
+                    );
+                    app.state::<crate::state::AppState>()
+                        .request_dismiss(run_id);
                     return;
                 }
             };
             let _guard = HookGuard(hook);
+            let mouse = unsafe {
+                SetWindowsHookExW(
+                    WH_MOUSE_LL,
+                    Some(input_watch_mouse_proc),
+                    Some(HINSTANCE(hmod.0)),
+                    0,
+                )
+            };
+            let Ok(mouse) = mouse else {
+                app.state::<crate::state::AppState>()
+                    .request_dismiss(run_id);
+                return;
+            };
+            let _mouse_guard = HookGuard(mouse);
+
             let mut notified = false;
-            let watch_start = std::time::Instant::now();
             loop {
                 let mut msg = MSG::default();
                 while unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE) }.as_bool() {
@@ -471,13 +509,14 @@ mod imp {
                 }
                 if WATCH_DECIDED.load(Ordering::SeqCst) != 0 && !notified {
                     notified = true;
-                    log::info!("[run {run_id}] esc-watch: Esc consumido, a dispensar a espera");
+                    log::info!("[run {run_id}] input changed; automatic application cancelled");
                     app.state::<crate::state::AppState>()
                         .request_dismiss(run_id);
                 }
                 // Depois de decidir, o hook so vive para engolir a cauda da pressao; visto o
                 // key-up, ja nao ha nada a proteger.
-                let released = WATCH_RELEASED.load(Ordering::SeqCst) != 0;
+                let released = WATCH_RELEASED.load(Ordering::SeqCst) != 0
+                    || WATCH_DECIDED.load(Ordering::SeqCst) == 2;
                 if notified && released {
                     break;
                 }
@@ -487,14 +526,8 @@ mod imp {
                 // app do utilizador, que e a regra que este ficheiro inteiro existe para
                 // respeitar. Fica-se ate ao key-up, com teto para uma tecla presa nao pendurar
                 // a thread.
-                if stop2.load(Ordering::SeqCst) {
-                    if !notified || released {
-                        break;
-                    }
-                    if watch_start.elapsed() > RELEASE_TIMEOUT {
-                        log::warn!("esc-watch: key-up nunca visto; a largar o hook na mesma");
-                        break;
-                    }
+                if stop2.load(Ordering::SeqCst) && (!notified || released) {
+                    break;
                 }
                 unsafe {
                     MsgWaitForMultipleObjectsEx(None, 50, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
@@ -527,27 +560,22 @@ mod imp {
     /// Houve movimento por emitir? O pump le e emite o evento; o callback nunca emite (tem de
     /// ser trivial para nunca encostar ao LowLevelHooksTimeout).
     static PICKER_MOVED: AtomicU8 = AtomicU8::new(0);
-    /// Geometria da janela em pixeis FISICOS, para o hook do rato saber que linha esta debaixo do
-    /// ponteiro. Escrita uma vez antes de instalar os hooks e so lida a partir dai.
-    static PICKER_GEOM: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
-    static PICKER_GEOM2: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
     /// Um clique nosso ja foi consumido e falta engolir o `button up` que vem a seguir. Sem isto
     /// a app por baixo recebia metade do clique.
     static PICKER_CLICK_TAIL: AtomicU8 = AtomicU8::new(0);
+    /// Onde o ponteiro esta, para o pump levar a lista atras dele. Como em todo o resto deste
+    /// hook, o callback so escreve atomicos: mexer numa janela dali dentro poria trabalho de
+    /// janelas dentro do orcamento do LowLevelHooksTimeout, e o Windows despeja hooks lentos.
+    static PICKER_CURSOR: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+    static PICKER_FOLLOW: AtomicU8 = AtomicU8::new(0);
 
-    /// Empacota a geometria em dois inteiros: (x, y) e (largura, primeira linha visivel).
+    /// Empacota um ponto em dois inteiros.
     fn pack(a: i32, b: i32) -> i64 {
         ((a as i64) << 32) | (b as u32 as i64)
     }
     fn unpack(v: i64) -> (i32, i32) {
         ((v >> 32) as i32, v as u32 as i32)
     }
-
-    /// Padding e altura de linha em fisicos, derivados no momento da leitura a partir da escala
-    /// guardada nos bits baixos. Mantidos em constantes porque a UI espelha os mesmos numeros.
-    static PICKER_PAD_PX: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-    static PICKER_ITEM_PX: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-    static PICKER_VISIBLE: AtomicU8 = AtomicU8::new(0);
 
     unsafe extern "system" fn picker_mouse_proc(
         code: i32,
@@ -557,41 +585,46 @@ mod imp {
         if code == HC_ACTION as i32 {
             let msg = wparam.0 as u32;
             let ms = &*(lparam.0 as *const MSLLHOOKSTRUCT);
-            let (win_x, win_y) = unpack(PICKER_GEOM.load(Ordering::SeqCst));
-            let (win_w, first) = unpack(PICKER_GEOM2.load(Ordering::SeqCst));
-            let linha = ember_core::projects::picker_row_at(
-                ms.pt.x,
-                ms.pt.y,
-                win_x,
-                win_y,
-                win_w,
-                PICKER_PAD_PX.load(Ordering::SeqCst),
-                PICKER_ITEM_PX.load(Ordering::SeqCst),
-                PICKER_VISIBLE.load(Ordering::SeqCst) as usize,
-                first as usize,
-            );
+            // Depois de decidido, o rato deixa de mandar: a lista esta a fechar e o que vier a
+            // seguir e da app por baixo.
+            let a_decidir = PICKER_DECISION.load(Ordering::SeqCst) == 0;
             match msg {
+                // A lista anda COM o ponteiro. Por isso e que ele nao escolhe linhas: uma janela
+                // colada ao cursor nunca deixa nenhuma linha ficar debaixo dele. Nunca consome o
+                // movimento; mexer o rato e trabalho da pessoa, nao nosso.
                 WM_MOUSEMOVE => {
-                    // Passar por cima destaca, como em qualquer menu. Nunca consome o movimento.
-                    if let Some(i) = linha {
-                        if PICKER_DECISION.load(Ordering::SeqCst) == 0
-                            && PICKER_INDEX.load(Ordering::SeqCst) != i as u8
-                        {
-                            PICKER_INDEX.store(i as u8, Ordering::SeqCst);
+                    if a_decidir {
+                        PICKER_CURSOR.store(pack(ms.pt.x, ms.pt.y), Ordering::SeqCst);
+                        PICKER_FOLLOW.store(1, Ordering::SeqCst);
+                    }
+                }
+                // Rodar percorre a lista, como as setas: com a lista colada ao cursor, a mao ja
+                // esta no rato. Consome, pela mesma razao que as setas: sem isso a pagina por
+                // baixo rolava ao mesmo tempo que o menu.
+                WM_MOUSEWHEEL => {
+                    if a_decidir {
+                        // O delta vem na metade alta do `mouseData`, com sinal: para cima e
+                        // positivo, e para cima na lista e um indice para tras.
+                        let delta = (ms.mouseData >> 16) as u16 as i16;
+                        if delta != 0 {
+                            let passo = if delta > 0 { -1 } else { 1 };
+                            let novo = ember_core::projects::move_index(
+                                PICKER_INDEX.load(Ordering::SeqCst) as usize,
+                                passo,
+                                PICKER_LEN.load(Ordering::SeqCst) as usize,
+                            );
+                            PICKER_INDEX.store(novo as u8, Ordering::SeqCst);
                             PICKER_MOVED.store(1, Ordering::SeqCst);
                         }
+                        return LRESULT(1);
                     }
                 }
                 WM_LBUTTONDOWN => {
-                    log::debug!(
-                        "picker: clique em ({}, {}) -> linha {linha:?} (janela {win_x},{win_y} {win_w}px)",
-                        ms.pt.x,
-                        ms.pt.y
-                    );
-                    if let Some(i) = linha {
-                        // Clique DENTRO da lista: escolhe. Consome, senao o clique ia parar a
-                        // app por baixo (a janela e click-through de proposito).
-                        PICKER_INDEX.store(i as u8, Ordering::SeqCst);
+                    if a_decidir {
+                        // Clicar confirma a linha escolhida, seja onde for o clique: a lista esta
+                        // debaixo do ponteiro e nao ha "fora" nenhum para acertar. Consome, senao
+                        // o clique ia parar a app por baixo (a janela e click-through de
+                        // proposito) e a escolha vinha com um efeito secundario a reboque.
                         let _ = PICKER_DECISION.compare_exchange(
                             0,
                             1,
@@ -601,14 +634,9 @@ mod imp {
                         PICKER_CLICK_TAIL.store(1, Ordering::SeqCst);
                         return LRESULT(1);
                     }
-                    // Clique FORA: fecha sem escolher, e o clique segue para a app. Era dela.
-                    let _ =
-                        PICKER_DECISION.compare_exchange(0, 2, Ordering::SeqCst, Ordering::SeqCst);
                 }
-                WM_LBUTTONUP => {
-                    if PICKER_CLICK_TAIL.swap(0, Ordering::SeqCst) != 0 {
-                        return LRESULT(1); // cauda do clique que ja consumimos
-                    }
+                WM_LBUTTONUP if PICKER_CLICK_TAIL.swap(0, Ordering::SeqCst) != 0 => {
+                    return LRESULT(1);
                 }
                 _ => {}
             }
@@ -643,7 +671,6 @@ mod imp {
                     // Cada tecla que o picker VE fica registada. A primeira utilizacao real
                     // acabou com a lista oito segundos aberta sem nada acontecer, e sem isto nao
                     // havia como distinguir "nao carregou" de "carregou e o hook nao viu".
-                    log::debug!("picker: tecla vk={vk:#x} -> {verdict:?}");
                 }
                 match verdict {
                     PickerVerdict::Move(delta) => {
@@ -699,15 +726,6 @@ mod imp {
         CallNextHookEx(None, code, wparam, lparam)
     }
 
-    /// O que o picker devolveu.
-    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-    pub enum PickerOutcome {
-        /// Enter/Tab no indice dado.
-        Committed(usize),
-        /// Esc, tecla alheia, timeout, ou cancelamento externo.
-        Cancelled,
-    }
-
     /// Um menu esquecido sai da frente sozinho, mas a contagem e de INATIVIDADE e nao de vida:
     /// medida desde a abertura, seis segundos matavam a lista enquanto a pessoa ainda a estava a
     /// ler pela primeira vez. Cada seta que ela carrega poe o relogio a zero.
@@ -715,26 +733,15 @@ mod imp {
 
     /// Corre o picker (bloqueante, numa thread com pump). `on_move` e chamado no PUMP (nunca no
     /// callback) com o indice novo, para o shell emitir o evento a UI.
-    /// Geometria da janela do picker em pixeis FISICOS, que e a unidade em que o hook do rato
-    /// recebe o ponteiro.
-    #[derive(Clone, Copy)]
-    pub struct PickerGeom {
-        pub x: i32,
-        pub y: i32,
-        pub w: i32,
-        pub pad: i32,
-        pub item_h: i32,
-        pub visible: usize,
-    }
-
     /// Bombeia mensagens, com o hook AINDA INSTALADO, ate as teclas que consumimos subirem.
     ///
     /// Vale para TODAS as saidas do picker e nao so para a da decisao: fechar por Esc externo ou
     /// por inatividade com uma seta ainda premida despejava o auto-repeat dela na app, e o caret
     /// da pessoa andava sozinho depois de o menu desaparecer.
     fn drain_picker_held() {
-        let inicio = std::time::Instant::now();
-        while PICKER_HELD.load(Ordering::SeqCst) != 0 && inicio.elapsed() < RELEASE_TIMEOUT {
+        while PICKER_HELD.load(Ordering::SeqCst) != 0
+            || PICKER_CLICK_TAIL.load(Ordering::SeqCst) != 0
+        {
             let mut m = MSG::default();
             while unsafe { PeekMessageW(&mut m, None, 0, 0, PM_REMOVE) }.as_bool() {
                 unsafe {
@@ -752,22 +759,21 @@ mod imp {
     pub fn run_picker_blocking(
         len: usize,
         initial: usize,
-        geom: PickerGeom,
         should_cancel: impl Fn() -> bool,
         on_move: impl Fn(usize),
+        on_follow: impl Fn(i32, i32),
     ) -> PickerOutcome {
+        let _input_owner = super::input_lease();
+        if should_cancel() {
+            return PickerOutcome::Cancelled;
+        }
         PICKER_DECISION.store(0, Ordering::SeqCst);
         PICKER_HELD.store(0, Ordering::SeqCst);
         PICKER_MOVED.store(0, Ordering::SeqCst);
         PICKER_CLICK_TAIL.store(0, Ordering::SeqCst);
         PICKER_LEN.store(len.min(u8::MAX as usize) as u8, Ordering::SeqCst);
         PICKER_INDEX.store(initial.min(len.saturating_sub(1)) as u8, Ordering::SeqCst);
-        PICKER_GEOM.store(pack(geom.x, geom.y), Ordering::SeqCst);
-        PICKER_GEOM2.store(pack(geom.w, 0), Ordering::SeqCst);
-        PICKER_PAD_PX.store(geom.pad, Ordering::SeqCst);
-        PICKER_ITEM_PX.store(geom.item_h, Ordering::SeqCst);
-        PICKER_VISIBLE.store(geom.visible.min(u8::MAX as usize) as u8, Ordering::SeqCst);
-
+        PICKER_FOLLOW.store(0, Ordering::SeqCst);
         let hmod = unsafe { GetModuleHandleW(None) }.unwrap_or_default();
         let hook = match unsafe {
             SetWindowsHookExW(
@@ -805,6 +811,7 @@ mod imp {
             }
         };
         let mut last_activity = std::time::Instant::now();
+        let mut last_follow = std::time::Instant::now();
         log::info!("picker: aberto ({len} linhas, indice inicial {initial})");
 
         loop {
@@ -817,14 +824,18 @@ mod imp {
             }
             if PICKER_MOVED.swap(0, Ordering::SeqCst) != 0 {
                 last_activity = std::time::Instant::now();
-                let i = PICKER_INDEX.load(Ordering::SeqCst) as usize;
-                // A lista desliza quando ha mais linhas do que cabem; o rato tem de apontar para
-                // as linhas que estao MESMO a ser mostradas. Mesma conta que a UI faz.
-                let first = i
-                    .saturating_sub(geom.visible.saturating_sub(1))
-                    .min(len.saturating_sub(geom.visible));
-                PICKER_GEOM2.store(pack(geom.w, first as i32), Ordering::SeqCst);
-                on_move(i);
+                on_move(PICKER_INDEX.load(Ordering::SeqCst) as usize);
+            }
+            if PICKER_FOLLOW.swap(0, Ordering::SeqCst) != 0
+                || last_follow.elapsed() >= std::time::Duration::from_millis(500)
+            {
+                last_follow = std::time::Instant::now();
+                // De proposito SEM tocar no `last_activity`: mexer o rato e o que a pessoa faz o
+                // dia inteiro, e um menu que se mantivesse aberto por causa disso ficava la para
+                // sempre. Quem o esquecer ve-o fechar; quem o estiver a usar carrega numa tecla,
+                // roda ou clica, e isso conta.
+                let (x, y) = unpack(PICKER_CURSOR.load(Ordering::SeqCst));
+                on_follow(x, y);
             }
             let d = PICKER_DECISION.load(Ordering::SeqCst);
             if d != 0 {
@@ -858,7 +869,10 @@ mod imp {
                 return PickerOutcome::Cancelled;
             }
             unsafe {
-                MsgWaitForMultipleObjectsEx(None, 50, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+                // Curto porque a lista SEGUE o ponteiro: a cada volta deste ciclo ela avanca um
+                // salto atras dele, e a 50ms (20 saltos por segundo) o movimento saia aos
+                // solavancos. A volta em si e um PeekMessage e uns atomicos.
+                MsgWaitForMultipleObjectsEx(None, 8, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
             }
         }
     }
@@ -867,7 +881,7 @@ mod imp {
 #[cfg(windows)]
 pub use imp::gate;
 #[cfg(windows)]
-pub use imp::{run_picker_blocking, PickerGeom, PickerOutcome};
+pub use imp::run_picker_blocking;
 #[cfg(windows)]
 #[allow(unused_imports)]
 // o tipo e parte do contrato publico, mesmo que so o flow o nomeie via inferencia
@@ -887,28 +901,12 @@ pub fn spawn_esc_watcher(_app: tauri::AppHandle, _run_id: u64) -> EscWatcher {
 
 /// Non-Windows: sem hook, o picker nao tem teclado. Cancela sempre.
 #[cfg(not(windows))]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum PickerOutcome {
-    Committed(usize),
-    Cancelled,
-}
-#[cfg(not(windows))]
-#[derive(Clone, Copy)]
-pub struct PickerGeom {
-    pub x: i32,
-    pub y: i32,
-    pub w: i32,
-    pub pad: i32,
-    pub item_h: i32,
-    pub visible: usize,
-}
-#[cfg(not(windows))]
 pub fn run_picker_blocking(
     _len: usize,
     _initial: usize,
-    _geom: PickerGeom,
     _should_cancel: impl Fn() -> bool,
     _on_move: impl Fn(usize),
+    _on_follow: impl Fn(i32, i32),
 ) -> PickerOutcome {
     PickerOutcome::Cancelled
 }
@@ -917,113 +915,5 @@ pub fn run_picker_blocking(
 /// (cola direto), sem hook, sem descarte silencioso, sem meio-event-tap de macOS.
 #[cfg(not(windows))]
 pub async fn gate(_app: tauri::AppHandle, _run_id: u64) -> Decision {
-    Decision::Accept
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn enter_and_esc_answer_the_question_and_never_reach_the_app() {
-        assert_eq!(
-            classify_key(0x0D),
-            KeyVerdict::Decide {
-                decision: Decision::Accept,
-                consume: true
-            }
-        );
-        assert_eq!(
-            classify_key(0x1B),
-            KeyVerdict::Decide {
-                decision: Decision::Reject,
-                consume: true
-            }
-        );
-    }
-
-    #[test]
-    fn typing_on_means_keep_the_original_without_eating_the_keystroke() {
-        // Quem continua a escrever ja respondeu: nao esta a olhar para o preview. Sem isto, a
-        // pilula ficava pendurada ate ao timeout, no meio do ecra, a pedir uma resposta que ja
-        // ninguem ia dar.
-        //
-        // `consume: false` e a parte que nao pode falhar: a tecla era dele, ia para a app dele.
-        // Engolir-lhe um caracter para fechar uma pilula nossa seria trocar um incomodo por um
-        // bug de escrita, que e muito pior.
-        for vk in [
-            0x41, /* A */
-            0x20, /* Space */
-            0x08, /* Backspace */
-            0x09, /* Tab */
-        ] {
-            assert_eq!(
-                classify_key(vk),
-                KeyVerdict::Decide {
-                    decision: Decision::Reject,
-                    consume: false
-                },
-                "vk {vk:#x} devia manter o original sem consumir a tecla"
-            );
-        }
-    }
-
-    #[test]
-    fn watch_a_fresh_esc_cancels_and_is_consumed_with_its_tail() {
-        // Esc fresco durante o refine: cancela. E dai em diante tudo o que for Esc e cauda da
-        // NOSSA pressao (repeticoes, key-up) e continua consumido, senao vazava para a app.
-        assert_eq!(
-            classify_watch_event(0x1B, true, false, false),
-            WatchVerdict::Cancel
-        );
-        assert_eq!(
-            classify_watch_event(0x1B, true, false, true),
-            WatchVerdict::ConsumeTail
-        );
-        assert_eq!(
-            classify_watch_event(0x1B, false, false, true),
-            WatchVerdict::ConsumeTail
-        );
-    }
-
-    #[test]
-    fn watch_an_esc_held_from_before_belongs_to_the_users_app() {
-        // O Esc ja estava em baixo quando o watcher instalou: essa pressao era para a app dele.
-        // As repeticoes passam, o key-up passa (e limpa o "herdado"), e so a descida SEGUINTE
-        // conta como cancelamento.
-        assert_eq!(
-            classify_watch_event(0x1B, true, true, false),
-            WatchVerdict::Pass
-        );
-        assert_eq!(
-            classify_watch_event(0x1B, false, true, false),
-            WatchVerdict::ReleaseHeld
-        );
-    }
-
-    #[test]
-    fn watch_ignores_every_other_key_entirely() {
-        // O watcher e mais estreito que o gate: durante o refine o utilizador continua a
-        // trabalhar, e NADA do que ele escreve nos diz respeito. Enter incluido.
-        for vk in [0x0D, 0x41, 0x20, 0x25, 0x26, 0x10, 0x11] {
-            assert_eq!(
-                classify_watch_event(vk, true, false, false),
-                WatchVerdict::Pass,
-                "vk {vk:#x} nao e assunto do watcher"
-            );
-        }
-    }
-
-    #[test]
-    fn modifiers_alone_do_not_dismiss_the_preview() {
-        // Encostar ao Shift para escrever uma maiuscula, ou ao Ctrl a caminho de um atalho, nao e
-        // "segui em frente". Se contasse, o preview fugia antes de a pessoa acabar o gesto.
-        for vk in [0x10, 0x11, 0x12, 0x14, 0x5B, 0xA0, 0xA2, 0xA5] {
-            assert_eq!(
-                classify_key(vk),
-                KeyVerdict::PassThrough,
-                "vk {vk:#x} e um modificador e nao devia decidir nada"
-            );
-        }
-    }
+    Decision::Reject
 }

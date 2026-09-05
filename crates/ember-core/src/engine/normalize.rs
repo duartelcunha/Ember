@@ -19,7 +19,7 @@ pub fn normalize_input(raw: &str) -> (String, EolStyle) {
         .chars()
         .filter_map(|c| match c {
             // Largura zero / joiners / BOM no meio.
-            '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{2060}' | '\u{FEFF}' => None,
+            '\u{200B}' | '\u{FEFF}' => None,
             // NBSP e NNBSP -> espaco normal.
             '\u{00A0}' | '\u{202F}' => Some(' '),
             other => Some(other),
@@ -30,7 +30,7 @@ pub fn normalize_input(raw: &str) -> (String, EolStyle) {
 
 /// EOL dominante: se ha mais `\r\n` do que `\n` isolados, e CRLF; senao LF (o default, e o que
 /// a maioria dos inputs traz). Empate resolve para LF.
-fn detect_eol(raw: &str) -> EolStyle {
+pub(super) fn detect_eol(raw: &str) -> EolStyle {
     let crlf = raw.matches("\r\n").count();
     let total_lf = raw.matches('\n').count();
     let lone_lf = total_lf.saturating_sub(crlf);

@@ -13,6 +13,7 @@ use tokio::sync::Notify;
 pub struct AppState {
     /// Um unico `reqwest::Client` partilhado (pool de conexoes interno).
     pub http: Client,
+    pub connection_generation: Mutex<u64>,
     /// Cache dos probes de validacao de chave (resultado + timestamp ms). Preenchido no
     /// arranque (pre-validacao dos fallbacks) e quando o utilizador valida/muda uma chave. O
     /// `ember_core::health::assess_providers` le isto para dizer se ha um fallback provado.
@@ -37,19 +38,12 @@ pub struct AppState {
     /// a mesma, a pilula do preview ficava colada ao sitio onde o cursor estava quando o refine
     /// acabou, e quem entretanto mexeu o rato ficava com uma pergunta esquecida a meio do ecra.
     pub follow_cursor: AtomicBool,
-    /// `true` enquanto um ciclo de refinamento decorre (do hotkey ate a pilula de resultado
-    /// aparecer). E a guarda da CAPTURA: dois ciclos a mexer no clipboard ao mesmo tempo
-    /// corrompiam-no. Liberta antes da pilula esconder, para o atalho seguinte nao ser engolido.
-    pub busy: AtomicBool,
-    /// Numero do ciclo atual. Cresce a cada hotkey e prefixa todas as linhas de log do ciclo:
-    /// sem ele, com ciclos a sobrepor-se (um a mostrar a pilula, outro ja a capturar), o log
-    /// nao dava para desemaranhar.
-    pub run_seq: AtomicU64,
-    /// Ciclo cujo utilizador pediu para dispensar (Esc ou segunda tecla). Zero = nenhum.
-    ///
-    /// E um numero de ciclo, e nao um booleano, porque os ciclos se sobrepoem: um `true` posto
-    /// para o ciclo N ficava a espera do N+1 e cancelava-o a nascenca.
-    pub cancel_run: AtomicU64,
+    /// Serializes run ownership and phase transitions, independently of background requests.
+    pub execution: Mutex<ember_core::cycle::ExecutionCoordinator>,
+    pub event_seq: AtomicU64,
+    pub resolved_context: Mutex<Option<serde_json::Value>>,
+    pub retention_generation: AtomicU64,
+    pub prompt_generation: AtomicU64,
     /// Acorda quem espera (o `select!` do refine, a espera pela chamada em curso) quando o
     /// utilizador dispensa.
     pub cancel_notify: Notify,
@@ -68,6 +62,7 @@ pub struct AppState {
     /// Refinados ja pagos, por texto normalizado. E o que garante que uma interrupcao nao custa
     /// dinheiro: o resultado fica aqui e o atalho seguinte sobre o mesmo texto nao paga.
     pub store: Mutex<ember_core::RefineCache>,
+    pub persisted_store: Mutex<ember_core::RefineCache>,
     /// Sobe a cada escrita no `store`. Quem espera por uma chamada em curso subscreve ANTES de
     /// consultar a cache e so depois espera, que e o que evita perder o sinal.
     pub store_gen: tokio::sync::watch::Sender<u64>,
@@ -90,6 +85,9 @@ pub struct AppState {
     ///   pedido extra e uma rotacao de token a mais, so para chegar ao mesmo sitio. Guarda-lo aqui
     ///   e alias o mais correto: expira em horas e nao faz falta nenhuma sobreviver ao fecho da app.
     pub oauth_access: tokio::sync::Mutex<Option<CachedAccess>>,
+    pub oauth_generation: AtomicU64,
+    pub oauth_logged_out: AtomicBool,
+    pub oauth_commit: Mutex<()>,
     /// Os tres tons do projeto ativo, para o orb tomar a cor dele. `None` = sem projeto, e o orb
     /// fica como sempre foi.
     ///
@@ -115,6 +113,8 @@ pub struct AppState {
     /// Guardar o payload (em vez de reconstruir) garante que a re-emissao nao muda nada do que
     /// esta no ecra: mesma fase, mesma mensagem, mesma cor.
     pub last_state: Mutex<Option<serde_json::Value>>,
+    pub picker_state: Mutex<Option<serde_json::Value>>,
+    pub floating_positions: Mutex<HashMap<String, crate::floating::Position>>,
 }
 
 /// Uma chamada ao modelo a decorrer.
@@ -125,6 +125,41 @@ pub struct InFlight {
 }
 
 impl AppState {
+    pub fn begin_run(&self) -> Result<u64, u64> {
+        let mut execution = self.execution.lock().unwrap_or_else(|e| e.into_inner());
+        let id = execution.begin()?;
+        self.hide_gen.store(id, Ordering::SeqCst);
+        Ok(id)
+    }
+
+    pub fn is_busy(&self) -> bool {
+        self.execution
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_busy()
+    }
+
+    pub fn advance_run(&self, id: u64, phase: ember_core::cycle::RunPhase) -> bool {
+        self.execution
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .advance(id, phase)
+    }
+
+    pub fn may_apply(&self, id: u64) -> bool {
+        self.execution
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_phase(id, ember_core::cycle::RunPhase::Applying)
+    }
+
+    pub fn complete_run(&self, id: u64) {
+        self.execution
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .complete(id);
+    }
+
     /// Ha uma chamada a decorrer com esta chave?
     pub fn inflight_with(&self, key: &ember_core::CacheKey) -> Option<InFlight> {
         self.inflight
@@ -156,13 +191,22 @@ impl AppState {
     /// Pede para dispensar o ciclo `run_id`. NAO mata a chamada ao modelo: ela segue ate ao fim
     /// e o resultado fica guardado. Antes matava, e o dinheiro ja gasto ia com ela.
     pub fn request_dismiss(&self, run_id: u64) {
-        self.cancel_run.store(run_id, Ordering::SeqCst);
-        self.cancel_notify.notify_waiters();
+        if self
+            .execution
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .cancel(run_id)
+        {
+            self.cancel_notify.notify_waiters();
+        }
     }
 
     /// O ciclo `run_id` foi dispensado?
     pub fn dismissed(&self, run_id: u64) -> bool {
-        self.cancel_run.load(Ordering::SeqCst) == run_id
+        self.execution
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .cancelled(run_id)
     }
 
     /// Guarda um refinado pago e acorda quem estava a espera dele.
@@ -170,7 +214,7 @@ impl AppState {
         if let Ok(mut store) = self.store.lock() {
             store.insert(key, entry, now_ms);
         }
-        let _ = self.store_gen.send_modify(|v| *v += 1);
+        self.store_gen.send_modify(|v| *v += 1);
     }
 }
 
@@ -192,32 +236,44 @@ impl AppState {
         // aqui, para nao penalizar streams legitimamente longos.
         let http = Client::builder()
             .connect_timeout(Duration::from_secs(10))
+            .https_only(true)
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(180))
             .build()
             .unwrap_or_default();
         Self {
             http,
+            connection_generation: Mutex::new(0),
             key_checks: Mutex::new(HashMap::new()),
             model_lists: Mutex::new(HashMap::new()),
             quitting: AtomicBool::new(false),
             orb_visible: AtomicBool::new(true),
             follow_cursor: AtomicBool::new(true),
-            busy: AtomicBool::new(false),
-            run_seq: AtomicU64::new(0),
-            cancel_run: AtomicU64::new(0),
+            execution: Mutex::new(ember_core::cycle::ExecutionCoordinator::default()),
+            event_seq: AtomicU64::new(0),
+            resolved_context: Mutex::new(None),
+            retention_generation: AtomicU64::new(0),
+            prompt_generation: AtomicU64::new(0),
             cancel_notify: Notify::new(),
             follow_gen: AtomicU64::new(0),
             orb_labels: AtomicBool::new(false),
             hide_gen: AtomicU64::new(0),
             store: Mutex::new(ember_core::RefineCache::default()),
+            persisted_store: Mutex::new(ember_core::RefineCache::default()),
             store_gen: tokio::sync::watch::channel(0).0,
             inflight: Mutex::new(Vec::new()),
             oauth_access: tokio::sync::Mutex::new(None),
+            oauth_generation: AtomicU64::new(0),
+            oauth_logged_out: AtomicBool::new(false),
+            oauth_commit: Mutex::new(()),
             orb_accent: Mutex::new(None),
             orb_project: Mutex::new(None),
             picker_open: AtomicBool::new(false),
             picker_opened_at: Mutex::new(None),
             picker_cancel: AtomicBool::new(false),
             last_state: Mutex::new(None),
+            picker_state: Mutex::new(None),
+            floating_positions: Mutex::new(HashMap::new()),
         }
     }
 }

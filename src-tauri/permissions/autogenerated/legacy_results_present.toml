@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-legacy-results-present"
+description = "Enables the legacy_results_present command without any pre-configured scope."
+commands.allow = ["legacy_results_present"]
+
+[[permission]]
+identifier = "deny-legacy-results-present"
+description = "Denies the legacy_results_present command without any pre-configured scope."
+commands.deny = ["legacy_results_present"]

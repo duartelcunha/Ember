@@ -165,6 +165,9 @@ pub fn plan(state: &LoopState, outcome: &OutcomeClass, cfg: &RetryConfig, rng01:
 
     match outcome {
         OutcomeClass::Success => Decision::Succeed,
+        OutcomeClass::Uncertain => Decision::Fail {
+            reason: CoreError::Uncertain,
+        },
         OutcomeClass::Payload => Decision::Fail {
             reason: CoreError::Payload,
         },
@@ -243,6 +246,21 @@ mod tests {
             step_providers: vec![Provider::Gemini, Provider::Gemini, Provider::OpenAi],
             ..RetryConfig::default()
         }
+    }
+
+    #[test]
+    fn uncertain_requests_never_retry_or_fall_back() {
+        assert_eq!(
+            plan(
+                &LoopState::start(),
+                &OutcomeClass::Uncertain,
+                &RetryConfig::default(),
+                0.0
+            ),
+            Decision::Fail {
+                reason: CoreError::Uncertain
+            }
+        );
     }
 
     #[test]

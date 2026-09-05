@@ -203,6 +203,26 @@ pub fn chatgpt_account_id(claims: &Value) -> Option<String> {
     namespaced.or(direct).or(org).map(str::to_string)
 }
 
+/// The account name to SHOW: the email from the token, or whatever name came with it. It decides
+/// nothing (what the API bills is `chatgpt_account_id`); it exists so that whoever opens the
+/// settings can tell which account is signed in, which an opaque id never told them.
+///
+/// Several places, for the same reason as the account id: the shape of the token has changed over
+/// time, and the scopes we ask for (`profile email`) put the email in more than one of them.
+pub fn chatgpt_account_label(claims: &Value) -> Option<String> {
+    [
+        "/email",
+        "/https:~1~1api.openai.com~1profile/email",
+        "/https:~1~1api.openai.com~1auth/user_email",
+        "/preferred_username",
+        "/name",
+    ]
+    .iter()
+    .filter_map(|p| claims.pointer(p).and_then(Value::as_str))
+    .find(|s| !s.trim().is_empty())
+    .map(str::to_string)
+}
+
 // ---------------------------------------------------------------------------------------
 // Ciclo de vida do token
 // ---------------------------------------------------------------------------------------
@@ -662,6 +682,25 @@ mod tests {
         assert_eq!(b64url_decode("Zm9vYmFy").unwrap(), b"foobar");
         assert_eq!(b64url_decode("Zm9v").unwrap(), b"foo");
         assert!(b64url_decode("!!!").is_none());
+    }
+
+    #[test]
+    fn the_account_label_prefers_the_email_and_falls_back_to_a_name() {
+        let label = |v| chatgpt_account_label(&v);
+        assert_eq!(label(json!({ "email": "a@b.c" })).unwrap(), "a@b.c");
+        assert_eq!(
+            label(json!({ "https://api.openai.com/profile": { "email": "p@b.c" } })).unwrap(),
+            "p@b.c"
+        );
+        assert_eq!(label(json!({ "name": "Duarte" })).unwrap(), "Duarte");
+        // O email ganha ao nome: e o que identifica a conta sem ambiguidade.
+        assert_eq!(
+            label(json!({ "name": "Duarte", "email": "a@b.c" })).unwrap(),
+            "a@b.c"
+        );
+        // Vazio nao e nome de conta nenhum, e um id opaco tambem nao: mostrar isso era pior do
+        // que nao mostrar nada.
+        assert_eq!(label(json!({ "email": "   ", "chatgpt_account_id": "acc-1" })), None);
     }
 
     #[test]

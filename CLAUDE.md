@@ -54,9 +54,10 @@ O build queixa-se de `TAURI_SIGNING_PRIVATE_KEY` em builds locais; o instalador 
 ## Onde vive o quê em runtime
 
 - Config: `%APPDATA%\com.deleg8lab.ember\config.json` (nunca segredos).
-- Refinados ja pagos: `refine_cache.json`, ao lado da config. Existe para uma interrupcao nunca
-  custar dinheiro: o mesmo texto nao se paga duas vezes. Guarda texto do utilizador, e por isso
-  ha o `keep_results` nas settings (default ON, desligar apaga o ficheiro).
+- Resultados: memória por defeito. A opção `keep_results` grava `refine_cache.enc` com AES-256-GCM
+  e chave no cofre do sistema. Desligar elimina os resultados retidos. A migração da configuração
+  antiga preserva um backup e exige nova escolha de retenção. `refine_cache.json` antigo não é
+  carregado nem apagado pela migração; a eliminação explícita está nas settings.
 - Segredos: Windows Credential Manager.
 - Logs: `%LOCALAPPDATA%\com.deleg8lab.ember\logs\Ember.log`. Debugging começa SEMPRE aqui: o
   código loga decisões (gate, picker, retry, geometria) precisamente para não se adivinhar.
@@ -72,4 +73,5 @@ O build queixa-se de `TAURI_SIGNING_PRIVATE_KEY` em builds locais; o instalador 
 - Zero crédito a ferramentas de IA em commits, PRs ou comentários. Sem trailers de co-autoria.
 - Constantes espelhadas entre Rust e TS (ex.: geometria do picker) declaram o espelho num
   comentário nos dois lados; muda um, muda o outro.
-- macOS: paridade documentada em `docs/macos-parity.md`; o caminho Windows é o primário.
+- Estado de produção e bloqueios: `docs/production-readiness.md`. A CI cobre três sistemas,
+  mas macOS/Linux ainda precisam de adaptadores e prova nativa. `docs/macos-parity.md` é contexto histórico.

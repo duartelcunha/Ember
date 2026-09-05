@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState, useCallback } from "react";
 import { motion, MotionConfig } from "motion/react";
 import { toast } from "sonner";
@@ -578,9 +579,9 @@ function ProviderConfig({
             subscription ? (
               // A ressalva vem ANTES de ele depender disto, e não depois de deixar de funcionar.
               <>
-                Refines come out of the ChatGPT plan you already pay for. Unofficial: it uses the
-                same route as the Codex CLI and OpenAI can turn it off without notice. If that
-                happens, pick any service above; those keep working.
+                Runs on the ChatGPT plan you already pay for, through the same unofficial route as
+                the Codex CLI. OpenAI can cut it off without notice; if that happens, pick any
+                service above.
               </>
             ) : (
               endpoint?.note
@@ -614,7 +615,7 @@ function ProviderConfig({
             {signedIn ? (
               <>
                 <p className="flex-1 text-sm text-fg-muted">
-                  Signed in{account ? ` (account ${account})` : ""}.
+                  {account ? `Signed in as ${account}.` : "Signed in."}
                 </p>
                 <Button variant="ghost" onClick={signOut} disabled={busy}>
                   Sign out
@@ -838,6 +839,8 @@ function DiagnosticsSection({
   const [on, setOn] = useState(debugMode);
   const [saving, setSaving] = useState(savePrompts);
   const [keeping, setKeeping] = useState(keepResults);
+  const [legacyResults, setLegacyResults] = useState(false);
+  useEffect(() => { void invoke<boolean>("legacy_results_present").then(setLegacyResults).catch(() => {}); }, []);
   const [logs, setLogs] = useState("");
   const [loadingLogs, setLoadingLogs] = useState(false);
 
@@ -918,11 +921,12 @@ function DiagnosticsSection({
       </div>
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <Label htmlFor="keep-results">Remember refines</Label>
+          <Label htmlFor="keep-results">Keep encrypted results between sessions</Label>
           <p className="mt-1 text-xs text-fg-muted">
-            Keeps recent refined results on this machine, so an interrupted refine is never lost
-            and the same text is never paid for twice. Reapply the last one from the tray menu.
-            Turning this off deletes what is stored.
+            Off by default. Results remain in session memory. Enabling this keeps eligible results
+            encrypted for up to 24 hours, with the key in the system vault. Turning it off deletes
+            saved results and prevents older requests from restoring them.
+
           </p>
         </div>
         <Switch
@@ -932,6 +936,13 @@ function DiagnosticsSection({
           className="mt-1 shrink-0"
         />
       </div>
+      {legacyResults && <div className="space-y-2 rounded border border-[color:var(--border-subtle)] p-3 text-xs">
+        <p>An older version left plaintext results in refine_cache.json. They are preserved and are not loaded automatically.</p>
+        <Button variant="ghost" onClick={async () => {
+          try { await invoke("delete_legacy_results"); setLegacyResults(false); toast.success("Legacy plaintext results deleted."); }
+          catch { toast.error("Legacy results could not be deleted."); }
+        }}>Delete legacy plaintext results</Button>
+      </div>}
       <div className="flex flex-wrap gap-2">
         <Button variant="ghost" size="sm" onClick={refreshLogs} disabled={loadingLogs}>
           {loadingLogs ? "Loading…" : "Load recent logs"}
@@ -1460,26 +1471,26 @@ export function Settings({ initialTab = "providers" }: { initialTab?: string } =
 
                 <Section
                   title="Project context"
-                  hint="Merges the focused project's CLAUDE.md into the refine."
+                  hint="Chooses a registered project from the focused file path."
                   detail={
                     <p>
-                      Reads the CLAUDE.md, AGENTS.md or GEMINI.md of the project in your focused
-                      window. Off by default: turn it on only where you are fine sending a
-                      project's conventions to the LLM. Ember reads only those known files,
-                      redacts secret-shaped lines, and falls back to your global profile when no
-                      project is detected.
+                      Uses a reviewed brief from your registered projects when the focused window
+                      identifies a file inside its folder. Window titles never authorize reading
+                      additional files. Use Projects to review the sources and the context used.
+
                     </p>
                   }
                 >
                   <div className="flex items-center justify-between">
-                    <Label htmlFor="project-context">Use the focused project's CLAUDE.md</Label>
+                    <Label htmlFor="project-context">Choose a registered project automatically</Label>
                     <Switch
                       id="project-context"
                       checked={s.projectContext}
                       onCheckedChange={(v) => {
-                        setS({ ...s, projectContext: v });
+                        setS({ ...s, projectContext: v, activeProject: v ? null : s.activeProject });
                         ipc
                           .setProjectContext(v)
+                          .then(() => ipc.getSettings()).then(setS)
                           .catch(() => setS((prev) => ({ ...prev, projectContext: !v })));
                       }}
                     />

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-thinking"
+description = "Enables the set_thinking command without any pre-configured scope."
+commands.allow = ["set_thinking"]
+
+[[permission]]
+identifier = "deny-set-thinking"
+description = "Denies the set_thinking command without any pre-configured scope."
+commands.deny = ["set_thinking"]

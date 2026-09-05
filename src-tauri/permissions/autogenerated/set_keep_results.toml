@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-keep-results"
+description = "Enables the set_keep_results command without any pre-configured scope."
+commands.allow = ["set_keep_results"]
+
+[[permission]]
+identifier = "deny-set-keep-results"
+description = "Denies the set_keep_results command without any pre-configured scope."
+commands.deny = ["set_keep_results"]

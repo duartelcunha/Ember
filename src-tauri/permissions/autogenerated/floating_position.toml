@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-floating-position"
+description = "Enables the floating_position command without any pre-configured scope."
+commands.allow = ["floating_position"]
+
+[[permission]]
+identifier = "deny-floating-position"
+description = "Denies the floating_position command without any pre-configured scope."
+commands.deny = ["floating_position"]

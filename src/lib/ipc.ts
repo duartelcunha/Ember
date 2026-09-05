@@ -94,10 +94,14 @@ export interface Project {
   brief: string;
   folder: string | null;
   sourcePath: string | null;
+  sourceFingerprint?: string | null;
 }
 
 /** O que uma pasta tem, antes de se enviar seja o que for. */
 export interface ProjectScan {
+  sourceFingerprint: string;
+  sourcePaths: string[];
+  warnings: string[];
   sourcePath: string | null;
   fileName: string | null;
   lines: number;
@@ -292,7 +296,7 @@ export const ipc = {
     invoke<AccentPreview>("accent_from_wheel", { chroma, hue }),
   scanProjectFolder: (path: string) => invoke<ProjectScan>("scan_project_folder", { path }),
   /** Lê o ficheiro escolhido e devolve um brief. Não grava: volta como rascunho para rever. */
-  distillProject: (path: string) => invoke<string>("distill_project", { path }),
+  distillProject: (path: string, expectedFingerprint: string) => invoke<string>("distill_project", { path, expectedFingerprint }),
   setPreviewBeforePaste: (enabled: boolean) =>
     invoke<void>("set_preview_before_paste", { enabled }),
   setCaptureTiming: (polls: number, stepMs: number, settleMs: number) =>

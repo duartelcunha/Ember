@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-delete-legacy-results"
+description = "Enables the delete_legacy_results command without any pre-configured scope."
+commands.allow = ["delete_legacy_results"]
+
+[[permission]]
+identifier = "deny-delete-legacy-results"
+description = "Denies the delete_legacy_results command without any pre-configured scope."
+commands.deny = ["delete_legacy_results"]

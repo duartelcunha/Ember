@@ -7,6 +7,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::selection::{ClipImage, RealIo, SENTINEL};
 use crate::state::AppState;
 use crate::{commands, hide_orb, show_settings};
+use ember_core::cycle::RunPhase;
 use ember_core::model::{Provider, RefineMode};
 use ember_core::overlay::{feedback_for, FlowOutcome};
 use ember_core::selection as seq;
@@ -18,9 +19,6 @@ const JOIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 /// Ritmo a que se reconfirma o pedido de dispensar, para nao depender so do aviso (que se pode
 /// perder entre voltas de um `select!`).
 const DISMISS_POLL: std::time::Duration = std::time::Duration::from_millis(250);
-/// Acima disto nao se procura por semelhanca (ver `lookup_cache`).
-const FUZZY_MAX_CHARS: usize = 4000;
-
 /// Quanto tempo esperar pela libertacao natural dos modificadores antes de forcar os key-ups
 /// (ver `ember_core::selection::capture`). Curto: nao confiamos no `GetAsyncKeyState` como sinal
 /// de libertacao (com o hotkey global registado, ele reporta Ctrl+Shift em baixo durante ~1.5s
@@ -60,11 +58,72 @@ pub struct RunOpts {
     pub run_id: u64,
     /// A janela (HWND, pid) que tinha o foco quando o atalho disparou. E onde o texto TEM de ser
     /// colado; se entretanto o foco mudou de aplicacao, nao se cola as cegas.
-    pub target_hwnd: Option<(u64, u32)>,
+    pub target_hwnd: Option<crate::foreground::TargetSnapshot>,
 }
 
-fn emit(app: &AppHandle, phase: &str, message: Option<String>, provider: Option<String>) {
+/// Native jobs retain the lease if their async caller is aborted while they are still running.
+#[derive(Clone)]
+pub struct RunLease(std::sync::Arc<RunOwnership>);
+
+struct RunOwnership {
+    app: AppHandle,
+    id: u64,
+}
+
+impl RunLease {
+    pub fn new(app: AppHandle, id: u64) -> Self {
+        Self(std::sync::Arc::new(RunOwnership { app, id }))
+    }
+
+    fn may_apply(&self) -> bool {
+        self.0.app.state::<AppState>().may_apply(self.0.id)
+    }
+}
+
+impl Drop for RunOwnership {
+    fn drop(&mut self) {
+        self.app.state::<AppState>().complete_run(self.id);
+    }
+}
+
+struct ApplyTarget {
+    window: Option<crate::foreground::TargetSnapshot>,
+    selection: Option<crate::selection_guard::SelectionGuard>,
+    lease: RunLease,
+}
+
+impl ApplyTarget {
+    fn matches(&self) -> bool {
+        self.lease.may_apply()
+            && crate::foreground::same_target(self.window)
+            && self.selection.as_ref().is_some_and(|guard| guard.matches())
+            && crate::foreground::same_target(self.window)
+            && self.lease.may_apply()
+    }
+}
+
+fn emit(
+    app: &AppHandle,
+    run_id: u64,
+    phase: &str,
+    message: Option<String>,
+    provider: Option<String>,
+) {
+    emit_payload(app, run_id, phase, message, provider, None);
+}
+
+fn emit_payload(
+    app: &AppHandle,
+    run_id: u64,
+    phase: &str,
+    message: Option<String>,
+    provider: Option<String>,
+    preview: Option<serde_json::Value>,
+) {
     let state = app.state::<AppState>();
+    if state.hide_gen.load(Ordering::SeqCst) != run_id {
+        return;
+    }
     state
         .orb_visible
         .store(phase == "refining", Ordering::SeqCst);
@@ -90,24 +149,14 @@ fn emit(app: &AppHandle, phase: &str, message: Option<String>, provider: Option<
     let accent = state.orb_accent.lock().ok().and_then(|a| a.clone());
     let project = state.orb_project.lock().ok().and_then(|a| a.clone());
     let payload = serde_json::json!({
-        "phase": phase, "message": message, "provider": provider,
+        "runId": run_id, "sequence": state.event_seq.fetch_add(1, Ordering::SeqCst) + 1,
+        "preview": preview, "phase": phase, "message": message, "provider": provider,
         "accent": accent, "project": project
     });
     if let Ok(mut slot) = state.last_state.lock() {
         *slot = Some(payload.clone());
     }
     let _ = app.emit_to("overlay", STATE_EVENT, payload);
-}
-
-/// Re-emite o ultimo estado, sem o alterar. Usado quando a janela muda de DPI a meio do
-/// seguimento: o WebView2 numa janela transparente as vezes fica com a superficie meio pintada
-/// depois do redimensionamento, e uma emissao nova forca o React a repintar.
-pub(crate) fn re_emit_state(app: &AppHandle) {
-    let state = app.state::<AppState>();
-    let payload = state.last_state.lock().ok().and_then(|s| s.clone());
-    if let Some(p) = payload {
-        let _ = app.emit_to("overlay", STATE_EVENT, p);
-    }
 }
 
 /// Resultado da captura: a seleccao sequenciada, um snapshot de imagem a repor (quando o
@@ -117,6 +166,13 @@ struct CaptureOutput {
     captured: seq::Captured,
     image: Option<ClipImage>,
     unpreservable: bool,
+    selection_guard: Option<crate::selection_guard::SelectionGuard>,
+}
+
+#[derive(Debug)]
+enum CaptureFailure {
+    Native,
+    Unverifiable,
 }
 
 /// Bloqueante: cria RealIo, captura a seleccao preservando um clipboard de imagem.
@@ -124,8 +180,22 @@ fn blocking_capture(
     terminal: bool,
     timing: CaptureTiming,
     select_all_fallback: bool,
-) -> Result<CaptureOutput, String> {
-    let mut io = RealIo::new(terminal)?;
+    target: Option<crate::foreground::TargetSnapshot>,
+) -> Result<CaptureOutput, CaptureFailure> {
+    let _input_owner = crate::preview_hook::input_lease();
+    if !crate::foreground::same_target(target) {
+        return Err(CaptureFailure::Unverifiable);
+    }
+    // Resolve accessibility before copying or selecting all, including password/editability checks.
+    let selection_guard = if terminal {
+        None
+    } else {
+        Some(
+            crate::selection_guard::SelectionGuard::begin(target)
+                .ok_or(CaptureFailure::Unverifiable)?,
+        )
+    };
+    let mut io = RealIo::new(terminal).map_err(|_| CaptureFailure::Native)?;
     // Conteudo que nao conseguimos repor (ficheiros do Explorer, etc.): nem toca no clipboard.
     if io.has_unpreservable_content() {
         return Ok(CaptureOutput {
@@ -137,11 +207,16 @@ fn blocking_capture(
             },
             image: None,
             unpreservable: true,
+            selection_guard: None,
         });
     }
     // Snapshot da imagem ANTES de a captura escrever o sentinela (senao perdia-se).
     let image = io.snapshot_image();
-    let captured = seq::capture(
+    #[cfg(windows)]
+    if image.is_none() {
+        return Err(CaptureFailure::Native);
+    }
+    let mut captured = seq::capture(
         &mut io,
         SENTINEL,
         timing.polls,
@@ -150,38 +225,110 @@ fn blocking_capture(
         terminal,
         select_all_fallback,
     );
+    // End clipboard ownership before network I/O. Later cancellation must not restore stale data.
+    let owned = captured.text.as_deref().unwrap_or(SENTINEL);
+    restore_snapshot(&mut io, &captured.saved, image.as_ref(), owned);
+    captured.saved = None;
+    if !crate::foreground::same_target(target)
+        || selection_guard.as_ref().is_some_and(|guard| {
+            captured
+                .text
+                .as_deref()
+                .is_some_and(|text| !guard.seal(text, captured.via_select_all))
+        })
+    {
+        return Err(CaptureFailure::Unverifiable);
+    }
     Ok(CaptureOutput {
         captured,
-        image,
+        image: None,
         unpreservable: false,
+        selection_guard,
     })
 }
 
 /// Bloqueante: substitui a seleccao pelo refinado e restaura o clipboard original. Se o
 /// original era uma imagem (sem texto guardado), repoe a imagem por cima do refinado depois
 /// do paste. Devolve `true` se o refinado chegou mesmo ao clipboard (ver `seq::replace`).
-fn blocking_replace(
-    refined: String,
-    saved: Option<String>,
-    image: Option<ClipImage>,
-    terminal: bool,
-    settle_ms: u64,
-) -> Result<bool, String> {
-    let mut io = RealIo::new(terminal)?;
-    // No terminal, achata para uma linha: um `\n` no meio submetia o comando a meio (cada linha
-    // executaria em separado). Fora do terminal, o texto original (com paragrafos) e preservado.
-    let to_paste = if terminal {
-        seq::flatten_for_terminal(&refined)
-    } else {
-        refined
-    };
-    let armed = seq::replace(&mut io, &to_paste, &saved, settle_ms);
-    if saved.is_none() {
-        if let Some(img) = &image {
-            io.restore_image(img);
+fn restore_snapshot(
+    io: &mut RealIo,
+    saved: &Option<String>,
+    image: Option<&ClipImage>,
+    owned: &str,
+) {
+    use seq::SelectionIo;
+    let revision = io.clip_revision();
+    if io.clip_get().as_deref() != Some(owned) {
+        return;
+    }
+    if let Some(image) = image {
+        #[cfg(windows)]
+        {
+            if let Some(revision) = revision {
+                let _ = image.restore_if_owned(revision);
+            }
+            return;
+        }
+        #[cfg(not(windows))]
+        if saved.is_none() {
+            if io.clip_revision() == revision {
+                io.restore_image(image);
+            }
+            return;
         }
     }
-    Ok(armed)
+    seq::restore_owned(io, saved, owned, revision);
+}
+
+fn blocking_replace(
+    refined: String,
+    terminal: bool,
+    settle_ms: u64,
+    target: ApplyTarget,
+    expected_selection: String,
+) -> Result<bool, String> {
+    use seq::SelectionIo;
+    let _input_owner = crate::preview_hook::input_lease();
+    // Terminal line editing is shell-specific; a generic Ctrl+U can destroy unrelated input.
+    if terminal || !target.matches() {
+        return Ok(false);
+    }
+    let mut io = RealIo::new(false)?;
+    if io.has_unpreservable_content() {
+        return Ok(false);
+    }
+    let saved = io.clip_get();
+    let image = io.snapshot_image();
+    #[cfg(windows)]
+    if image.is_none() {
+        return Ok(false);
+    }
+    let captured = seq::capture(
+        &mut io,
+        SENTINEL,
+        10,
+        10,
+        NEUTRALIZE_TIMEOUT_MS,
+        false,
+        false,
+    );
+    let owned = captured.text.as_deref().unwrap_or(SENTINEL);
+    if captured.text.as_deref() != Some(expected_selection.as_str()) || !target.matches() {
+        restore_snapshot(&mut io, &saved, image.as_ref(), owned);
+        return Ok(false);
+    }
+    io.clip_set(&refined);
+    let revision = io.clip_revision();
+    if io.clip_get().as_deref() != Some(refined.as_str()) || !target.matches() {
+        restore_snapshot(&mut io, &saved, image.as_ref(), &refined);
+        return Ok(false);
+    }
+    io.send_paste();
+    io.sleep_ms(settle_ms);
+    if io.clip_revision() == revision {
+        restore_snapshot(&mut io, &saved, image.as_ref(), &refined);
+    }
+    Ok(io.input_succeeded())
 }
 
 /// Bloqueante: restaura o clipboard original (ramos de erro/hint): texto se havia, senao a
@@ -215,13 +362,10 @@ fn now_ms() -> u64 {
 /// em vez de cada chamador embutir a sua propria string e o seu proprio numero magico.
 async fn finish(app: &AppHandle, run_id: u64, outcome: FlowOutcome) {
     let fb = feedback_for(outcome);
-    emit(app, fb.phase, fb.message, fb.provider);
-    // A guarda liberta AQUI, e nao depois da pilula desaparecer. Enquanto ficava presa ate ao
-    // fim do `hide_after`, um atalho carregado durante os ~2s da pilula era lido como "cancela o
-    // ciclo em curso" de um ciclo que ja tinha acabado: no log via-se o atalho a disparar tres
-    // vezes seguidas e nada a acontecer. A pilula deste ciclo continua no ecra, mas se entretanto
-    // nascer um ciclo novo o `hide_after` dele deixa de lhe mexer (ver o `hide_gen`).
-    app.state::<AppState>().busy.store(false, Ordering::SeqCst);
+    emit(app, run_id, fb.phase, fb.message, fb.provider);
+    // Feedback may outlive its run. Only this run's ownership is released, so late cleanup
+    // cannot admit a third interaction while a newer run is capturing or applying text.
+    app.state::<AppState>().complete_run(run_id);
     hide_after(app, run_id, fb.hide_after_ms).await;
 }
 
@@ -241,7 +385,7 @@ async fn abort_cancelled(
 }
 
 /// Orquestra todo o fluxo: hotkey -> orb -> capturar -> refinar -> colar. Ver `RunOpts`.
-pub async fn run(app: AppHandle, opts: RunOpts) {
+pub async fn run(app: AppHandle, opts: RunOpts, lease: RunLease) {
     let RunOpts {
         terminal,
         timing,
@@ -253,14 +397,20 @@ pub async fn run(app: AppHandle, opts: RunOpts) {
         run_id,
         target_hwnd,
     } = opts;
-    emit(&app, "refining", None, None);
+    emit(&app, run_id, "refining", None, None);
 
+    let capture_lease = lease.clone();
     let out = match tauri::async_runtime::spawn_blocking(move || {
-        blocking_capture(terminal, timing, select_all_fallback)
+        let _capture_lease = capture_lease;
+        blocking_capture(terminal, timing, select_all_fallback, target_hwnd)
     })
     .await
     {
         Ok(Ok(o)) => o,
+        Ok(Err(CaptureFailure::Unverifiable)) => {
+            finish(&app, run_id, FlowOutcome::TargetUnverifiable).await;
+            return;
+        }
         _ => {
             finish(&app, run_id, FlowOutcome::CaptureFailed).await;
             return;
@@ -273,6 +423,7 @@ pub async fn run(app: AppHandle, opts: RunOpts) {
         return;
     }
 
+    let selection_guard = out.selection_guard;
     let captured = out.captured;
     let image = out.image;
     let saved = captured.saved.clone();
@@ -355,6 +506,13 @@ pub async fn run(app: AppHandle, opts: RunOpts) {
     // corria o `finish` com o hook instalado, e durante esse segundo e meio de pilula o Esc do
     // utilizador era consumido por um refine que ja tinha acabado. A captura demora ~300ms e nao
     // e o que alguem quer dispensar; a chamada ao modelo pode demorar dezenas de segundos.
+    if !app
+        .state::<AppState>()
+        .advance_run(run_id, RunPhase::Requesting)
+    {
+        finish(&app, run_id, FlowOutcome::Cancelled).await;
+        return;
+    }
     let esc_watch = crate::preview_hook::spawn_esc_watcher(app.clone(), run_id);
 
     let obtained = obtain_refined(
@@ -410,19 +568,17 @@ pub async fn run(app: AppHandle, opts: RunOpts) {
             // Fora do preview, `Accept` direto (comportamento de sempre). Ramifica-se ANTES
             // de mover `image` para o `blocking_replace`, porque o reject precisa dele.
             let decision = if preview {
+                if !app
+                    .state::<AppState>()
+                    .advance_run(run_id, RunPhase::Reviewing)
+                {
+                    finish(&app, run_id, FlowOutcome::Cancelled).await;
+                    return;
+                }
                 // Um reaproveitamento PARECIDO (nao identico) diz-se: os caracteres que diferem
                 // sao precisamente a edicao que a pessoa acabou de fazer, e aplicar por cima sem
                 // avisar revertia-a em silencio.
-                let msg = match from_cache {
-                    // Curta de proposito: a caixa que garantimos visivel tem 460px logicos, e
-                    // uma frase mais longa era cortada pela borda do ecra precisamente quando
-                    // tem algo importante a dizer.
-                    Reuse::Similar(score) => {
-                        format!("Similar refine ({score}%) \u{00b7} Enter to apply")
-                    }
-                    _ => "Enter to apply \u{00b7} Esc to keep original".into(),
-                };
-                emit(&app, "preview", Some(msg), None);
+                emit_preview(&app, run_id, &selected, &refined);
                 crate::preview_hook::gate(app.clone(), run_id).await
             } else {
                 crate::preview_hook::Decision::Accept
@@ -430,6 +586,13 @@ pub async fn run(app: AppHandle, opts: RunOpts) {
 
             match decision {
                 crate::preview_hook::Decision::Accept => {
+                    if !app
+                        .state::<AppState>()
+                        .advance_run(run_id, RunPhase::Applying)
+                    {
+                        finish(&app, run_id, FlowOutcome::Cancelled).await;
+                        return;
+                    }
                     // A janela em foco tem de ser a mesma da captura. Entre o hotkey e aqui pode
                     // ter passado uma chamada de dezenas de segundos mais dez de preview: colar
                     // as cegas metia o texto de uma app dentro de outra. O resultado ja esta
@@ -446,7 +609,7 @@ pub async fn run(app: AppHandle, opts: RunOpts) {
                         finish(&app, run_id, FlowOutcome::ForegroundChanged).await;
                         return;
                     }
-                    let s = saved.clone();
+                    let expected_selection = selected.clone();
                     let settle_ms = timing.settle_ms;
                     log::info!(
                         "[run {run_id}] paste: starting (terminal={} preview={} len={} reuse={:?})",
@@ -455,8 +618,13 @@ pub async fn run(app: AppHandle, opts: RunOpts) {
                         refined.chars().count(),
                         from_cache
                     );
+                    let target = ApplyTarget {
+                        window: target_hwnd,
+                        selection: selection_guard,
+                        lease: lease.clone(),
+                    };
                     let pasted = tauri::async_runtime::spawn_blocking(move || {
-                        blocking_replace(refined, s, image, terminal, settle_ms)
+                        blocking_replace(refined, terminal, settle_ms, target, expected_selection)
                     })
                     .await;
                     log::info!("[run {run_id}] paste: done (armed={pasted:?})");
@@ -515,9 +683,6 @@ enum Reuse {
     Fresh,
     /// Mesmo texto ja refinado antes: zero custo.
     Exact,
-    /// Texto PARECIDO ja refinado antes (percentagem). So se oferece com preview: quem ve
-    /// aprova, porque a diferenca e a edicao que a pessoa acabou de fazer.
-    Similar(u32),
 }
 
 /// O que a fase de refinamento produziu.
@@ -593,8 +758,8 @@ async fn obtain_refined(
         // do outro lado ficar preso, mais vale pagar uma chamada do que deixar o utilizador com
         // uma brasa acesa para sempre.
         if joined_at.elapsed() > JOIN_TIMEOUT {
-            log::warn!("[run {run_id}] a chamada a que se juntou demorou de mais; a fazer a sua");
-            break;
+            log::warn!("[run {run_id}] existing request is still pending; no duplicate submitted");
+            return Obtained::Failed(ember_core::CoreError::AllProvidersFailed);
         }
         tokio::select! {
             _ = gen.changed() => {}
@@ -613,7 +778,20 @@ async fn obtain_refined(
         }
     }
 
-    // Nao ha nada feito nem a decorrer: paga-se uma chamada.
+    if joined_log {
+        // An earlier request finished without a recoverable result. Its billing outcome is
+        // unknown, so joining it must not silently become a second paid request.
+        return Obtained::Failed(ember_core::CoreError::Uncertain);
+    }
+    // No result and no prior operation: this is a new explicit request.
+    if state
+        .inflight
+        .lock()
+        .map(|requests| requests.len() >= 4)
+        .unwrap_or(true)
+    {
+        return Obtained::Failed(ember_core::CoreError::AllProvidersFailed);
+    }
     let rx = spawn_refine(app.clone(), run_id, prep);
     tokio::pin!(rx);
     let done = loop {
@@ -646,22 +824,16 @@ async fn obtain_refined(
 fn lookup_cache(
     app: &AppHandle,
     key: &ember_core::CacheKey,
-    preview: bool,
+    _preview: bool,
 ) -> Option<(ember_core::CacheEntry, Reuse)> {
     let state = app.state::<AppState>();
-    let mut store = state.store.lock().ok()?;
-    let now = now_ms();
-    // A comparacao por semelhanca e quadratica no comprimento e corre com o cadeado da cache
-    // na mao. Num paragrafo nao se mede; num documento inteiro apanhado por select-all mediria.
-    // Acima do teto so se procura o acerto exato, que e uma comparacao de strings.
-    if preview && key.text.chars().count() <= FUZZY_MAX_CHARS {
-        match store.lookup_fuzzy(key, now, ember_core::refine_cache::SIMILAR_MIN)? {
-            ember_core::Hit::Exact(e) => Some((e, Reuse::Exact)),
-            ember_core::Hit::Similar(e, score) => Some((e, Reuse::Similar(score))),
-        }
-    } else {
-        store.lookup(key, now).map(|e| (e, Reuse::Exact))
-    }
+    let hit = state
+        .store
+        .lock()
+        .ok()?
+        .lookup(key, now_ms())
+        .map(|e| (e, Reuse::Exact));
+    hit
 }
 
 fn ready_from(entry: ember_core::CacheEntry, reuse: Reuse) -> Obtained {
@@ -718,7 +890,7 @@ fn spawn_refine(
                 Some(format!("Trying {}...", provider.display_name()))
             };
             if let Some(m) = msg {
-                emit(&app_cb, "refining", Some(m), None);
+                emit(&app_cb, run_id, "refining", Some(m), None);
             }
         };
 
@@ -734,23 +906,20 @@ fn spawn_refine(
                 let engine = ember_core::postprocess(&raw, &prep.prepared);
                 if let ember_core::EngineResult::Paste(refined) = &engine {
                     let now = now_ms();
-                    state.remember(
-                        prep.key.clone(),
-                        ember_core::CacheEntry {
-                            refined: refined.clone(),
-                            provider: provider.clone(),
-                            model: model.clone(),
-                            ts_ms: now,
-                        },
-                        now,
-                    );
+                    let entry = ember_core::CacheEntry {
+                        refined: refined.clone(),
+                        provider: provider.clone(),
+                        model: model.clone(),
+                        ts_ms: now,
+                    };
+                    state.remember(prep.key.clone(), entry.clone(), now);
                     if prep.keep_results {
-                        // Copia-se e SO DEPOIS se grava: escrever o ficheiro com o cadeado da
-                        // cache na mao parava qualquer outro ciclo durante o I/O.
-                        let snapshot = state.store.lock().ok().map(|c| c.clone());
-                        if let Some(c) = snapshot {
-                            crate::refine_store::save(&app, &c);
-                        }
+                        crate::refine_store::save(
+                            &app,
+                            &prep.key,
+                            &entry,
+                            prep.retention_generation,
+                        );
                     }
                     log::info!(
                         "[run {run_id}] guardado: {} chars de {provider} ({model}) em {ms}ms",
@@ -788,19 +957,18 @@ impl Drop for InFlightGuard {
 /// o que interrompeu um refine: dispensado, recusado no preview, clipboard ocupado, janela
 /// trocada. Sem isto, guardar o resultado nao servia de nada.
 pub async fn reapply_last(app: AppHandle) {
-    {
+    let run_id = match app.state::<AppState>().begin_run() {
+        Ok(id) => id,
+        Err(_) => return,
+    };
+    let lease = RunLease::new(app.clone(), run_id);
+    let entry = {
         let state = app.state::<AppState>();
-        if state.busy.swap(true, Ordering::SeqCst) {
-            log::info!("reapply: ha um ciclo a decorrer; ignorado");
-            return;
-        }
-    }
-    let (run_id, entry) = {
-        let state = app.state::<AppState>();
-        let run_id = state.run_seq.fetch_add(1, Ordering::SeqCst) + 1;
-        state.hide_gen.store(run_id, Ordering::SeqCst);
-        let entry = state.store.lock().ok().and_then(|c| c.last().cloned());
-        (run_id, entry)
+        let entry = state.store.lock().ok().and_then(|mut c| {
+            c.evict_expired(crate::now_ms());
+            c.last().cloned()
+        });
+        entry
     };
     crate::show_orb_at_cursor(&app);
     let Some(entry) = entry else {
@@ -816,13 +984,61 @@ pub async fn reapply_last(app: AppHandle) {
         refined.chars().count(),
         entry.provider
     );
+    let target = crate::foreground::foreground_target();
+    let capture_lease = lease.clone();
+    let capture = tauri::async_runtime::spawn_blocking(move || {
+        let _capture_lease = capture_lease;
+        blocking_capture(
+            terminal,
+            CaptureTiming {
+                polls: 10,
+                step_ms: 10,
+                settle_ms,
+            },
+            false,
+            target,
+        )
+    })
+    .await;
+    let (selected, selection_guard) = match capture {
+        Ok(Ok(output)) => (output.captured.text, output.selection_guard),
+        Ok(Err(CaptureFailure::Unverifiable)) => {
+            finish(&app, run_id, FlowOutcome::TargetUnverifiable).await;
+            return;
+        }
+        _ => (None, None),
+    };
+    let Some(selected) = selected else {
+        finish(&app, run_id, FlowOutcome::NoSelectionFound).await;
+        return;
+    };
+    if !app
+        .state::<AppState>()
+        .advance_run(run_id, RunPhase::Reviewing)
+    {
+        finish(&app, run_id, FlowOutcome::Cancelled).await;
+        return;
+    }
+    emit_preview(&app, run_id, &selected, &refined);
+    if crate::preview_hook::gate(app.clone(), run_id).await != crate::preview_hook::Decision::Accept
+    {
+        finish(&app, run_id, FlowOutcome::Cancelled).await;
+        return;
+    }
+    if !app
+        .state::<AppState>()
+        .advance_run(run_id, RunPhase::Applying)
+    {
+        finish(&app, run_id, FlowOutcome::Cancelled).await;
+        return;
+    }
+    let target = ApplyTarget {
+        window: target,
+        selection: selection_guard,
+        lease,
+    };
     let pasted = tauri::async_runtime::spawn_blocking(move || {
-        // Sem captura, portanto sem `saved` vindo dela: o que estiver no clipboard agora e o que
-        // la fica depois. `blocking_replace` trata da sequencia de arme e restauro.
-        let current = RealIo::new(terminal)
-            .ok()
-            .and_then(|mut io| seq::SelectionIo::clip_get(&mut io));
-        blocking_replace(refined, current, None, terminal, settle_ms)
+        blocking_replace(refined, terminal, settle_ms, target, selected)
     })
     .await;
     match pasted {
@@ -844,5 +1060,61 @@ async fn hide_after(app: &AppHandle, run_id: u64, ms: u64) {
     // anterior fica montada e, como o orb partilha `layoutId` com ela, o hotkey seguinte
     // faz o orb MORPHAR da pilula velha (desliza, sem fade) em vez de montar de novo e
     // aparecer com fade no sitio certo.
-    emit(app, "hidden", None, None);
+    emit(app, run_id, "hidden", None, None);
+}
+
+fn emit_preview(app: &AppHandle, run_id: u64, original: &str, result: &str) {
+    emit_payload(
+        app,
+        run_id,
+        "preview",
+        None,
+        None,
+        Some(serde_json::json!({
+            "original": ember_core::preview::pages(original), "result": ember_core::preview::pages(result), "page": 0,
+        })),
+    );
+}
+
+#[cfg(windows)]
+pub(crate) fn move_preview_page(app: &AppHandle, run_id: u64, delta: i32) {
+    let state = app.state::<AppState>();
+    if state.hide_gen.load(Ordering::SeqCst) != run_id {
+        return;
+    }
+    let Ok(mut slot) = state.last_state.lock() else {
+        return;
+    };
+    let Some(payload) = slot.as_mut() else {
+        return;
+    };
+    let Some(preview) = payload.get_mut("preview").filter(|v| v.is_object()) else {
+        return;
+    };
+    let pages = ["original", "result"]
+        .iter()
+        .filter_map(|key| preview[*key].as_array())
+        .map(Vec::len)
+        .max()
+        .unwrap_or(1)
+        .max(1) as i64;
+    let page = (preview["page"].as_i64().unwrap_or(0) + delta as i64).clamp(0, pages - 1);
+    preview["page"] = page.into();
+    payload["sequence"] = (state.event_seq.fetch_add(1, Ordering::SeqCst) + 1).into();
+    let _ = app.emit_to("overlay", STATE_EVENT, payload.clone());
+}
+
+#[tauri::command]
+pub fn overlay_snapshot(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<serde_json::Value>, String> {
+    if window.label() != "overlay" {
+        return Err("Overlay only".into());
+    }
+    Ok(state
+        .last_state
+        .lock()
+        .map_err(|_| "Overlay state unavailable")?
+        .clone())
 }

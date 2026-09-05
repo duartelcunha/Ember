@@ -1,7 +1,6 @@
 //! Comandos Tauri das settings + o helper de refinamento usado pelo loop nativo.
 
 use ember_core::model::{ProfileSource, Provider, RefineMode};
-use ember_core::project::{ContextChoice, NoContext};
 use ember_core::prompt::build_llm_request;
 use ember_core::retry::RetryConfig;
 use serde::Serialize;
@@ -117,8 +116,8 @@ fn build_dto(app: &AppHandle, cfg: &config::Config) -> SettingsDto {
     // Le as 3 chaves honestamente: uma falha do cofre (Err) nao se colapsa em "sem chave".
     // Se o cofre estiver bloqueado, todas ficam false e key_store_error informa a UI.
     let (has_g, has_o, key_store_error) = match (
-        secrets::try_has(Provider::Gemini),
-        secrets::try_has(Provider::OpenAi),
+        secrets::try_has(Provider::Gemini, &cfg.openai_base_url),
+        secrets::try_has(Provider::OpenAi, &cfg.openai_base_url),
     ) {
         (Ok(g), Ok(o)) => (g, o, None),
         (e_g, e_o) => {
@@ -153,7 +152,9 @@ fn build_dto(app: &AppHandle, cfg: &config::Config) -> SettingsDto {
         // Uma falha do cofre aqui nao pode rebentar as settings inteiras: fica "sem sessao", e o
         // `key_store_error` acima ja e o canal honesto para o cofre ilegivel.
         chatgpt_signed_in: session.is_some(),
-        chatgpt_account: session.and_then(|s| s.account_id),
+        // O nome, nunca o id: quem abre as settings quer saber QUE conta esta ligada, e um
+        // identificador opaco nao responde a isso. Sem nome, a UI diz so que ha sessao.
+        chatgpt_account: session.and_then(|s| s.account_label),
         key_store_error,
         profile_text: resolved.profile.text,
         profile_source: source_str(resolved.profile.source),
@@ -196,8 +197,8 @@ fn build_dto(app: &AppHandle, cfg: &config::Config) -> SettingsDto {
 
 /// Presenca de chave para o diagnostico, honesta: distingue configurada / ausente / cofre
 /// ilegivel. O diagnostico e best-effort (nao devemos rebentar se o cofre estiver bloqueado).
-fn key_state(p: Provider) -> &'static str {
-    match secrets::try_has(p) {
+fn key_state(p: Provider, base_url: &str) -> &'static str {
+    match secrets::try_has(p, base_url) {
         Ok(true) => "set",
         Ok(false) => "missing",
         Err(_) => {
@@ -283,8 +284,17 @@ pub fn set_openai_base_url(
     state: State<'_, AppState>,
     base_url: String,
 ) -> Result<(), String> {
+    let mut generation = state
+        .connection_generation
+        .lock()
+        .map_err(|_| "Connection unavailable")?;
+    *generation += 1;
+
     let mut cfg = config::load(&app);
-    cfg.openai_base_url = base_url;
+    let connection = crate::connection::ProviderConnection::parse(&base_url)?;
+    secrets::migrate_legacy_openai(&cfg.openai_base_url)
+        .map_err(|_| "Credential migration failed")?;
+    cfg.openai_base_url = connection.base_url;
     // Re-sanitiza so este campo (vazio -> default, tira barra final) antes de gravar.
     let d = config::Config::default();
     let trimmed = cfg.openai_base_url.trim().trim_end_matches('/');
@@ -383,6 +393,11 @@ pub fn check_hotkey(
 /// vez de um "nao deu" generico.
 #[tauri::command]
 pub fn set_hotkey(app: AppHandle, which: String, hotkey: String) -> Result<(), String> {
+    static TRANSACTION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _transaction = TRANSACTION
+        .lock()
+        .map_err(|_| "Hotkey settings unavailable")?;
+
     let mut cfg = config::load(&app);
     let previous = cfg.clone();
     // A POLITICA corre aqui, e nao so no `check_hotkey`, porque este comando e a porta que grava
@@ -415,22 +430,45 @@ pub fn set_hotkey(app: AppHandle, which: String, hotkey: String) -> Result<(), S
         "picker" => cfg.hotkey_picker = hotkey,
         _ => return Err(format!("invalid hotkey slot: {which}")),
     }
-    crate::register_hotkeys(&app, &cfg).map_err(|e| {
+    crate::register_hotkeys(&app, &cfg).inspect_err(|_| {
         let _ = crate::register_hotkeys(&app, &previous);
-        e
     })?;
-    config::save(&app, &cfg).map_err(|e| e.to_string())
+    if let Err(error) = config::save(&app, &cfg) {
+        let _ = crate::register_hotkeys(&app, &config::load(&app));
+        return Err(error.to_string());
+    }
+    Ok(())
 }
 
 #[tauri::command]
 pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
     use tauri_plugin_autostart::ManagerExt;
+    static TRANSACTION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _transaction = TRANSACTION
+        .lock()
+        .map_err(|_| "Autostart settings unavailable")?;
     let mut cfg = config::load(&app);
+    let manager = app.autolaunch();
+    let previous = manager.is_enabled().map_err(|e| e.to_string())?;
+    if enabled {
+        manager.enable()
+    } else {
+        manager.disable()
+    }
+    .map_err(|e| e.to_string())?;
     cfg.autostart = enabled;
-    config::save(&app, &cfg).map_err(|e| e.to_string())?;
-    let m = app.autolaunch();
-    let r = if enabled { m.enable() } else { m.disable() };
-    r.map_err(|e| e.to_string())
+    if let Err(error) = config::save(&app, &cfg) {
+        let rollback = if previous {
+            manager.enable()
+        } else {
+            manager.disable()
+        };
+        if rollback.is_err() {
+            return Err("Autostart changed but settings could not be saved or restored. Reopen settings to reconcile.".into());
+        }
+        return Err(error.to_string());
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -476,6 +514,9 @@ pub fn set_terminal_handling(app: AppHandle, enabled: bool) -> Result<(), String
 pub fn set_project_context(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut cfg = config::load(&app);
     cfg.project_context = enabled;
+    if enabled {
+        cfg.active_project = None;
+    }
     config::save(&app, &cfg).map_err(|e| e.to_string())
 }
 
@@ -513,12 +554,20 @@ pub fn set_capture_timing(
 
 #[tauri::command]
 pub fn set_api_key(
+    app: AppHandle,
     state: State<'_, AppState>,
     provider: String,
     key: String,
 ) -> Result<(), String> {
+    let mut generation = state
+        .connection_generation
+        .lock()
+        .map_err(|_| "Connection unavailable")?;
+    *generation += 1;
+
     let p = parse_provider(&provider)?;
-    secrets::set(p, &key).map_err(|e| e.to_string())?;
+    secrets::set(p, &key, &config::load(&app).openai_base_url).map_err(|e| e.to_string())?;
+    crate::models_cache::forget(&state, p);
     // A chave mudou: o probe antigo deixa de valer. Tira do cache (fica "por revalidar").
     if let Ok(mut m) = state.key_checks.lock() {
         m.remove(&p);
@@ -527,9 +576,20 @@ pub fn set_api_key(
 }
 
 #[tauri::command]
-pub fn clear_api_key(state: State<'_, AppState>, provider: String) -> Result<(), String> {
+pub fn clear_api_key(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    provider: String,
+) -> Result<(), String> {
+    let mut generation = state
+        .connection_generation
+        .lock()
+        .map_err(|_| "Connection unavailable")?;
+    *generation += 1;
+
     let p = parse_provider(&provider)?;
-    secrets::delete(p).map_err(|e| e.to_string())?;
+    secrets::delete(p, &config::load(&app).openai_base_url).map_err(|e| e.to_string())?;
+    crate::models_cache::forget(&state, p);
     if let Ok(mut m) = state.key_checks.lock() {
         m.remove(&p);
     }
@@ -543,35 +603,41 @@ pub async fn validate_key(
     provider: String,
 ) -> Result<ember_core::health::KeyCheck, String> {
     let p = parse_provider(&provider)?;
-    let cfg_auth = config::load(&app).openai_auth;
-    // Em modo subscricao nao ha chave para validar: o que se prova e que a sessao ainda serve.
-    if p == Provider::OpenAi && cfg_auth == config::OpenAiAuth::ChatGpt {
-        let probe = crate::oauth::probe(state.inner()).await;
-        if let Ok(mut m) = state.key_checks.lock() {
-            m.insert(p, (probe.check, crate::now_ms()));
-        }
-        // O mesmo probe trouxe (talvez) a listagem: absorve-a, como no caminho das chaves.
-        crate::models_cache::absorb(&app, &state, p, &probe.models);
-        return Ok(probe.check);
+    let (generation, cfg, key) = {
+        let generation = state
+            .connection_generation
+            .lock()
+            .map_err(|_| "Connection unavailable")?;
+        let cfg = config::load(&app);
+        let key = if p == Provider::OpenAi && cfg.openai_auth == config::OpenAiAuth::ChatGpt {
+            None
+        } else {
+            secrets::try_get(p, &cfg.openai_base_url).map_err(|_| "Credential vault unavailable")?
+        };
+        (*generation, cfg, key)
+    };
+    let probe = if p == Provider::OpenAi && cfg.openai_auth == config::OpenAiAuth::ChatGpt {
+        crate::oauth::probe(state.inner()).await
+    } else {
+        let Some(key) = key else {
+            return Ok(ember_core::health::KeyCheck::Invalid);
+        };
+        let pctx = providers::ProviderCtx {
+            openai_base_url: &cfg.openai_base_url,
+        };
+        providers::validate(&state.http, p, &key, &pctx).await
+    };
+    // Commit only to the same connection generation that supplied the credential and URL.
+    let current = state
+        .connection_generation
+        .lock()
+        .map_err(|_| "Connection unavailable")?;
+    if *current != generation {
+        return Err("Connection changed during validation. Try again.".into());
     }
-    // Bug A: ler pelo try_get, nao pelo get engolidor. Um cofre bloqueado devolve Err -> a UI
-    // mostra o erro (toast), em vez de tratar silenciosamente como "chave invalida".
-    let key = secrets::try_get(p).map_err(|_| {
-        "Couldn't read the key from the credential vault (it may be locked).".to_string()
-    })?;
-    let Some(key) = key else {
-        return Ok(ember_core::health::KeyCheck::Invalid);
-    };
-    let cfg = config::load(&app);
-    let pctx = providers::ProviderCtx {
-        openai_base_url: &cfg.openai_base_url,
-    };
-    let probe = providers::validate(&state.http, p, &key, &pctx).await;
-    // Guarda o resultado no cache de saude, para a pre-validacao/o veredicto refletirem ja.
     if let Ok(mut m) = state.key_checks.lock() {
         m.insert(p, (probe.check, crate::now_ms()));
     }
-    // A mesma resposta trouxe a listagem de modelos: guarda-a e reconcilia a escolha gravada.
     crate::models_cache::absorb(&app, &state, p, &probe.models);
     Ok(probe.check)
 }
@@ -607,6 +673,11 @@ pub async fn chatgpt_login(
     state: State<'_, AppState>,
 ) -> Result<SettingsDto, String> {
     crate::oauth::login(state.inner()).await?;
+    let mut generation = state
+        .connection_generation
+        .lock()
+        .map_err(|_| "Connection unavailable")?;
+    *generation += 1;
     // A sessao nova invalida qualquer veredicto anterior sobre este slot.
     if let Ok(mut m) = state.key_checks.lock() {
         m.remove(&Provider::OpenAi);
@@ -632,10 +703,30 @@ pub async fn chatgpt_logout(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<SettingsDto, String> {
-    crate::secrets::clear_oauth()
-        .map_err(|_| "Couldn't clear the session from the credential vault.".to_string())?;
-    // O token em memoria tambem, senao a app continuava a refinar com uma sessao de que o
-    // utilizador acabou de sair, ate ele expirar por si.
+    state
+        .oauth_logged_out
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    {
+        let mut generation = state
+            .connection_generation
+            .lock()
+            .map_err(|_| "Connection unavailable")?;
+        *generation += 1;
+    }
+    {
+        let _commit = state
+            .oauth_commit
+            .lock()
+            .map_err(|_| "Session state unavailable")?;
+        state
+            .oauth_logged_out
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        state
+            .oauth_generation
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        crate::secrets::clear_oauth()
+            .map_err(|_| "Couldn't clear the session from the credential vault.")?;
+    }
     *state.oauth_access.lock().await = None;
     let mut cfg = config::load(&app);
     cfg.openai_auth = config::OpenAiAuth::ApiKey;
@@ -681,6 +772,12 @@ pub fn set_openai_auth(
     state: State<'_, AppState>,
     mode: String,
 ) -> Result<SettingsDto, String> {
+    let mut generation = state
+        .connection_generation
+        .lock()
+        .map_err(|_| "Connection unavailable")?;
+    *generation += 1;
+
     let mut cfg = config::load(&app);
     cfg.openai_auth = match mode.as_str() {
         "api_key" => config::OpenAiAuth::ApiKey,
@@ -732,7 +829,7 @@ pub fn get_provider_health(
         let configured = if p == Provider::OpenAi && auth == config::OpenAiAuth::ChatGpt {
             secrets::has_oauth()
         } else {
-            secrets::try_has(p)
+            secrets::try_has(p, &config::load(&app).openai_base_url)
         }
         .map_err(|_| "Couldn't read saved keys (credential vault may be locked).".to_string())?;
         entries.push(ember_core::health::ProviderStatus {
@@ -804,12 +901,6 @@ pub fn finalize_quit(app: AppHandle) {
 // Debug / diagnostico
 // ---------------------------------------------------------------------------------------
 
-/// Liga/desliga o modo debug. Persiste e aplica ja: abre ou fecha as devtools da janela de
-/// settings (se estiver aberta), para o efeito ser imediato sem reabrir.
-// ---------------------------------------------------------------------------------------
-// Projetos
-// ---------------------------------------------------------------------------------------
-
 /// Cria ou atualiza um projeto. Id vazio = e novo, e o id nasce aqui.
 ///
 /// O id e gerado no Rust e nao no lado do JS de proposito: e ele que liga o projeto ativo ao
@@ -851,17 +942,13 @@ pub fn delete_project(app: AppHandle, id: String) -> Result<SettingsDto, String>
     save_and_reload(&app, cfg)
 }
 
-/// Escolhe o projeto ativo. `None` volta a nao ter nenhum (e ai vale a detecao pela janela).
+/// Select a pinned project or explicitly disable project context.
 #[tauri::command]
 pub fn set_active_project(app: AppHandle, id: Option<String>) -> Result<SettingsDto, String> {
     let mut cfg = config::load(&app);
     cfg.active_project = id.filter(|i| !i.trim().is_empty());
-    let escolhido = cfg.active_project.clone();
+    cfg.project_context = false;
     let dto = save_and_reload(&app, cfg)?;
-    log::info!(
-        "projeto ativo: {}",
-        escolhido.as_deref().unwrap_or("nenhum")
-    );
     Ok(dto)
 }
 
@@ -936,9 +1023,10 @@ pub async fn distill_project(
     app: AppHandle,
     state: State<'_, AppState>,
     path: String,
+    expected_fingerprint: Option<String>,
 ) -> Result<String, String> {
     let p = std::path::PathBuf::from(&path);
-    crate::projects::distill(&app, state.inner(), &p)
+    crate::projects::distill(&app, state.inner(), &p, expected_fingerprint.as_deref())
         .await
         .map(|(brief, _)| brief)
         .map_err(|e| e.message())
@@ -994,9 +1082,7 @@ fn new_project_id() -> String {
 /// dir, a um clique do botao que ja abre essa pasta.
 #[tauri::command]
 pub fn set_save_prompts(app: AppHandle, enabled: bool) -> Result<(), String> {
-    let mut cfg = config::load(&app);
-    cfg.save_prompts = enabled;
-    config::save(&app, &cfg).map_err(|e| e.to_string())
+    crate::prompt_log::set_enabled(&app, enabled)
 }
 
 /// Liga/desliga a memoria de refinados. Ao DESLIGAR apaga o ficheiro e esvazia a cache em
@@ -1005,17 +1091,7 @@ pub fn set_save_prompts(app: AppHandle, enabled: bool) -> Result<(), String> {
 /// valesse para o futuro deixava o texto antigo em disco sem ninguem dar por isso.
 #[tauri::command]
 pub fn set_keep_results(app: AppHandle, enabled: bool) -> Result<(), String> {
-    let mut cfg = config::load(&app);
-    cfg.keep_results = enabled;
-    config::save(&app, &cfg).map_err(|e| e.to_string())?;
-    if !enabled {
-        crate::refine_store::forget(&app);
-        if let Ok(mut store) = app.state::<AppState>().store.lock() {
-            *store = ember_core::RefineCache::default();
-        }
-        log::info!("refine cache: desligada pelo utilizador; ficheiro apagado");
-    }
-    Ok(())
+    crate::refine_store::set_enabled(&app, enabled)
 }
 
 #[tauri::command]
@@ -1201,8 +1277,8 @@ pub fn get_diagnostics(app: AppHandle) -> String {
         "Ember {version}\nOS: {} ({})\nGemini key: {}\nFallback key: {}\nMode: {}  Thinking: {} ({})  Debug: {}\nFallback endpoint: {}\nHotkeys: main={} polish={} turbo={}\nProcess: {elevation}\nSelect-all fallback: {}{legacy}\nLog: {log_path}",
         std::env::consts::OS,
         std::env::consts::ARCH,
-        key_state(Provider::Gemini),
-        key_state(Provider::OpenAi),
+        key_state(Provider::Gemini, &cfg.openai_base_url),
+        key_state(Provider::OpenAi, &cfg.openai_base_url),
         mode_str(cfg.mode),
         cfg.thinking_enabled,
         cfg.thinking_level,
@@ -1278,7 +1354,7 @@ pub(crate) async fn build_chain(
                 }
             }
         } else {
-            match secrets::try_get(provider) {
+            match secrets::try_get(provider, &cfg.openai_base_url) {
                 Ok(Some(k)) => providers::Credential::Key(k),
                 Ok(None) => continue,
                 // Falha do cofre: nao retirar o provider em silencio. Se ficarmos sem nenhum,
@@ -1354,6 +1430,7 @@ pub(crate) async fn build_chain(
 pub(crate) fn friendly_error(e: &ember_core::CoreError) -> String {
     use ember_core::CoreError::*;
     match e {
+        Uncertain => "Request incomplete. It may have been charged. The original is unchanged; retry only when ready.".into(),
         NoProvidersConfigured => "No API key set. Opening settings…".into(),
         // Cobre os dois modos do slot de fallback: uma chave recusada e uma sessao ChatGPT que
         // expirou ou foi revogada dao o mesmo erro, e a accao util e a mesma (ir as settings).
@@ -1393,6 +1470,8 @@ pub(crate) struct PreparedRefine {
     pub key: ember_core::CacheKey,
     /// Gravar o refinado em disco quando ele chegar (ver `refine_store`).
     pub keep_results: bool,
+    pub retention_generation: u64,
+    pub prompt_generation: u64,
 }
 
 /// Resolve perfil, contexto de projeto, cadeia e prompt. NAO chama o modelo nem gasta nada.
@@ -1405,47 +1484,68 @@ pub(crate) async fn prepare_refine(
     // com atalhos por modo, a config so decide o que faz o atalho principal.
     mode: RefineMode,
 ) -> Result<PreparedRefine, ember_core::CoreError> {
+    // Capture policy generations before any await. Re-enabling a policy cannot revive
+    // write permissions held by an operation that started before it was disabled.
+    let retention_generation = state
+        .retention_generation
+        .load(std::sync::atomic::Ordering::SeqCst);
+    let prompt_generation = state
+        .prompt_generation
+        .load(std::sync::atomic::Ordering::SeqCst);
     let cfg = config::load(app);
-    let chain = build_chain(app, state, &cfg).await?;
-
     let resolved = profile::resolve(app, cfg.profile_override.as_deref(), cfg.ignore_claude_md);
-    // Project context (best-effort, only when enabled): adds the project's conventions to the
-    // global profile. Any failure -> None -> carry on with the global one alone (the behaviour it
-    // always had). `foreground_title` is only populated when `config.project_context` is on.
-    //
-    // What DECIDES where the context comes from (and the precedence, and why) is `choose_context`,
-    // which is pure and tested; here we only EXECUTE the choice, because only window detection
-    // needs to read disk. Each branch logs which path won: without that, nobody can explain
-    // afterwards why the prompt came out the way it did.
     let active = ember_core::projects::active(&cfg.projects, cfg.active_project.as_deref());
-    let escolha = ember_core::project::choose_context(
-        active.map(|p| (p.name.as_str(), p.brief.as_str())),
-        foreground_title,
-    );
-    let project_ctx = match escolha {
-        ContextChoice::Project { block, name } => {
-            let source_path = format!("project \"{name}\"");
-            log::info!("project context: {source_path} (brief)");
-            Some(crate::project::ProjectContext { block, source_path })
-        }
-        ContextChoice::DetectFromWindow => {
-            let home = app.path().home_dir().ok();
-            let detetado =
-                foreground_title.and_then(|t| crate::project::resolve(t, home.as_deref()));
-            match &detetado {
-                Some(pc) => log::info!("project context: window title -> {}", pc.source_path),
-                None => {
-                    log::debug!("project context: enabled, none detected for the foreground window")
-                }
-            }
-            detetado
-        }
-        ContextChoice::NoContext(NoContext::ActiveProjectHasNoBrief { name }) => {
-            log::info!("project context: project \"{name}\" is active but its brief is empty");
-            None
-        }
-        ContextChoice::NoContext(NoContext::NothingToGoOn) => None,
+    let selection = if active.is_some() {
+        "pinned"
+    } else if cfg.project_context {
+        "auto"
+    } else {
+        "none"
     };
+    let selected = active.or_else(|| {
+        if !cfg.project_context {
+            return None;
+        }
+        let home = app.path().home_dir().ok();
+        foreground_title
+            .and_then(|title| crate::project::resolve(title, home.as_deref(), &cfg.projects))
+    });
+    let project_block = selected.and_then(|p| ember_core::project::frame_project(&p.brief));
+    // Label only the context actually sent. Empty briefs do not impersonate active context.
+    let used = selected.filter(|_| project_block.is_some());
+    if let Ok(mut label) = state.orb_project.lock() {
+        *label = used.map(|p| p.name.clone());
+    }
+    if let Ok(mut accent) = state.orb_accent.lock() {
+        *accent = used.map(|p| {
+            let a = ember_core::projects::resolve_accent(p);
+            [a.raw.to_string(), a.mid.to_string(), a.glow.to_string()]
+        });
+    }
+    let project_source = used.map(|p| {
+        p.source_path
+            .clone()
+            .unwrap_or_else(|| "User edited brief".into())
+    });
+    if let Ok(mut snapshot) = state.resolved_context.lock() {
+        *snapshot = Some(serde_json::json!({
+            "selection": selection,
+            "project": used.map(|p| &p.name),
+            "projectId": used.map(|p| &p.id),
+            "sourceChanged": used.and_then(crate::projects::source_changed),
+            "projectSource": project_source,
+            "profileSource": resolved.path,
+            "profile": ember_core::prompt::cap_profile(&ember_core::project::redact_secrets(&resolved.profile.text), ember_core::prompt::MAX_PROFILE_CHARS),
+            "profileTruncated": resolved.profile.text.len() > ember_core::prompt::MAX_PROFILE_CHARS,
+            "projectContext": project_block,
+            "reason": if selected.is_some() && used.is_none() { "Selected project has an empty brief" }
+                else if selection == "none" { "Project context explicitly disabled" }
+                else if used.is_none() { "No registered project matches the foreground path" }
+                else { "Reviewed brief from a registered project" },
+            "configRevision": cfg.revision,
+        }));
+    }
+    let chain = build_chain(app, state, &cfg).await?;
     // Motor Ember, fase 1: normaliza o input, mascara codigo/URLs e escapa marcadores. O modelo
     // ve o `masked_input`; o `prepared` volta para o `flow.rs` reconstruir o output.
     let prepared = ember_core::precondition(input, mode);
@@ -1456,7 +1556,7 @@ pub(crate) async fn prepare_refine(
         mode,
         cfg.thinking_enabled,
         &cfg.thinking_level,
-        project_ctx.as_ref().map(|pc| pc.block.as_str()),
+        project_block.as_deref(),
     );
     let rcfg = RetryConfig {
         step_count: chain.len(),
@@ -1470,18 +1570,28 @@ pub(crate) async fn prepare_refine(
     // MODELO e as definicoes de thinking nao vivem la dentro, e sem eles trocar de modelo servia
     // o refine do modelo anterior, que e precisamente a experiencia que faria alguem desistir da
     // funcionalidade. O projeto ativo tambem entra, porque muda o contexto sem mudar o texto.
-    let fingerprint_src = format!(
-        "{}\n\u{001e}model={}\u{001e}thinking={}:{}",
-        req.system,
-        chain
-            .first()
-            .map(|s| s.model.as_str())
-            .unwrap_or("desconhecido"),
-        cfg.thinking_enabled,
-        cfg.thinking_level
-    );
-    let key =
-        ember_core::CacheKey::new(input, mode, cfg.active_project.as_deref(), &fingerprint_src);
+    use sha2::{Digest, Sha256};
+    let steps: Vec<_> = chain
+        .iter()
+        .map(|step| {
+            // Only a digest enters the cache identity. Never serialize credentials or account IDs.
+            let identity = match &step.credential {
+                providers::Credential::Key(key) => key.as_str(),
+                providers::Credential::ChatGpt {
+                    access_token,
+                    account_id,
+                } => account_id.as_deref().unwrap_or(access_token),
+            };
+            serde_json::json!({ "provider": step.provider, "model": step.model,
+            "credential": format!("{:x}", Sha256::digest(identity.as_bytes())) })
+        })
+        .collect();
+    let fingerprint_src = serde_json::json!({ "engine": 3, "endpoint": cfg.openai_base_url,
+        "auth": cfg.openai_auth, "request": req, "steps": steps })
+    .to_string();
+    let mut key =
+        ember_core::CacheKey::new(input, mode, used.map(|p| p.id.as_str()), &fingerprint_src);
+    key.context_digest = Some(format!("{:x}", Sha256::digest(fingerprint_src.as_bytes())));
     Ok(PreparedRefine {
         chain,
         req,
@@ -1490,9 +1600,11 @@ pub(crate) async fn prepare_refine(
         openai_base_url: cfg.openai_base_url,
         save_prompts: cfg.save_prompts,
         mode,
-        project_source: project_ctx.map(|pc| pc.source_path),
+        project_source,
         key,
         keep_results: cfg.keep_results,
+        retention_generation,
+        prompt_generation,
     })
 }
 
@@ -1529,6 +1641,7 @@ pub(crate) async fn execute_refine(
         crate::prompt_log::append(
             app,
             &crate::prompt_log::Record {
+                generation: p.prompt_generation,
                 mode: mode_str(p.mode),
                 provider: resp.provider.display_name(),
                 model: &resp.model,
@@ -1596,4 +1709,9 @@ mod tests {
             friendly_error(&NoProvidersConfigured)
         );
     }
+}
+
+#[tauri::command]
+pub fn get_context_snapshot(state: tauri::State<'_, AppState>) -> Option<serde_json::Value> {
+    state.resolved_context.lock().ok().and_then(|s| s.clone())
 }

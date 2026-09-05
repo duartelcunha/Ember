@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-chatgpt-logout"
+description = "Enables the chatgpt_logout command without any pre-configured scope."
+commands.allow = ["chatgpt_logout"]
+
+[[permission]]
+identifier = "deny-chatgpt-logout"
+description = "Denies the chatgpt_logout command without any pre-configured scope."
+commands.deny = ["chatgpt_logout"]
