@@ -38,7 +38,7 @@ or remaining implementation is listed in the last column.
 | A10/A11/A12 | Shared stationary monitor-sized click-through surface; physical cursor and logical content coordinates; 500 ms topology reconciliation; change-only events; measured bounds and edge hysteresis | Native mixed-DPI/hotplug/taskbar/remote session tests and measured idle/GPU/latency budgets. Display-change event invalidation remains preferable to polling |
 | A13 | Explicit run phase coordinator and retained native job ownership; shared input lease; joined watcher; cancellation and owned key tails | Continuous input generation, lost key-up recovery and complete mouse button/drag matrix |
 | A14 | Run ID plus monotonic sequence, state snapshots after subscribing; stale run and sequence rejection | Native webview reload and transition evidence |
-| A15 | Draft epoch gates scan/distillation; old results cannot replace a newer draft; save preserves newer edits; shared icon/accent registry | Dedicated project editor asynchronous component tests and native visual review |
+| A15 | Draft epoch gates scan/distillation; obsolete colour responses retire with their editor; colour commits preserve newer fields; shared icon/accent registry | Native project editor visual review and wider async save/delete matrix |
 | A16 | Known root files plus scoped Markdown imports; technical facts retained by distillation; bounded read, cycles, provenance and stale-source warning | Root-to-active-file scope hierarchy and source precedence editor |
 | A17 | Explicit No project, Auto and Pinned behavior; Auto only chooses registered roots; empty brief cannot impersonate applied context; inspector exposes resolution | Persisted selection remains backward-compatible fields; inspector shows resolved context, not a provider delivery receipt |
 | A18 | Original bytes in exact cache key; no fuzzy lookup in automatic path; SHA-256 request/chain/connection/credential identity | Paid-provider cache/billing acceptance matrix |
@@ -221,7 +221,9 @@ if the old flag was never changed. Review Personalization before using an older 
 
 Local validation: `cargo test --workspace --locked --quiet` reported `49 passed; 0 failed`
 in the shell and `340 passed; 0 failed` in the core. Strict Clippy exited 0. `npm test` reported
-`tests 7`, `pass 7`, `fail 0`; `npm run build` completed with 5,095 modules in 11.12 seconds.
+`tests 8`, `pass 8`, `fail 0`, including project distillation and colour ownership regressions.
+`npm run build` completed with 5,095 modules in 11.12 seconds before the additional project fix;
+that fix also passed `npx tsc --noEmit`.
 Publication guards reported `3 passed; 0 failed`; version consistency reported `1.1.0-rc.2`.
 The four browser captures in `target/profile-browser-evidence` were inspected locally.
 They use synthetic fixtures and mocked IPC. Publication and installation evidence will be

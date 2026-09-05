@@ -6,6 +6,7 @@ import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, extname, dirname, basename } from "node:path";
 import puppeteer from "puppeteer";
+import { projectRegressions } from "./projects-components.mjs";
 
 // Real React components and CSS, with the documented Tauri IPC mock. This is browser
 // evidence only: it cannot establish native focus, input hooks or monitor transitions.
@@ -131,6 +132,7 @@ test("UI components preserve geometry and asynchronous ownership", async (t) => 
     assert.equal(await page.evaluate(() => window.__profileFixture.saved.length), 1);
     await capture('profile-review');
     });
+    await t.test("project distillation and colour responses preserve the current draft", () => projectRegressions(page, `http://127.0.0.1:${port}`));
     assert.deepEqual(errors, []);
   } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)); assert.equal(dirname(directory), resolve(tmpdir())); assert.ok(basename(directory).startsWith("ember-browser-test-")); await rm(directory, { recursive: true, force: true }); }
 });

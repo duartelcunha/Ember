@@ -139,6 +139,7 @@ function ColourWheel({
       role="application"
       aria-label="Colour wheel"
       onPointerDown={(e) => {
+        if (e.button !== 0 || !e.isPrimary) return;
         e.currentTarget.setPointerCapture(e.pointerId);
         dragging.current = true;
         const p = at(e);
@@ -155,16 +156,26 @@ function ColourWheel({
         onPreview(p.chroma, p.hue);
       }}
       onPointerUp={(e) => {
+        if (!dragging.current || !e.currentTarget.hasPointerCapture(e.pointerId)) return;
         dragging.current = false;
+        e.currentTarget.releasePointerCapture(e.pointerId);
         const p = at(e) ?? pos;
         setPos(p);
         onCommit(p.chroma, p.hue);
       }}
       onPointerCancel={() => {
         dragging.current = false;
+        setPos({ chroma, hue });
+        onPreview(chroma, hue);
+      }}
+      onLostPointerCapture={() => {
+        if (!dragging.current) return;
+        dragging.current = false;
+        setPos({ chroma, hue });
+        onPreview(chroma, hue);
       }}
       className="relative h-44 w-44 shrink-0 cursor-crosshair rounded-full shadow-[0_1px_2px_rgba(0,0,0,0.18),0_8px_24px_-8px_rgba(0,0,0,0.35)]"
-      style={{ background: wheelBackground(wheel) }}
+      style={{ background: wheelBackground(wheel), touchAction: "none" }}
     >
       {/* O marcador nao leva a cor escolhida por dentro: durante o arraste ela so chega do Rust um
           instante depois, e um marcador que pisca a cor errada le-se pior do que um anel vazio. */}
@@ -215,7 +226,7 @@ function ProjectEditor({
   accents: EmberSettings["accents"];
   wheel: EmberSettings["accentWheel"];
   icons: string[];
-  onChange: (p: Project) => void;
+  onChange: React.Dispatch<React.SetStateAction<Project | null>>;
   onSave: () => void;
   onDelete: () => void;
   busy: boolean;
@@ -246,7 +257,8 @@ function ProjectEditor({
         setPreview(p);
         // Gravar no projeto SO ao largar. A escrever a cada movimento, cada uma disparava o efeito
         // que rebusca o preview do hex, e os dois pedidos passavam a competir um com o outro.
-        if (commit) onChange({ ...draft, accentCustom: p.mid });
+        if (commit) onChange(current => current && current.id === draft.id && current.accentCustom === draft.accentCustom
+          ? { ...current, accentCustom: p.mid } : current);
       })
       .catch(() => {});
   };
@@ -267,18 +279,13 @@ function ProjectEditor({
   }, [picking]);
 
   useEffect(() => {
-    if (!custom) {
-      setPreview(null);
-      return;
-    }
-    let alive = true;
-    ipc
-      .previewAccent(custom)
-      .then((p) => alive && setPreview(p))
-      .catch(() => alive && setPreview(null));
-    return () => {
-      alive = false;
-    };
+    const mine = ++askSeq.current;
+    if (!custom) setPreview(null);
+    else ipc.previewAccent(custom)
+      .then(value => { if (mine === askSeq.current) setPreview(value); })
+      .catch(() => { if (mine === askSeq.current) setPreview(null); });
+    // Hex lookups and wheel responses share one revision, including editor retirement.
+    return () => { askSeq.current++; };
   }, [custom]);
 
   return (
@@ -502,6 +509,7 @@ export function ProjectsTab({
   const [openId, setOpenId] = useState<string | null>(null);
   const [draft, setDraftState] = useState<Project | null>(null);
   const draftEpoch = useRef(0);
+  useEffect(() => () => { draftEpoch.current++; }, []);
   const setDraft: React.Dispatch<React.SetStateAction<Project | null>> = (next) => {
     draftEpoch.current += 1;
     setDraftState(next);
