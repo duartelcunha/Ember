@@ -616,7 +616,7 @@ function ProviderConfig({
                 <p className="flex-1 text-sm text-fg-muted">
                   {account ? `Signed in as ${account}.` : "Signed in."}
                 </p>
-                <Button variant="ghost" onClick={signOut} disabled={busy}>
+                <Button variant="ghost" onClick={signOut} loading={busy}>
                   Sign out
                 </Button>
               </>
@@ -625,8 +625,8 @@ function ProviderConfig({
                 <p className="flex-1 text-sm text-fg-muted">
                   Opens your browser to sign in. No key to paste.
                 </p>
-                <Button variant="primary" onClick={signIn} disabled={busy}>
-                  {busy ? "Waiting for the browser…" : "Sign in with ChatGPT"}
+                <Button variant="primary" onClick={signIn} loading={busy}>
+                  Sign in with ChatGPT
                 </Button>
               </>
             )}
@@ -943,8 +943,8 @@ function DiagnosticsSection({
         }}>Delete legacy plaintext results</Button>
       </div>}
       <div className="flex flex-wrap gap-2">
-        <Button variant="ghost" size="sm" onClick={refreshLogs} disabled={loadingLogs}>
-          {loadingLogs ? "Loading…" : "Load recent logs"}
+        <Button variant="ghost" size="sm" onClick={refreshLogs} loading={loadingLogs}>
+          Load recent logs
         </Button>
         <Button
           variant="ghost"

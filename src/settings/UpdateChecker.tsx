@@ -67,8 +67,8 @@ export function UpdateChecker() {
           {version ? `Version ${version}` : "Version unknown"}
         </span>
         {status !== "downloading" && status !== "ready" && (
-          <Button variant="ghost" size="sm" onClick={run} disabled={status === "checking"}>
-            {status === "checking" ? "Checking…" : "Check for updates"}
+          <Button variant="ghost" size="sm" onClick={run} loading={status === "checking"}>
+            Check for updates
           </Button>
         )}
       </div>

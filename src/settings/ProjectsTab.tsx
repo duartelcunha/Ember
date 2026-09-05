@@ -692,7 +692,7 @@ export function ProjectsTab({
       <ContextInspector />
       {openId && draft?.folder && <Button variant="ghost" disabled={busy || distilling} onClick={() => void rescanDraft()}>Check project sources</Button>}
       {scan && openId !== "__novo__" && <div className="space-y-2">
-        <Button variant="ghost" disabled={busy || distilling || !scan.sourcePaths.length} onClick={() => void distil()}>Generate a reviewed draft</Button>
+        <Button variant="ghost" loading={distilling} disabled={busy || !scan.sourcePaths.length} onClick={() => void distil()}>Generate a reviewed draft</Button>
         {draft?.id && <details className="text-xs"><summary>Previously saved brief</summary><pre className="whitespace-pre-wrap p-3">{s.projects.find(p => p.id === draft.id)?.brief}</pre></details>}
       </div>}
       {scan && draft && <Button variant="ghost" disabled={busy || !scan.sourcePaths.length} onClick={() => setDraft(current => current ? { ...current, context: { version: 1, applications: current.context?.applications ?? [], sources: scan.sourcePaths.map(path => ({ path, text: "", fingerprint: "", excludedLines: 0 })) } } : current)}>Use scanned sources automatically</Button>}

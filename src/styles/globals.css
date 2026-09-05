@@ -136,12 +136,7 @@
   }
 }
 
-/* Glow pulsante (estado "a pensar"), por baixo do orb. Sem rotacao: so respiracao de luz.
-   Tom quente da marca (laranja vivo -> transparente), a condizer com a estrela. */
-
-/* Bolha de preview (vidro). NUNCA animar transform (translate/scale) nesta classe: o
-   backdrop-filter re-amostra o fundo desfocado a cada frame do movimento e engasga. So
-   opacidade anima na bolha; o movimento vive no conteudo interno (sem blur). Ver Pill.tsx. */
+/* Solid floating cards keep contrast independent of the application underneath. */
 .ember-bubble {
   background: #1a1511;
   border: 1px solid var(--border-default);
