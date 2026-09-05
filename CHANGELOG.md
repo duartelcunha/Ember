@@ -1,5 +1,97 @@
 # Changelog
 
+## [1.0.0](https://github.com/duartelcunha/Ember/compare/v1.1.0-rc.1...v1.0.0) (2026-09-05)
+
+
+### Features
+
+* a spark at the pointer that morphs into the pill ([d283fca](https://github.com/duartelcunha/Ember/commit/d283fcad5f0ffc07ff05881b9a4c1634b6a0a8b6))
+* **a11y:** overlay screen-reader status + settings hydration skeleton ([f8f5fe6](https://github.com/duartelcunha/Ember/commit/f8f5fe6b25ea685ff48b3467703be04492d22432))
+* Add splash screen animation and fix timeout ([a53905c](https://github.com/duartelcunha/Ember/commit/a53905cc9a5d15adaa2a4da6de1f86a2a08345d9))
+* **branding:** align accent with the logo orange, drop vite favicon ([fce9e97](https://github.com/duartelcunha/Ember/commit/fce9e97f0ad09f5c546de2eebd9e6426b34ed469))
+* **branding:** incandescent star mark, raster brand across the app ([9c1e8f2](https://github.com/duartelcunha/Ember/commit/9c1e8f275e5b36428703a35c94fe46a110cb05c4))
+* **context:** merge the focused project's CLAUDE.md into refining ([e6ee58f](https://github.com/duartelcunha/Ember/commit/e6ee58f75123c840529a5f324bd135218c77580a))
+* **core:** add monitor_containing for cursor-based monitor lookup ([72315fb](https://github.com/duartelcunha/Ember/commit/72315fb321573c2fcdcb0af54f7d5f7189fa5cce))
+* **debug:** add logging, panic hook and in-app diagnostics ([7926a7d](https://github.com/duartelcunha/Ember/commit/7926a7d66752c9495fae2d3e39db8160b3d34f9b))
+* **engine:** add the Ember engine around a single LLM call ([464d31a](https://github.com/duartelcunha/Ember/commit/464d31abef8213ed42dc1b983210689cdd62052c))
+* Esc cancels a refine at any point, not just at the preview ([4fe35a8](https://github.com/duartelcunha/Ember/commit/4fe35a8588538def94387f5df6e1cd4777e445e2))
+* harden native editing and prepare signed Windows preview ([#24](https://github.com/duartelcunha/Ember/issues/24)) ([5fc4b14](https://github.com/duartelcunha/Ember/commit/5fc4b14d56eeb6f76fa4ba1b54e91bb2a0f367aa))
+* **lifecycle:** smooth settings close, animation-driven quit, uninstall cleanup ([c411718](https://github.com/duartelcunha/Ember/commit/c411718d5a0d93ed6b013af0879e19bfe8fd7f22))
+* **macos:** working core capture/paste + packaging on macOS ([5f0c28d](https://github.com/duartelcunha/Ember/commit/5f0c28df789516046278c3f89c4a69de7b96c94e))
+* **motion:** slower silk animations across overlay, splash and tabs ([3b79d1a](https://github.com/duartelcunha/Ember/commit/3b79d1ad87a2cf18ba98e9c1f15d54b230abbabb))
+* **overlay:** a brasa, que e o que o nome diz ([0a25c3f](https://github.com/duartelcunha/Ember/commit/0a25c3f8fe664a1d8536c9885018c03970387b64))
+* **overlay:** a costura de luz em vez da brasa desenhada ([9c2b305](https://github.com/duartelcunha/Ember/commit/9c2b305f3ed5e310dd6a67cce6371ac48d51db63))
+* **overlay:** a marca do Ember em vez de tres pontos em orbita ([b721f06](https://github.com/duartelcunha/Ember/commit/b721f06e25de81dea2d888309659ed059b70c5c6))
+* **overlay:** dark separation halo so the orb reads on any background ([8092806](https://github.com/duartelcunha/Ember/commit/80928063d4d677b59613b4e8db2f0d9cfb3d571d))
+* **overlay:** metamorphosis star orb tied to the cursor ([bd87f5c](https://github.com/duartelcunha/Ember/commit/bd87f5cfae8aa86a84dfab4e34a5a96ca80dcc46))
+* **overlay:** o losango de pixels ao lado do ponteiro ([e782d3e](https://github.com/duartelcunha/Ember/commit/e782d3e3f2ecf70c8211c89b65d1a771e660af61))
+* **overlay:** o ponto respira, ganha volume e le o tempo de espera ([2e7197c](https://github.com/duartelcunha/Ember/commit/2e7197c882da6848ad6af7439dcde9cb85e70264))
+* **overlay:** shape-morph orb that reacts to the cursor ([6e78bcd](https://github.com/duartelcunha/Ember/commit/6e78bcdb5bde0b2570c5ebec31b7be0d61ba93c8))
+* **overlay:** shrink orb, retint to Claude terracotta, swap spinner for a pulsing glow ([d045e8b](https://github.com/duartelcunha/Ember/commit/d045e8bca0fa1eef363152bf4de43f28ee8697a8))
+* **overlay:** shrink the orb further and tint success to the orb accent ([7f3a174](https://github.com/duartelcunha/Ember/commit/7f3a174d413e02939bc1372063bfad11f9b665cd))
+* **overlay:** um ponto a piscar devagar ao lado do ponteiro ([777d66f](https://github.com/duartelcunha/Ember/commit/777d66f8f34f3aec0b175bd3e97fa113ccd8c5c6))
+* **preview:** opt-in approval gate before pasting the refined text ([330ca2c](https://github.com/duartelcunha/Ember/commit/330ca2c8e5bbe9083707478cf4f54951d1781327))
+* **profile:** detect every agent profile, and load one from any file ([26d7dd4](https://github.com/duartelcunha/Ember/commit/26d7dd4406140d50270807cdb1babdf8989d4cbf))
+* projects with their own brief, picked from the cursor ([aaa8dd5](https://github.com/duartelcunha/Ember/commit/aaa8dd50d2f6eaa8a6a69d1ff891ed259c941382))
+* **projects:** custom accent colour per project, derived in OKLCH ([682232e](https://github.com/duartelcunha/Ember/commit/682232eaa85b069cc283fba33aa2925e3f805ee3))
+* **projects:** double the accent palette and the icon set ([8e4e3c0](https://github.com/duartelcunha/Ember/commit/8e4e3c00ae8ea36ed43ed5df53e50f44baf91ce0))
+* **projects:** pick a custom accent on a colour wheel ([bca114f](https://github.com/duartelcunha/Ember/commit/bca114f01b19495cabf513e50689a18e63debcbb))
+* **providers:** OpenAI-compatible fallback + honest key-store reads ([9bc6547](https://github.com/duartelcunha/Ember/commit/9bc6547e3aeb4309889ff5ff88ebe5119801b9e5))
+* refine text you never selected, two providers, no model to pick ([#13](https://github.com/duartelcunha/Ember/issues/13)) ([3682dfd](https://github.com/duartelcunha/Ember/commit/3682dfd7441a37a896d1e6ad1da3333e26d3ba17))
+* **refine:** interromper deixa de custar dinheiro ([c292704](https://github.com/duartelcunha/Ember/commit/c292704fa653b2063772e9a332cf0ff2452f490a))
+* reliable terminal capture and cream default theme ([7c1e082](https://github.com/duartelcunha/Ember/commit/7c1e08256104abce190038f1476a615049b69d62))
+* **resilience:** pre-validated fallback and honest degrade ([e41d579](https://github.com/duartelcunha/Ember/commit/e41d5799878dd2b859c6513c73e44f4439e5808b))
+* settings that open instantly, and shortcut capture that explains itself ([a40394e](https://github.com/duartelcunha/Ember/commit/a40394e852a8810d74890c6de98b1f9581b87dfc))
+* **settings:** capture shortcut by pressing keys; logo-faithful orb ([92d410d](https://github.com/duartelcunha/Ember/commit/92d410d2f3bae1197b00321da53cdb857dc152f4))
+* **settings:** cream theme, native dark canvas, robust window lifecycle ([5afe7cd](https://github.com/duartelcunha/Ember/commit/5afe7cd46187b143b5c492229dba514f2ebf63a2))
+* **settings:** custom seamless title bar, minimize + close only ([a2165f7](https://github.com/duartelcunha/Ember/commit/a2165f7acac6bf65c46a0e487d8d0eaf23380c79))
+* sign in with ChatGPT, and fall back across model families ([b588fa7](https://github.com/duartelcunha/Ember/commit/b588fa74b8608bb816a9cccc97dd073a208c7444))
+* stop paying for refines with nothing to refine ([56c4b79](https://github.com/duartelcunha/Ember/commit/56c4b79a2e1d8d7d8b1887cf599ad42a1e13c260))
+* stream refine responses with live progress, cancel, and safe capture ([d06f5a8](https://github.com/duartelcunha/Ember/commit/d06f5a871369c5ea41ed1ca58fdf0d84cc69ae0b))
+
+
+### Bug Fixes
+
+* **capture:** make refine work in terminals (Windows Terminal) ([6359707](https://github.com/duartelcunha/Ember/commit/6359707d044566cbdd65dc1a221659266d38a940))
+* clamp orb to the monitor under the cursor, not the window's stale monitor ([7e7751c](https://github.com/duartelcunha/Ember/commit/7e7751c596284596909c9579717ed0a337097933))
+* **core:** make the refiner honest about truncation, language, and untrusted input ([6591a3b](https://github.com/duartelcunha/Ember/commit/6591a3b1ce0ef05ec68ba2adfbbbd1d806c2818c))
+* **core:** remove em-dash from monitor_containing doc comment ([9efc0ff](https://github.com/duartelcunha/Ember/commit/9efc0ffc9161d16ef7fc6a9869f31231880f4af0))
+* **core:** sanitize loaded config and back up a corrupt file instead of resetting it ([c59b80d](https://github.com/duartelcunha/Ember/commit/c59b80d0d4a0def458f72ac600a2e6db03d74bf3))
+* gemini 2.5 streaming issue and update startup animations ([92077f1](https://github.com/duartelcunha/Ember/commit/92077f1aeda4cb77636346d62caec6793e4bd9d0))
+* **gemini:** rank model families by free-tier capacity, not by generation ([1a24b93](https://github.com/duartelcunha/Ember/commit/1a24b93de1e747e882257cb769e67b2a8a729c20))
+* keep release tags as plain vX.Y.Z (no component prefix) ([965a96e](https://github.com/duartelcunha/Ember/commit/965a96ef5822c64d50a1772af5d0be8bbea56793))
+* keyboard hooks that let go of a key too early, and a saving that was too eager ([3b24b48](https://github.com/duartelcunha/Ember/commit/3b24b48351e4d8c0a54a4504d2127761d31c1d06))
+* make the fallback chain actually hold when a provider fails ([f6dd36d](https://github.com/duartelcunha/Ember/commit/f6dd36d6fe248b569802ee7b2ae154b397b75f14))
+* **overlay:** geometria por monitor do cursor e pills que seguem o rato ([ed4ad58](https://github.com/duartelcunha/Ember/commit/ed4ad584b0c3db5c038eead08f2a83ea98914b7a))
+* **providers:** default Claude fallback to cheap Haiku tier, not Sonnet ([cd7bce4](https://github.com/duartelcunha/Ember/commit/cd7bce465f08e35767b31345c21c208a66e0a505))
+* **refine:** guarda de reentrancia por ciclo, e o resto da revisao adversarial ([538766a](https://github.com/duartelcunha/Ember/commit/538766ac8cd0580af26ee096b45f6223ada1587f))
+* **release:** gate builds on tests and hold prerelease until artifacts upload ([51aefad](https://github.com/duartelcunha/Ember/commit/51aefad66b62ccae0bdcd6a50193e9bea44933b9))
+* run release-please and the signed build in one workflow ([#2](https://github.com/duartelcunha/Ember/issues/2)) ([c004f63](https://github.com/duartelcunha/Ember/commit/c004f633140f91874b8398a1d4c761f98ee7eedc))
+* **security:** sanitize project delimiters, use ShellExecuteW, and polish README ([cd47527](https://github.com/duartelcunha/Ember/commit/cd47527eb8e448483bdda21f8a82b4db3668a898))
+* set releaseName so the release workflow can create a new GitHub release ([01b089f](https://github.com/duartelcunha/Ember/commit/01b089f6d256a4e55ed402b8265884df6ebfcee2))
+* **settings:** dark canvas so scrollbar and fade match the theme ([48e3b2f](https://github.com/duartelcunha/Ember/commit/48e3b2f0a82f3a28095dceed00e6d721df1ab178))
+* **settings:** resolve state-sync bugs, add key removal, and wire accessible labels ([18fca45](https://github.com/duartelcunha/Ember/commit/18fca452fb14622a551ab11e66ca256c1e47479f))
+* surface Credential Manager failures and extend the terminal list ([de30be4](https://github.com/duartelcunha/Ember/commit/de30be4b030878f897a51555bfacf9bd3b18a9a8))
+* **ui:** softer, theme-aware shadows on popovers and the overlay pill ([8af6828](https://github.com/duartelcunha/Ember/commit/8af68288c5fe2f8499dcfedb8d211dc2e266888e))
+* unfused prompt text, provider key consoles, and README demos ([3ce78de](https://github.com/duartelcunha/Ember/commit/3ce78dec36ee2daca7eb29fcaa28019ebb561f2c))
+* use supported Codex reasoning efforts ([131b87e](https://github.com/duartelcunha/Ember/commit/131b87e5061efd8ae0e397fb5436c6ccd90e01f9))
+
+
+### Performance Improvements
+
+* **anim:** make every animation compositor-only for smooth 120fps ([b1168e4](https://github.com/duartelcunha/Ember/commit/b1168e414a34e2c8bb2526bc6ad334b73a73f470))
+
+
+### Reverts
+
+* **projects:** back to eight accents, keeping the custom colour ([2694b6d](https://github.com/duartelcunha/Ember/commit/2694b6d6b22ce7589eb86dce5c1d8e3a450c03a9))
+
+
+### Miscellaneous Chores
+
+* release 0.9.2 ([02e84a2](https://github.com/duartelcunha/Ember/commit/02e84a20e4fdb9090bea7f9cbc8a15827fc93723))
+* release 1.0.0 ([326d42c](https://github.com/duartelcunha/Ember/commit/326d42c8e24d879c74c4d5a867ab1e821c205a94))
+
 ## 1.1.0-rc.1 (2026-09-05)
 
 Windows evaluation candidate, excluded from stable automatic updates.
