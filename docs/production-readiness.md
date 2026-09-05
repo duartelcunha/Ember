@@ -6,7 +6,7 @@ not production approval.
 
 ## Implementation ledger
 
-The approved six-stage plan is **partially implemented**. Production release approval remains blocked. Windows evaluation candidate 1.1.0-rc.1 is published and installed locally; its signature, migration and two-monitor picker smoke results are recorded in [native qualification evidence](native-qualification.md). This ledger supersedes production claims in older audits
+The approved six-stage plan is **partially implemented**. Production release approval remains blocked. Windows evaluation candidate 1.1.0-rc.2 is published and installed locally; its signature, migration and two-monitor picker smoke results are recorded in [native qualification evidence](native-qualification.md). This ledger supersedes production claims in older audits
 and demonstration recordings. Baseline: `179e397`, `feat/picker-follows-the-pointer`.
 
 | Area | Required evidence | State |
@@ -175,7 +175,7 @@ Authoritative API references used include [Tauri application capabilities](https
 [keyring backend selection](https://docs.rs/keyring/3.6.3/keyring/), and the
 [Tauri 2.11.4 NSIS template](https://github.com/tauri-apps/tauri/blob/tauri-cli-v2.11.4/crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi).
 
-## Candidate delivery
+## Initial candidate delivery, 1.1.0-rc.1
 
 Version 1.1.0-rc.1 is a Windows evaluation candidate. The qualified-prerelease workflow runs
 the three-platform CI checks, builds in a draft, downloads the uploaded installer and
@@ -239,3 +239,38 @@ Budget compatibility validation: `cargo test --workspace --locked --quiet` repor
 and 342 core tests passing; `npm test` reported 8 passing, 0 failing; `npm run build` completed
 with 5,095 modules in 10.51 seconds. The earlier candidate workflow was cancelled before
 artifact generation so the next publication uses this corrected source revision.
+
+## Candidate delivery, 1.1.0-rc.2
+
+[The qualified workflow](https://github.com/duartelcunha/Ember/actions/runs/33945377139)
+passed the three-platform checks, built and signed the Windows updater artifacts, verified
+the uploaded files and published a prerelease. Tag `v1.1.0-rc.2` points to
+`970a21c7b030500d101767201eedf0cfe028cecb`. The downloaded installer was independently verified
+locally and installed with `/S /UPDATE` after a fresh recovery copy. Both executable and
+uninstall registration report `1.1.0-rc.2`. Existing profile and project data were preserved,
+the profile fits the displayed 8 KiB budget, and retention remains disabled. Stable latest
+continues to be `v1.0.0`.
+
+The current session exposes one 1920 by 1080 monitor. The two-monitor smoke test stopped at
+its environment requirement. An explicit single-monitor attempt stopped before any shortcut
+because the fixture could not acquire foreground focus. No new native positioning or paste
+success is claimed for rc.2. The five-position two-monitor evidence above belongs to rc.1.
+
+The startup log contained the rc.2 marker, zero error-level lines, zero panic markers and zero
+permission-denial markers in the inspected startup tail. A ten-second idle sample of the
+Ember parent process measured zero additional CPU seconds and 29.6 MiB working set; WebView
+child processes and GPU activity were not measured. This is not a complete performance budget.
+
+A proposed packaged-webview permission test using temporary remote debugging was blocked by
+the execution environment's automatic approval review. It did not run. Static ACL and mocked
+browser checks remain the available permission evidence. A separate native refinement fixture
+also failed to acquire focus and sent no request. Neither failure is counted as a passing test.
+
+Fresh dependency scans still report npm total 0 and the existing optional `rkyv` advisory.
+`cargo tree --locked -i rkyv --target all` reports `nothing to print`. Gitleaks scanned the three
+new commits and reported one private-key finding in synthetic profile redaction fixtures;
+inspection confirmed literal `synthetic-body` and `x` test payloads, not a credential.
+
+Follow-up workflow cleanup removes an unsupported `toolchain` input. The pinned action
+[embeds Rust 1.96.1](https://raw.githubusercontent.com/dtolnay/rust-toolchain/e1648915a4fdfbb5afab579a8afeb8eba8f6528c/action.yml),
+which the job logs also report. The compiler version is unchanged.

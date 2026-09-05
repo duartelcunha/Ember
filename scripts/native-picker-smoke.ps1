@@ -1,5 +1,6 @@
 param(
     [string]$CaptureHelper,
+    [switch]$AllowSingleMonitor,
     [string]$ExpectedVersion = ((Get-Content (Join-Path (Split-Path $PSScriptRoot -Parent) 'package.json') -Raw | ConvertFrom-Json).version),
     [string]$OutputDirectory = (Join-Path (Split-Path $PSScriptRoot -Parent) 'target/native-qualification')
 )
@@ -48,7 +49,8 @@ if (@([EmberNativeProbe]::VisibleRects($emberProcess[0].Id) | Where-Object { ($_
 $configuration = Get-Content -LiteralPath (Join-Path $env:APPDATA 'com.deleg8lab.ember/config.json') -Raw | ConvertFrom-Json
 if ($configuration.hotkey_picker -ne 'CmdOrCtrl+Shift+P') { throw 'Picker shortcut differs from the qualified harness shortcut' }
 $screens = @([System.Windows.Forms.Screen]::AllScreens | Sort-Object Primary -Descending)
-if ($screens.Count -lt 2) { throw 'Two monitors are required' }
+if ($screens.Count -lt 2 -and !$AllowSingleMonitor) { throw 'Two monitors are required. Use -AllowSingleMonitor only to qualify the single-monitor scenario.' }
+if ($screens.Count -lt 1) { throw 'No display is available' }
 $originalCursor = [System.Windows.Forms.Cursor]::Position
 $forms = @()
 $observations = @()
@@ -98,11 +100,12 @@ try {
     [System.Windows.Forms.SendKeys]::SendWait('^+p')
     $opened = $true
     Pump 1000
-    $first = $screens[0]; $second = $screens[1]
+    $first = $screens[0]; $second = $screens[[Math]::Min(1, $screens.Count - 1)]
+    $secondName = if ($screens.Count -gt 1) { "secondary" } else { "primary" }
     Observe 'primary-center' $first ($first.WorkingArea.Left + 800) ($first.WorkingArea.Top + 450)
     Observe 'primary-right-edge' $first ($first.WorkingArea.Right - 12) ($first.WorkingArea.Top + 450)
-    Observe 'secondary-left-edge' $second ($second.WorkingArea.Left + 12) ($second.WorkingArea.Top + 450)
-    Observe 'secondary-bottom-right' $second ($second.WorkingArea.Right - 12) ($second.WorkingArea.Bottom - 12)
+    Observe "$secondName-left-edge" $second ($second.WorkingArea.Left + 12) ($second.WorkingArea.Top + 450)
+    Observe "$secondName-bottom-right" $second ($second.WorkingArea.Right - 12) ($second.WorkingArea.Bottom - 12)
     Observe 'return-primary' $first ($first.WorkingArea.Left + 800) ($first.WorkingArea.Top + 450)
     [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
     $opened = $false
@@ -110,7 +113,7 @@ try {
     if (@([EmberNativeProbe]::VisibleRects($emberProcess[0].Id) | Where-Object { ($_.Right - $_.Left) -gt 32 -and ($_.Bottom - $_.Top) -gt 32 }).Count -ne 0) { throw 'Ember floating window remained visible after cancellation' }
     $after = Get-Content -LiteralPath (Join-Path $env:APPDATA 'com.deleg8lab.ember/config.json') -Raw | ConvertFrom-Json
     if ($after.active_project -ne $configuration.active_project -or $after.project_context -ne $configuration.project_context) { throw 'Cancellation changed project selection' }
-    Write-Output 'Native picker smoke passed: 5 positions, 2 monitors, focus preserved, Escape closed the surface.'
+    Write-Output "Native picker smoke passed: 5 positions, $([Math]::Min(2, $screens.Count)) monitor(s), focus preserved, Escape closed the surface."
 } finally {
     if ($opened -and $primary -and [EmberNativeProbe]::GetForegroundWindow() -eq $primary.Handle) { [System.Windows.Forms.SendKeys]::SendWait('{ESC}'); Pump 400 }
     [System.Windows.Forms.Cursor]::Position = $originalCursor

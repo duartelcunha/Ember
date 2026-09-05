@@ -40,3 +40,28 @@ Native picker smoke passed: 5 positions, 2 monitors, focus preserved, Escape clo
 All five screenshots were inspected locally. The picker appeared at the primary center, primary right edge, secondary left edge, secondary bottom-right corner and back on the primary monitor. It remained readable and inside the work area. Each native surface matched the current monitor; foreground focus stayed on the synthetic source window. Escape closed the picker without changing project selection.
 
 This closes the reproduced old-build monitor placement failure for this scenario. Physical input tails, drag interactions, mixed DPI, hotplug, resume, remote sessions, latency/GPU budgets and the wider application/clipboard matrix remain unqualified. The installer has a valid updater signature but no Windows Authenticode publisher signature. Interrupted upgrade, rollback and uninstall paths were not executed.
+
+## Candidate 1.1.0-rc.2 on 2026-09-05
+
+[Version 1.1.0-rc.2](https://github.com/duartelcunha/Ember/releases/tag/v1.1.0-rc.2) was built
+from `970a21c7b030500d101767201eedf0cfe028cecb` by the successful qualified workflow
+[33945377139](https://github.com/duartelcunha/Ember/actions/runs/33945377139). The installer,
+detached signature, `latest.json` and `SHA256SUMS.txt` are published. Local verification returned:
+
+```text
+Updater signature valid. SHA256: d337240b59423adec90e34289218237ac54f1bb0e3be745cf89805cd09cdc68d
+Installed 1.1.0-rc.2.
+```
+
+Executable and uninstall registration agree on the version. A recovery copy was created at
+`%LOCALAPPDATA%/EmberRecovery/20260905-055643` before `/S /UPDATE`. The saved profile and project
+objects match that backup. Retention is off. The legacy plaintext results file was absent both
+before and after this upgrade; this upgrade did not remove it. The installer has a verified
+updater signature and `Authenticode: NotSigned`.
+
+The environment now reports one primary display, with bounds `(0, 0)` to `(1920, 1080)` and
+work area `(0, 0)` to `(1920, 1032)`. The standard test correctly refused a two-monitor claim.
+The harness now offers `-AllowSingleMonitor` for explicitly separate single-monitor evidence.
+That attempt returned `Fixture did not obtain focus; no shortcut sent` before taking a picker
+screenshot. Its synthetic windows were closed by cleanup. The earlier successful two-monitor
+record remains valid for rc.1 only. Native qualification of rc.2 remains open.
