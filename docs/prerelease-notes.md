@@ -28,3 +28,5 @@ checks and browser fixtures do not establish native production readiness. See
 
 Back up the application configuration and installation before evaluating this candidate.
 Keep the backup until rollback and all applications used with Ember have been qualified.
+
+For an existing Windows installation, run the candidate installer with `/UPDATE` (or `/S /UPDATE` for a silent upgrade). Do not uninstall the old version first: older uninstallers can remove configuration and credentials. Back up configuration before upgrading.

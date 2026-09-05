@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -7,7 +7,8 @@ import { placeFloating, type CursorPosition as Position } from "./floatingGeomet
 /** Coalesce cursor samples and clamp the measured content using the webview's actual DPI. */
 export function useFloatingPosition(event: string) {
   const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
+  const reposition = useRef<(() => void) | null>(null);
+  useLayoutEffect(() => {
     const element = ref.current;
     if (!element) return;
     let latest: Position | null = null;
@@ -17,6 +18,7 @@ export function useFloatingPosition(event: string) {
     let left = false;
     let idle: ReturnType<typeof setTimeout> | undefined;
     const paint = () => {
+      cancelAnimationFrame(frame);
       frame = 0;
       if (!latest || disposed) return;
       const placed = placeFloating(latest,
@@ -43,17 +45,23 @@ export function useFloatingPosition(event: string) {
       const snapshot = await invoke<Position | null>("floating_position");
       if (!disposed && !received && snapshot) accept(snapshot);
     }).catch(() => { /* A later native sample can recover readiness. */ });
-    const observer = new ResizeObserver(schedule);
+    // Size changes must be clamped before the same frame is presented. Deferring
+    // a ResizeObserver callback to another frame exposes the old position.
+    reposition.current = paint;
+    const observer = new ResizeObserver(paint);
     observer.observe(element);
-    window.addEventListener("resize", schedule);
+    window.addEventListener("resize", paint);
     return () => {
       disposed = true;
+      reposition.current = null;
       cancelAnimationFrame(frame);
       clearTimeout(idle);
       observer.disconnect();
-      window.removeEventListener("resize", schedule);
+      window.removeEventListener("resize", paint);
       void unlisten.then((stop) => stop()).catch(() => {});
     };
   }, [event]);
+  // React can replace a small pill with a wide row without a cursor sample.
+  useLayoutEffect(() => { reposition.current?.(); });
   return ref;
 }

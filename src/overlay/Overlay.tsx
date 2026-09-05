@@ -61,6 +61,9 @@ export function Overlay() {
           }
         >
           <AnimatePresence mode="popLayout">
+            {/* A direct motion child gives popLayout the DOM ref needed to remove
+                exiting content from measurement during phase changes. */}
+            {s.phase !== "hidden" && <m.div key={s.phase} exit={{ opacity: 0 }}>
             {s.phase === "refining" && (
               // Orb + legenda opcional: o nucleo emite "Trying <provider>..."/"Retrying..."
               // durante fallback/retry, e a cauda do texto a ser gerado durante o stream,
@@ -122,6 +125,7 @@ export function Overlay() {
               <Pill key="hint" kind="hint" text={s.message ?? "Select text first"} />
             )}
             {s.phase === "preview" && s.preview && <Preview key="preview" value={s.preview} />}
+            </m.div>}
           </AnimatePresence>
         </div>
       </MotionConfig>

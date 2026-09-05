@@ -27,9 +27,15 @@ test("floating components recover from snapshots and ignore obsolete events", as
   try {
     await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
     const port = server.address().port;
-    browser = await puppeteer.launch({ headless: true });
+    browser = await puppeteer.launch({ headless: true,
+      // Ubuntu AppArmor authorizes the system Chrome sandbox, not downloaded CfT.
+      ...(process.env.CI && process.platform === "linux" ? { channel: "chrome" } : {}),
+    });
     const page = await browser.newPage();
+    await page.bringToFront();
     const errors = [];
+    const presented = () => page.evaluate(() => new Promise(resolve =>
+      requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const capture = async (name) => {
       if (!process.env.EMBER_TEST_CAPTURE_DIR) return;
       await mkdir(process.env.EMBER_TEST_CAPTURE_DIR, { recursive: true });
@@ -47,14 +53,14 @@ test("floating components recover from snapshots and ignore obsolete events", as
     assert.equal(await page.evaluate(() => document.body.textContent.includes("Obsolete run")), false);
     await send("ember://state", { sequence: 100, runId: 4, phase: "hint", message: "A long status message that must wrap and remain readable. ".repeat(8) });
     await page.waitForFunction(() => document.querySelector('.ember-floating')?.textContent.includes('A long status'));
-    await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 600)));
+    await presented();
     const bounds = async () => page.$eval('.ember-floating', e => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, width: innerWidth, height: innerHeight }; });
     let rect = await bounds();
     assert.ok(rect.x >= 0 && rect.y >= 0 && rect.right <= rect.width + 1 && rect.bottom <= rect.height + 1, JSON.stringify(rect));
     await page.setViewport({ width: 320, height: 540, deviceScaleFactor: 2 });
     await send("ember://state", { sequence: 101, runId: 4, phase: "refining", project: "VeryLongProjectName".repeat(15), message: "Retrying OpenAI-compatible..." });
     await page.waitForFunction(() => document.querySelector('.ember-orb-row'));
-    await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 600)));
+    await presented();
     await capture("project-status");
     const row = await page.$eval('.ember-orb-row', e => ({ width: e.offsetWidth, children: Array.from(e.children).map(c => ({ left: c.getBoundingClientRect().left, right: c.getBoundingClientRect().right })) }));
     // The retry orb grows into the eight-pixel margin. Both it and the labels must remain
@@ -64,7 +70,7 @@ test("floating components recover from snapshots and ignore obsolete events", as
     await send("ember://state", { sequence: 102, runId: 4, phase: "preview", preview: { original: ['First line\n'.repeat(8)], result: ['Changed line\n'.repeat(8)], page: 0 } });
     await page.setViewport({ width: 320, height: 540, deviceScaleFactor: 2 });
     await page.waitForFunction(() => document.body.textContent.includes('Review changes'));
-    await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 600)));
+    await presented();
     rect = await bounds();
     assert.ok(rect.right <= rect.width + 1 && rect.bottom <= rect.height + 1, JSON.stringify(rect));
     await capture("preview");
