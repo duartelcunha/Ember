@@ -3,7 +3,6 @@ import { useEffect, useState, useCallback } from "react";
 import { motion, MotionConfig } from "motion/react";
 import { toast } from "sonner";
 import { listen } from "@tauri-apps/api/event";
-import { open } from "@tauri-apps/plugin-dialog";
 import {
   ArrowSquareOut,
   ArrowUp,
@@ -23,12 +22,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BrandIcon } from "@/components/BrandIcon";
 import { TitleBar } from "@/components/TitleBar";
 import { HotkeyCapture } from "./HotkeyCapture";
 import { ProjectsTab } from "./ProjectsTab";
+import { ProfileEditor } from "./ProfileEditor";
 import { UpdateChecker } from "./UpdateChecker";
 import {
   DEFAULT_SETTINGS,
@@ -976,7 +975,6 @@ export function Settings({ initialTab = "providers" }: { initialTab?: string } =
   // sem fade-out (fragil numa janela nativa), por isso nao ha estado de "invisivel" no JS.
   const [openKey, setOpenKey] = useState(0);
   const [s, setS] = useState<EmberSettings>(DEFAULT_SETTINGS);
-  const [profileText, setProfileText] = useState("");
   const [hotkey, setHotkey] = useState(DEFAULT_SETTINGS.hotkey);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [polls, setPolls] = useState(DEFAULT_SETTINGS.capturePolls);
@@ -1082,7 +1080,6 @@ export function Settings({ initialTab = "providers" }: { initialTab?: string } =
       .getSettings()
       .then((res) => {
         setS(res);
-        setProfileText(res.profileText);
         setHotkey(res.hotkey);
         refreshCatalogs();
         setPolls(res.capturePolls);
@@ -1101,35 +1098,6 @@ export function Settings({ initialTab = "providers" }: { initialTab?: string } =
   useEffect(() => {
     loadSettings();
   }, [loadSettings]);
-
-  const sourceLabel: Record<EmberSettings["profileSource"], string> = {
-    claude_md: "auto-detected from your agent profile",
-    user_edited: "edited by you",
-    default: "built-in quality profile",
-  };
-
-  /** Escolhe um ficheiro de perfil e traz o texto para a textarea (nao grava sozinho: o
-   *  utilizador revê e carrega em Save, que e o unico sitio onde o perfil muda de verdade). */
-  const loadProfileFromFile = async () => {
-    try {
-      const picked = await open({
-        multiple: false,
-        directory: false,
-        title: "Pick a profile file",
-        filters: [{ name: "Markdown or text", extensions: ["md", "markdown", "txt"] }],
-      });
-      if (typeof picked !== "string") return; // cancelou
-      const text = await ipc.readProfileFile(picked);
-      if (!text.trim()) {
-        toast.error("That file is empty.");
-        return;
-      }
-      setProfileText(text);
-      toast.success("Loaded. Review it, then hit Save.");
-    } catch (e) {
-      toast.error(typeof e === "string" ? e : "Couldn't read that file.");
-    }
-  };
 
   const setMode = (mode: RefineMode) => {
     const prev = s.mode;
@@ -1678,95 +1646,13 @@ export function Settings({ initialTab = "providers" }: { initialTab?: string } =
             </TabsContent>
 
             <TabsContent value="profile">
-              <Section
-                title="Personalization profile"
-                titleId="profile-heading"
-                hint={`How Ember writes like you. Current source: ${sourceLabel[s.profileSource]}.`}
-                detail={
-                  <p>
-                    Your tone, your rules, the words you never use. It is added to every refine.
-                    Ember picks up the global profile you already keep for your coding agent
-                    (<code className="font-mono">CLAUDE.md</code>,{" "}
-                    <code className="font-mono">AGENTS.md</code>, or{" "}
-                    <code className="font-mono">GEMINI.md</code>), or you can load any markdown
-                    file and edit it here.
-                  </p>
-                }
-              >
-                {s.profilePath && (
-                  <p className="truncate font-mono text-xs text-fg-muted" title={s.profilePath}>
-                    {s.profilePath}
-                  </p>
-                )}
-                {/* Altura FIXA em vez de `rows`: o perfil de qualquer pessoa que use um CLAUDE.md
-                    a serio tem centenas de linhas, e com uma textarea a crescer com o conteudo os
-                    botoes de Save e Re-detect eram empurrados para fora do ecra. Aqui a caixa
-                    ocupa o espaco que sobra e faz o seu proprio scroll; os botoes ficam sempre a
-                    vista. O `min-h-0` e o que permite ao flex encolher a caixa (sem ele, o
-                    conteudo impoe a altura minima e o overflow volta a sair para a pagina). */}
-                <Textarea
-                  aria-labelledby="profile-heading"
-                  className="h-[clamp(140px,38vh,420px)] min-h-0 resize-none overflow-y-auto"
-                  value={profileText}
-                  onChange={(e) => setProfileText(e.target.value)}
-                  placeholder="Your style and tone preferences (language, rules like 'no em-dashes'…)."
-                />
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    variant="primary"
-                    onClick={() =>
-                      ipc
-                        .setProfile(profileText)
-                        // Refetch para o hint "Current source" refletir que passou a
-                        // "edited by you" em vez de continuar a mostrar a origem antiga.
-                        .then(() => ipc.getSettings())
-                        .then((res) => {
-                          setS(res);
-                          setProfileText(res.profileText);
-                          toast.success("Profile saved.");
-                        })
-                        .catch(() => toast.error("Couldn't save."))
-                    }
-                  >
-                    Save
-                  </Button>
-                  <Button variant="ghost" onClick={loadProfileFromFile}>
-                    Load from file…
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    onClick={() =>
-                      ipc
-                        .reloadProfileFromClaudeMd()
-                        .then((res) => {
-                          setS(res);
-                          setProfileText(res.profileText);
-                          toast.success("Reloaded the detected profile.");
-                        })
-                        .catch(() => toast.error("Couldn't reload."))
-                    }
-                  >
-                    Re-detect
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    onClick={() =>
-                      ipc
-                        .resetProfileToDefault()
-                        .then((res) => {
-                          setS(res);
-                          setProfileText(res.profileText);
-                          toast.success("Reset to default.");
-                        })
-                        .catch(() => toast.error("Couldn't reset."))
-                    }
-                  >
-                    Reset to default
-                  </Button>
-                </div>
-              </Section>
+              <ProfileEditor settings={s} onSaved={updated => setS(current => ({ ...current,
+                profileText: updated.profileText, profileSource: updated.profileSource,
+                profilePath: updated.profilePath, profileSources: updated.profileSources,
+                legacyAutoProfileDisabled: updated.legacyAutoProfileDisabled,
+              }))} />
             </TabsContent>
-  
+
             <TabsContent value="appearance">
               <Section
                 title="Theme"

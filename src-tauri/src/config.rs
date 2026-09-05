@@ -73,9 +73,11 @@ pub struct Config {
     pub thinking_enabled: bool,
     /// Nivel de thinking para Gemini 3.x: "minimal"|"low"|"medium"|"high".
     pub thinking_level: String,
-    /// Override do perfil escrito nas settings. `None` = usar o CLAUDE.md detetado ou o default.
+    /// Reviewed profile text. None uses the built-in default, never ambient files.
     pub profile_override: Option<String>,
-    /// Se `true`, ignora o CLAUDE.md e usa o perfil de qualidade por defeito.
+    /// Provenance of explicitly imported, reviewed snapshots. Never a live filesystem grant.
+    pub profile_sources: Vec<ember_core::profile_import::Source>,
+    /// Legacy discovery flag, retained to explain why automatic loading was disabled.
     pub ignore_claude_md: bool,
     /// Deteta terminais em foco e usa Ctrl+Shift+C/V (default on). Desliga se uma app
     /// nao-terminal for mal-classificada.
@@ -150,7 +152,8 @@ impl Default for Config {
             thinking_enabled: true,
             thinking_level: "high".to_string(),
             profile_override: None,
-            ignore_claude_md: false,
+            profile_sources: Vec::new(),
+            ignore_claude_md: true,
             terminal_handling: true,
             capture_polls: 30,
             capture_step_ms: 10,

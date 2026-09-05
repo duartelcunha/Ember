@@ -57,6 +57,7 @@ Switch project-specific tone, guidelines, and vocabulary on the fly without poll
 
 - **Instant Hotkey Switcher:** Press <kbd>Ctrl+Shift+P</kbd> anywhere on your system to open a lightweight, cursor-anchored switcher and navigate between projects using arrow keys.
 - **Distilled Rules:** Builds a reviewable brief from known Markdown sources and bounded local imports inside the selected directory. Source fingerprints identify stale briefs. Source data is redacted and framed; prompt injection remains a threat to evaluate.
+- **Reviewed Global Profile:** Import explicitly selected `CLAUDE.md`, `AGENTS.md` or text files in Personalization, review the extracted preferences and technical facts, then save. Sources remain snapshots; Ember does not reload ambient agent files during refinement.
 - **Custom Accents & Icons:** Dedicated colors and icons reflect active projects on the ambient orb and tray icon.
 
 ---

@@ -9,5 +9,7 @@ mockIPC((cmd) => {
   return null;
 }, { shouldMockEvents: true });
 testWindow.__emit = emit;
-if (location.pathname.includes("picker")) void import("../src/picker/main");
+if (location.pathname.includes("projects")) void import("./projects-fixture");
+else if (location.pathname.includes("profile")) void import("./profile-fixture");
+else if (location.pathname.includes("picker")) void import("../src/picker/main");
 else void import("../src/overlay/main");

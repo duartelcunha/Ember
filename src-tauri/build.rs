@@ -50,6 +50,7 @@ fn main() {
         "open_repo",
         "open_key_console",
         "read_profile_file",
+        "import_profile_files",
         "get_diagnostics",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))

@@ -43,6 +43,8 @@ pub struct SettingsDto {
     profile_text: String,
     profile_source: &'static str,
     profile_path: Option<String>,
+    profile_sources: Vec<ember_core::profile_import::Source>,
+    legacy_auto_profile_disabled: bool,
     mode: &'static str,
     thinking_enabled: bool,
     thinking_level: String,
@@ -111,8 +113,8 @@ fn parse_mode(s: &str) -> Result<RefineMode, String> {
     }
 }
 
-fn build_dto(app: &AppHandle, cfg: &config::Config) -> SettingsDto {
-    let resolved = profile::resolve(app, cfg.profile_override.as_deref(), cfg.ignore_claude_md);
+fn build_dto(_app: &AppHandle, cfg: &config::Config) -> SettingsDto {
+    let resolved = profile::resolve(cfg.profile_override.as_deref(), &cfg.profile_sources);
     // Le as 3 chaves honestamente: uma falha do cofre (Err) nao se colapsa em "sem chave".
     // Se o cofre estiver bloqueado, todas ficam false e key_store_error informa a UI.
     let (has_g, has_o, key_store_error) = match (
@@ -159,6 +161,8 @@ fn build_dto(app: &AppHandle, cfg: &config::Config) -> SettingsDto {
         profile_text: resolved.profile.text,
         profile_source: source_str(resolved.profile.source),
         profile_path: resolved.path,
+        profile_sources: cfg.profile_sources.clone(),
+        legacy_auto_profile_disabled: !cfg.ignore_claude_md && cfg.profile_override.is_none(),
         mode: mode_str(cfg.mode),
         thinking_enabled: cfg.thinking_enabled,
         thinking_level: cfg.thinking_level.clone(),
@@ -846,30 +850,37 @@ pub fn get_provider_health(
 }
 
 #[tauri::command]
-pub fn set_profile(app: AppHandle, text: String) -> Result<(), String> {
+pub fn set_profile(
+    app: AppHandle,
+    text: String,
+    sources: Option<Vec<ember_core::profile_import::Source>>,
+) -> Result<(), String> {
+    let text = text.trim();
+    let sources = sources.unwrap_or_default();
+    ember_core::profile_import::validate_reviewed(text, &sources).map_err(str::to_owned)?;
     let mut cfg = config::load(&app);
-    cfg.profile_override = if text.trim().is_empty() {
-        None
-    } else {
-        Some(text)
-    };
-    cfg.ignore_claude_md = false;
+    cfg.profile_override = (!text.is_empty()).then(|| text.to_owned());
+    cfg.profile_sources = if text.is_empty() { Vec::new() } else { sources };
+    cfg.ignore_claude_md = true;
     config::save(&app, &cfg).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn reload_profile(app: AppHandle) -> Result<SettingsDto, String> {
-    let mut cfg = config::load(&app);
-    cfg.profile_override = None;
-    cfg.ignore_claude_md = false;
-    config::save(&app, &cfg).map_err(|e| e.to_string())?;
-    Ok(build_dto(&app, &cfg))
+pub async fn import_profile_files(paths: Vec<String>) -> Result<profile::Import, String> {
+    profile::import_selected(paths).await
+}
+
+/// Retained for IPC compatibility. This command must never silently authorize a file.
+#[tauri::command]
+pub fn reload_profile() -> Result<SettingsDto, String> {
+    Err("Automatic profile discovery is disabled. Select the files to import, review the draft and save it explicitly.".into())
 }
 
 #[tauri::command]
 pub fn reset_profile(app: AppHandle) -> Result<SettingsDto, String> {
     let mut cfg = config::load(&app);
     cfg.profile_override = None;
+    cfg.profile_sources.clear();
     cfg.ignore_claude_md = true;
     config::save(&app, &cfg).map_err(|e| e.to_string())?;
     Ok(build_dto(&app, &cfg))
@@ -1166,29 +1177,15 @@ pub(crate) fn open_in_browser(url: &str) -> Result<(), String> {
     result
 }
 
-/// Le um ficheiro de perfil escolhido pelo utilizador no seletor de ficheiros e devolve o texto,
-/// para a UI o pôr na textarea (onde ele o pode rever e editar antes de gravar).
-///
-/// Snapshot, nao ligacao viva: o texto passa a ser o override do utilizador. Se o ficheiro mudar
-/// depois, o perfil nao acompanha. E deliberado, porque a textarea continua a ser a verdade
-/// visivel do que vai no prompt: um perfil que mudasse pelas costas do utilizador seria pior.
-///
-/// O caminho vem do seletor NATIVO do SO (o utilizador escolheu-o com o rato), nao de uma string
-/// arbitraria do webview, mas mesmo assim: so texto, com teto de tamanho, e nunca um binario.
+/// Legacy text-only import. The current UI uses the structured import command so
+/// provenance and exclusions are visible before the user saves the reviewed draft.
 #[tauri::command]
-pub fn read_profile_file(path: String) -> Result<String, String> {
-    const MAX_BYTES: u64 = 512 * 1024;
-    let p = std::path::Path::new(&path);
-    let meta = std::fs::metadata(p).map_err(|e| format!("couldn't read that file: {e}"))?;
-    if !meta.is_file() {
-        return Err("that isn't a file".into());
+pub async fn read_profile_file(path: String) -> Result<String, String> {
+    let imported = profile::import_selected(vec![path]).await?;
+    if imported.text.is_empty() {
+        return Err("No recognized preferences were found. Import through Personalization to review exclusions.".into());
     }
-    if meta.len() > MAX_BYTES {
-        return Err("that file is too big (max 512 KB)".into());
-    }
-    // `read_to_string` falha em bytes invalidos, que e o que queremos: um PDF ou um .exe
-    // escolhido por engano da erro em vez de encher o prompt de lixo.
-    std::fs::read_to_string(p).map_err(|_| "that file isn't text (pick a .md or .txt)".to_string())
+    Ok(imported.text)
 }
 
 /// Abre o repositorio no browser do SO. URL fixo (constante), por isso seguro para o `start`.
@@ -1493,7 +1490,7 @@ pub(crate) async fn prepare_refine(
         .prompt_generation
         .load(std::sync::atomic::Ordering::SeqCst);
     let cfg = config::load(app);
-    let resolved = profile::resolve(app, cfg.profile_override.as_deref(), cfg.ignore_claude_md);
+    let resolved = profile::resolve(cfg.profile_override.as_deref(), &cfg.profile_sources);
     let active = ember_core::projects::active(&cfg.projects, cfg.active_project.as_deref());
     let selection = if active.is_some() {
         "pinned"
@@ -1535,8 +1532,10 @@ pub(crate) async fn prepare_refine(
             "sourceChanged": used.and_then(crate::projects::source_changed),
             "projectSource": project_source,
             "profileSource": resolved.path,
+            "profileSources": cfg.profile_sources,
             "profile": ember_core::prompt::cap_profile(&ember_core::project::redact_secrets(&resolved.profile.text), ember_core::prompt::MAX_PROFILE_CHARS),
             "profileTruncated": resolved.profile.text.len() > ember_core::prompt::MAX_PROFILE_CHARS,
+            "profileInvalid": resolved.profile.text.trim().len() > ember_core::prompt::MAX_PROFILE_CHARS,
             "projectContext": project_block,
             "reason": if selected.is_some() && used.is_none() { "Selected project has an empty brief" }
                 else if selection == "none" { "Project context explicitly disabled" }
@@ -1544,6 +1543,9 @@ pub(crate) async fn prepare_refine(
                 else { "Reviewed brief from a registered project" },
             "configRevision": cfg.revision,
         }));
+    }
+    if resolved.profile.text.trim().len() > ember_core::prompt::MAX_PROFILE_CHARS {
+        return Err(ember_core::CoreError::InvalidProfile);
     }
     let chain = build_chain(app, state, &cfg).await?;
     // Motor Ember, fase 1: normaliza o input, mascara codigo/URLs e escapa marcadores. O modelo

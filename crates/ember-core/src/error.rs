@@ -39,6 +39,8 @@ pub enum OutcomeClass {
 /// Erros de dominio. Sao o `reason` em `Decision::Fail` e o retorno dos parsers de wire.
 #[derive(Debug, Clone, PartialEq, Eq, Error, Serialize, Deserialize)]
 pub enum CoreError {
+    #[error("The global profile is too long. Shorten it in Personalization before refining.")]
+    InvalidProfile,
     #[error(
         "The request ended without a complete result and may have been charged. Retry explicitly."
     )]

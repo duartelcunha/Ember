@@ -1,7 +1,17 @@
-# Ember 1.1.0-rc.1
+# Ember 1.1.0-rc.2
 
 Windows evaluation candidate. Production approval remains blocked. This release is excluded
 from the stable automatic-update channel. macOS and Linux functional parity is incomplete.
+
+This candidate adds explicit, reviewed global profile imports. Ambient agent files are no
+longer loaded automatically. Import selected Markdown/text files in Personalization, review
+the extracted preferences and technical facts, then save. Exclusions and source fingerprints
+remain visible; oversized profiles are refused rather than silently truncated. Existing
+manual preferences remain preserved.
+
+Project colour responses now preserve newer draft edits and retire with their editor.
+Browser regressions cover switching projects during distillation and editing a name while
+a colour request is pending. Cancelled pointer gestures restore the colour-wheel preview.
 
 The floating orb, project pills and picker now share measured cursor-following geometry,
 monitor transitions and state snapshots. Projects expose resolved context and protect drafts
