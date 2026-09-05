@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1-rc.1](https://github.com/duartelcunha/Ember/compare/v1.1.0-rc.1...v1.1.1-rc.1) (2026-09-05)
+
+
+### Bug Fixes
+
+* protect profile imports and asynchronous project edits ([#29](https://github.com/duartelcunha/Ember/issues/29)) ([59158fd](https://github.com/duartelcunha/Ember/commit/59158fd5d8e13aaed41fe430451aa2cf18338a50))
+
 ## 1.1.0-rc.1 (2026-09-05)
 
 Windows evaluation candidate, excluded from stable automatic updates.
