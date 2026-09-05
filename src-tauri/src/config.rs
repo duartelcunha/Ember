@@ -75,6 +75,7 @@ pub struct Config {
     pub thinking_level: String,
     /// Reviewed profile text. None uses the built-in default, never ambient files.
     pub profile_override: Option<String>,
+    pub profile_archive: Option<String>,
     /// Provenance of explicitly imported, reviewed snapshots. Never a live filesystem grant.
     pub profile_sources: Vec<ember_core::profile_import::Source>,
     /// Legacy discovery flag, retained to explain why automatic loading was disabled.
@@ -135,7 +136,7 @@ pub const SELECT_ALL_MAX_CHARS: (usize, usize) = (500, 100_000);
 impl Default for Config {
     fn default() -> Self {
         Self {
-            schema_version: 1,
+            schema_version: 2,
             revision: 0,
             gemini_model: DEFAULT_GEMINI_MODEL.to_string(),
             openai_model: DEFAULT_OPENAI_MODEL.to_string(),
@@ -152,6 +153,7 @@ impl Default for Config {
             thinking_enabled: true,
             thinking_level: "high".to_string(),
             profile_override: None,
+            profile_archive: None,
             profile_sources: Vec::new(),
             ignore_claude_md: true,
             terminal_handling: true,
@@ -388,15 +390,19 @@ fn read_at(path: &std::path::Path) -> std::io::Result<Config> {
     }
     match serde_json::from_slice::<Config>(&bytes) {
         Ok(mut cfg) => {
-            if cfg.schema_version > 1 {
+            if cfg.schema_version > 2 {
                 return Err(std::io::Error::other(
                     "Configuration belongs to a newer Ember version",
                 ));
             }
-            if cfg.schema_version == 0 {
+            if cfg.schema_version < 2 {
                 // The old default was on, so its boolean does not establish consent to the
                 // new retention policy. Preserve the original before migrating to memory only.
-                let backup = path.with_extension(format!("json.v0-{}.bak", crate::now_ms()));
+                let backup = path.with_extension(format!(
+                    "json.v{}-{}.bak",
+                    cfg.schema_version,
+                    crate::now_ms()
+                ));
                 use std::io::Write;
                 let mut file = fs::OpenOptions::new()
                     .write(true)
@@ -404,8 +410,10 @@ fn read_at(path: &std::path::Path) -> std::io::Result<Config> {
                     .open(backup)?;
                 file.write_all(&bytes)?;
                 file.sync_all()?;
-                cfg.keep_results = false;
-                cfg.schema_version = 1;
+                if cfg.schema_version == 0 {
+                    cfg.keep_results = false;
+                }
+                cfg.schema_version = 2;
                 cfg.revision = cfg
                     .revision
                     .checked_add(1)
@@ -487,7 +495,7 @@ mod tests {
         let original = br#"{"keep_results":true,"theme":"cream"}"#;
         fs::write(&path, original).unwrap();
         let migrated = read_at(&path).unwrap();
-        assert_eq!(migrated.schema_version, 1);
+        assert_eq!(migrated.schema_version, 2);
         assert!(!migrated.keep_results);
         assert_eq!(migrated.theme, "cream");
         assert_eq!(read_at(&path).unwrap(), migrated);
@@ -501,6 +509,27 @@ mod tests {
         consented.keep_results = true;
         save_at(&path, &consented).unwrap();
         assert!(read_at(&path).unwrap().keep_results);
+        fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn v1_migration_preserves_opt_in_profile_and_project_without_authorizing_sources() {
+        let folder = test_folder();
+        let path = folder.join("config.json");
+        let original = br#"{"schema_version":1,"keep_results":true,"profile_override":"Tone: direct","projects":[{"id":"p","name":"P","brief":"Writing"}]}"#;
+        fs::write(&path, original).unwrap();
+        let cfg = read_at(&path).unwrap();
+        assert_eq!(cfg.schema_version, 2);
+        assert!(cfg.keep_results);
+        assert_eq!(cfg.profile_override.as_deref(), Some("Tone: direct"));
+        assert!(cfg.projects[0].context.sources.is_empty());
+        assert!(cfg.projects[0].context.applications.is_empty());
+        let backup = fs::read_dir(&folder)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| p.extension().is_some_and(|e| e == "bak"))
+            .unwrap();
+        assert_eq!(fs::read(backup).unwrap(), original);
         fs::remove_dir_all(folder).unwrap();
     }
 
@@ -840,6 +869,7 @@ mod tests {
 
         // E com o projeto la, mantem-se.
         c.projects = vec![ember_core::projects::Project {
+            context: Default::default(),
             id: "fantasma".into(),
             name: "Existe".into(),
             accent: 0,

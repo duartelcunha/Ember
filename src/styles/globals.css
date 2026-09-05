@@ -143,24 +143,12 @@
    backdrop-filter re-amostra o fundo desfocado a cada frame do movimento e engasga. So
    opacidade anima na bolha; o movimento vive no conteudo interno (sem blur). Ver Pill.tsx. */
 .ember-bubble {
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(140%);
-  backdrop-filter: blur(var(--glass-blur)) saturate(140%);
+  background: #1a1511;
   border: 1px solid var(--border-default);
-  /* Sombra suave em camadas (contacto curto + difusa larga), em vez de uma unica sombra
-     grande e deslocada que era cortada pela borda da janela do overlay e deixava um edge duro.
-     Offsets/blur pequenos o bastante para desvanecerem dentro do padding da janela. */
-  box-shadow:
-    0 2px 6px rgba(0, 0, 0, 0.28),
-    0 8px 20px rgba(0, 0, 0, 0.32),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.24);
   color: var(--color-fg);
 }
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .ember-bubble {
-    background: var(--glass-bg-strong);
-  }
-}
+:root[data-theme="cream"] .ember-bubble { background: #f7f2e9; }
 
 /* Scrollbar fina e escura, a condizer com o tema glassy (a janela de settings e a unica que
    scrolla). WebView2 e Chromium, por isso os pseudo-elementos ::-webkit-scrollbar aplicam-se;
@@ -190,8 +178,14 @@
 /* Floating surfaces measure their content and coalesce motion before painting. */
 .ember-floating { visibility: hidden; will-change: transform; }
 .ember-floating[data-side="left"] .ember-orb-row { flex-direction: row-reverse; }
-.ember-floating[data-moving="true"] .ember-bubble {
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-  background: var(--glass-bg-strong) !important;
-}
+
+
+.ember-preview { width: max-content; min-width: min(240px, calc(100vw - 16px)); max-width: min(420px, calc(100vw - 16px)); max-height: 40vh; padding: 8px 12px; font-size: 12px; }
+.ember-preview p { line-height: 14px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.ember-preview mark { color: inherit; background: rgba(253,140,60,.18); border-radius: 2px; }
+@media (prefers-reduced-motion: reduce) { .ember-spinner * { animation: none !important; } }
+
+.ember-preview > div:first-child { line-height: 14px; margin-bottom: 6px; font-size: 11px; }
+.ember-preview h2 { line-height: 12px; }
+.ember-preview > .grid { gap: 6px; }
+.ember-preview > div:last-child { line-height: 12px; margin-top: 6px; padding-top: 6px; }

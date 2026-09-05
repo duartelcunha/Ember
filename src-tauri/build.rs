@@ -1,4 +1,18 @@
 fn main() {
+    // Tauri embeds Common Controls v6 in app binaries, but Cargo examples need
+    // their own manifest or the Windows loader cannot resolve TaskDialogIndirect.
+    if std::env::var_os("CARGO_FEATURE_NATIVE_QUALIFICATION").is_some()
+        && std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+    {
+        println!("cargo:rustc-link-arg-examples=/MANIFEST:EMBED");
+        println!(
+            "cargo:rustc-link-arg-examples=/MANIFESTINPUT:{}",
+            std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap())
+                .join("examples/floating_native.manifest")
+                .display()
+        );
+        println!("cargo:rerun-if-changed=examples/floating_native.manifest");
+    }
     let manifest = tauri_build::AppManifest::new().commands(&[
         "get_settings",
         "legacy_results_present",

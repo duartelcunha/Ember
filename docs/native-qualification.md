@@ -1,5 +1,24 @@
 # Native qualification evidence
 
+## Offline floating geometry harness
+
+Build the current frontend with `npm run build`, then build the isolated example with
+`cargo build -p ember --example floating_native --features native-qualification --locked`.
+Run `powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File scripts/native-floating-smoke.ps1 -CaptureHelper <path> -RequireMixedDpi`
+for the mixed-DPI gate. The helper contract is the same as the picker capture helper below.
+Omitting `-RequireMixedDpi` allows a separately labelled same-scale smoke test.
+
+This example loads the production overlay and geometry code without settings, credentials,
+hooks or provider calls. It does not install or replace Ember. It cycles through orb, long
+project name, comparison and hint scenes, with pointer positions on both monitor centers
+and lower right edges. Focus, work-area bounds, screenshots and the executable hash are
+recorded locally. Run it without other UI automation or manual focus changes. Its own
+process exits after 25 seconds even if the controller stops. The controller restores the
+pointer and closes its child processes in cleanup.
+
+The [current implementation record](floating-context-refinement.md#evidence-and-delivery-gate)
+separates this harness from installed-candidate, mixed-DPI and input qualification.
+
 ## Windows picker smoke test
 
 Run `powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File scripts/native-picker-smoke.ps1` from the repository after installing the candidate. This local test requires two connected monitors, a single running Ember instance, the `CmdOrCtrl+Shift+P` picker shortcut and no active Ember window or operation.

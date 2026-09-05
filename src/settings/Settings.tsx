@@ -1648,6 +1648,7 @@ export function Settings({ initialTab = "providers" }: { initialTab?: string } =
             <TabsContent value="profile">
               <ProfileEditor settings={s} onSaved={updated => setS(current => ({ ...current,
                 profileText: updated.profileText, profileSource: updated.profileSource,
+                profileReview: updated.profileReview, profileArchive: updated.profileArchive,
                 profilePath: updated.profilePath, profileSources: updated.profileSources,
                 legacyAutoProfileDisabled: updated.legacyAutoProfileDisabled,
               }))} />
@@ -1657,7 +1658,7 @@ export function Settings({ initialTab = "providers" }: { initialTab?: string } =
               <Section
                 title="Theme"
                 titleId="theme-heading"
-                hint="Applies to this Settings window. The cursor overlay keeps its glass look on any background. Respects the system's reduced-motion setting."
+                hint="Applies to this Settings window. The cursor overlay uses a solid surface for readable feedback. Respects the system's reduced-motion setting."
               >
                 <Select value={s.theme} onValueChange={(v) => setTheme(v as Theme)}>
                   <SelectTrigger aria-labelledby="theme-heading">

@@ -15,11 +15,11 @@ pub fn pages(text: &str) -> Vec<String> {
         } else {
             2
         };
-        if !newline && columns + width > 32 {
+        if !newline && columns + width > 24 {
             lines += 1;
             columns = 0;
         }
-        if lines > 8 {
+        if lines > 2 {
             result.push(std::mem::take(&mut page));
             lines = 1;
             columns = 0;
@@ -58,8 +58,8 @@ mod tests {
     #[test]
     fn newline_heavy_pages_remain_readable() {
         let chunks = pages(&"\n".repeat(400));
-        assert_eq!(chunks.len(), 50);
-        assert!(chunks.iter().all(|s| s.matches('\n').count() <= 8));
+        assert_eq!(chunks.len(), 200);
+        assert!(chunks.iter().all(|s| s.matches('\n').count() <= 2));
     }
     #[test]
     fn empty_comparison_still_has_one_page() {

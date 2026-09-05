@@ -80,7 +80,10 @@ export interface AccentPreview {
 }
 
 /** Um projeto registado. O `brief` e o que entra no prompt; o ficheiro e so a semente. */
+export interface ContextSource { path: string; fingerprint: string; text: string; excludedLines: number }
+export interface ProjectContext { version: number; applications: string[]; sources: ContextSource[] }
 export interface Project {
+  context?: ProjectContext;
   id: string;
   name: string;
   /** Indice na paleta que vem em `EmberSettings.accents`. */
@@ -152,6 +155,8 @@ export interface EmberSettings {
   /** `null` em condições normais; mensagem quando o cofre de credenciais está ilegível. */
   keyStoreError: string | null;
   profileText: string;
+  profileReview?: string | null;
+  profileArchive?: string | null;
   profileLimitBytes: number;
   profileSource: ProfileSource;
   profilePath: string | null;

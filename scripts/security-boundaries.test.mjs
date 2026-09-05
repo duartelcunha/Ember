@@ -9,7 +9,9 @@ test("every registered application command participates in the Tauri ACL manifes
   const handler = shell.match(/generate_handler!\[([\s\S]*?)\]\)/)?.[1];
   assert.ok(handler, "the command registry must be inspectable");
   const registered = handler.split(",").map(s => s.trim().split("::").at(-1)).filter(Boolean).sort();
-  const declared = [...build.matchAll(/"([a-z_]+)"/g)].map(m => m[1]).sort();
+  const manifest = build.match(/AppManifest::new\(\)\.commands\(&\[([\s\S]*?)\]\)/)?.[1];
+  assert.ok(manifest, "the ACL command manifest must be inspectable");
+  const declared = [...manifest.matchAll(/"([a-z_]+)"/g)].map(m => m[1]).sort();
   assert.deepEqual(registered, declared, "an unlisted command could bypass the application permission contract");
 });
 

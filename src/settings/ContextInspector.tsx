@@ -1,38 +1,47 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Button } from "@/components/ui/button";
+import type { ContextSource, ProfileProvenance } from "@/lib/ipc";
 
 type Snapshot = {
-  sourceChanged: boolean | null; selection: string; project: string | null; projectSource: string | null;
-  profileSources?: { path: string; fingerprint: string }[]; profileSource: string | null; profile: string; projectContext: string | null;
-  profileRedacted?: boolean; profileInvalid?: boolean; reason: string; profileTruncated: boolean; configRevision: number;
+  runId: number; selection: string; project: string | null; reason: string;
+  profile: string; profileSources: ProfileProvenance[]; profileReviewNeeded: boolean; profileInvalid: boolean;
+  projectContext: string | null; sources: ContextSource[]; sourceStatus: string;
+  delivery: "prepared" | "sending" | "sent" | "cached" | "unconfirmed";
 };
-
+const delivery = { prepared: "Prepared", sending: "Sending", sent: "Sent", cached: "Reused result", unconfirmed: "Delivery unconfirmed" };
 export function ContextInspector() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useState(false);
+  const epoch = useRef(0);
   async function refresh() {
-    try { setSnapshot(await invoke<Snapshot | null>("get_context_snapshot")); setError(""); }
-    catch { setError("Context could not be loaded. Try again."); }
+    const request = ++epoch.current;
+    try {
+      const next = await invoke<Snapshot | null>("get_context_snapshot");
+      if (request === epoch.current) { setSnapshot(current => next && (!current || next.runId >= current.runId) ? next : current); setError(false); }
+    } catch { if (request === epoch.current) setError(true); }
   }
-  useEffect(() => { void refresh(); }, []);
-  return <details className="rounded-lg border border-[color:var(--border-subtle)] p-4">
-    <summary className="cursor-pointer text-sm font-medium">Context resolved for the last request</summary>
-    <div className="mt-3 space-y-3 text-xs">
-      <Button variant="ghost" onClick={() => void refresh()}>Refresh</Button>
-      {error && <p role="alert">{error}</p>}
-      {!snapshot ? <p>No request has resolved its context in this session.</p> : <>
-        <p>{snapshot.reason}. Selection: {snapshot.selection}. Configuration revision: {snapshot.configRevision}.</p>
-        {snapshot.sourceChanged && <p role="status">Project sources changed after this brief was generated. Review and regenerate the brief before relying on it.</p>}
-        {snapshot.profileRedacted && <p role="status">Secret-like content was excluded from the saved profile before preparing this request.</p>}
-        {snapshot.profileInvalid && <p role="status">The global profile is too long. This request was stopped before contacting a model. Shorten the profile in Personalization.</p>}
-        {!snapshot.profileInvalid && snapshot.profileTruncated && <p role="status">The global profile exceeds the prompt limit. Only the text shown below was prepared for inclusion. Review and shorten the profile in Personalization.</p>}
-        <p>Global source: {snapshot.profileSource ?? "Ember preferences"}</p>
-        {snapshot.profileSources?.map(source => <p key={source.path} className="break-all">Reviewed source: {source.path}. Fingerprint: {source.fingerprint}.</p>)}
-        <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-surface-1 p-3">{snapshot.profile}</pre>
-        <p>Project: {snapshot.project ?? "None"}. Source: {snapshot.projectSource ?? "None"}</p>
-        {snapshot.projectContext && <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-surface-1 p-3">{snapshot.projectContext}</pre>}
-      </>}
+  useEffect(() => { void refresh(); return () => { epoch.current++; }; }, []);
+  const mode = snapshot?.selection === "pinned" ? "Pinned" : snapshot?.selection === "auto" ? "Automatic" : "No project";
+  return <section className="rounded-lg border border-[color:var(--border-subtle)] p-4">
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-sm font-medium">{snapshot ? `${snapshot.project ?? "Personal preferences"} · ${mode}` : "Context"}</span>
+      <button className="text-xs text-fg-muted hover:text-fg" onClick={() => void refresh()}>Refresh</button>
     </div>
-  </details>;
+    {error && <p role="alert" className="mt-2 text-xs">Context unavailable. Try again.</p>}
+    <details className="mt-2 text-xs"><summary className="cursor-pointer text-fg-muted">View context</summary>
+      {!snapshot ? <p className="mt-3 text-fg-muted">Available after your first request.</p> : <div className="mt-3 space-y-3">
+        <p>{delivery[snapshot.delivery]} · {snapshot.reason}</p>
+        <p className="text-fg-muted">Request {snapshot.runId}</p>
+        <p className="text-fg-muted">{snapshot.sourceStatus}</p>
+        {snapshot.profileReviewNeeded && <p>Personal preferences need review. Operational instructions were excluded.</p>}
+        {snapshot.profileInvalid && <p role="alert">Profile exceeds the limit. No refinement was sent.</p>}
+        <details><summary>Personal preferences</summary><pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words">{snapshot.profile || "None"}</pre></details>
+        {snapshot.projectContext && <details><summary>Project context</summary><pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words">{snapshot.projectContext}</pre></details>}
+        <details><summary>Sources and exclusions</summary><ul className="mt-2 space-y-2">
+          {(snapshot.sources ?? []).map(source => <li key={source.path} className="break-all">{source.path}<p className="text-fg-muted">{source.excludedLines} lines excluded</p><code>{source.fingerprint}</code></li>)}
+          {(snapshot.profileSources ?? []).map(source => <li key={source.path} className="break-all">{source.path} (reviewed profile snapshot)</li>)}
+        </ul></details>
+      </div>}
+    </details>
+  </section>;
 }

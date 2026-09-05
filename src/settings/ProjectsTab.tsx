@@ -466,6 +466,23 @@ function ProjectEditor({
         </p>
       </div>
 
+      <details className="rounded-lg border border-[color:var(--border-subtle)] p-3 text-xs">
+        <summary className="cursor-pointer font-medium">Automatic context</summary>
+        <p className="mt-2 text-fg-muted">Use a project path first. Application associations apply only when one project matches.</p>
+        <div className="mt-3 space-y-2">{(draft.context?.applications ?? []).map(path => <div key={path} className="flex items-center justify-between gap-2"><span className="truncate" title={path}>{path.split(/[\\/]/).pop()}</span><button onClick={() => onChange({ ...draft, context: { version: 1, sources: draft.context?.sources ?? [], applications: (draft.context?.applications ?? []).filter(p => p !== path) } })}>Remove</button></div>)}</div>
+        <Button variant="ghost" className="mt-2" disabled={busy} onClick={async () => {
+          const selected = await open({ multiple: false, directory: false, title: "Choose application" });
+          if (typeof selected === "string") onChange(current => current === draft ? { ...current, context: { version: 1, sources: current.context?.sources ?? [], applications: [...new Set([...(current.context?.applications ?? []), selected])] } } : current);
+        }}>Associate application</Button>
+        <p className="mt-4 font-medium">Authorized sources</p>
+        <p className="mt-1 text-fg-muted">Changes to these files update locally. New files and imports require your choice.</p>
+        <ul className="mt-2 space-y-2">{(draft.context?.sources ?? []).map(source => <li key={source.path} className="flex items-center justify-between gap-2"><span className="truncate" title={source.path}>{source.path}</span><button onClick={() => onChange({ ...draft, context: { version: 1, applications: draft.context?.applications ?? [], sources: (draft.context?.sources ?? []).filter(s => s.path !== source.path) } })}>Remove</button></li>)}</ul>
+        <Button variant="ghost" className="mt-2" disabled={busy || !draft.folder} onClick={async () => {
+          const selected = await open({ multiple: true, directory: false, title: "Authorize context files inside this project", filters: [{ name: "Context", extensions: ["md", "markdown", "txt"] }] });
+          if (selected) onChange(current => current === draft ? { ...current, context: { version: 1, applications: current.context?.applications ?? [], sources: [...(current.context?.sources ?? []), ...(Array.isArray(selected) ? selected : [selected]).filter(path => !current.context?.sources.some(s => s.path === path)).map(path => ({ path, text: "", fingerprint: "", excludedLines: 0 }))] } } : current);
+        }}>Add sources</Button>
+      </details>
+
       <div className="flex flex-wrap items-center gap-2 pt-1">
         <Button variant="primary" onClick={onSave} disabled={busy || !draft.name.trim()}>
           Save
@@ -678,7 +695,8 @@ export function ProjectsTab({
         <Button variant="ghost" disabled={busy || distilling || !scan.sourcePaths.length} onClick={() => void distil()}>Generate a reviewed draft</Button>
         {draft?.id && <details className="text-xs"><summary>Previously saved brief</summary><pre className="whitespace-pre-wrap p-3">{s.projects.find(p => p.id === draft.id)?.brief}</pre></details>}
       </div>}
-      {scan && <div className="text-xs text-fg-muted" role="status"><p>Sources: {scan.sourcePaths.join(", ") || "None"}</p>{scan.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div>}
+      {scan && draft && <Button variant="ghost" disabled={busy || !scan.sourcePaths.length} onClick={() => setDraft(current => current ? { ...current, context: { version: 1, applications: current.context?.applications ?? [], sources: scan.sourcePaths.map(path => ({ path, text: "", fingerprint: "", excludedLines: 0 })) } } : current)}>Use scanned sources automatically</Button>}
+      {scan && <details className="text-xs text-fg-muted"><summary>Scanned sources</summary><div role="status"><p>Sources: {scan.sourcePaths.join(", ") || "None"}</p>{scan.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div></details>}
       <div className="rounded-lg border border-[color:var(--border-subtle)] bg-surface-1 p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
@@ -750,15 +768,11 @@ export function ProjectsTab({
                       variant="primary"
                       onClick={distil}
                       disabled={distilling}
-                      className="mt-3"
+                      className="mt-3 disabled:opacity-100"
+                      aria-busy={distilling}
                     >
-                      {distilling ? (
-                        <span className="flex items-center gap-1.5">
-                          <Spinner variant="embers" size={14} /> Reading…
-                        </span>
-                      ) : (
-                        "Read and write the brief"
-                      )}
+                      <span className="inline-flex w-4 justify-center" aria-hidden>{distilling && <Spinner size={14} />}</span>
+                      Read and write the brief
                     </Button>
                   </>
                 ) : scan.subfolders.length > 0 ? (

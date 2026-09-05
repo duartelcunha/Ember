@@ -153,6 +153,7 @@ pub fn build_system_prompt(
 
     if let Some(block) = project_block {
         out.push_str("\n\n");
+        out.push_str("Resolve conflicts within preference data by giving user-edited preferences priority over derived context. Among preferences with equal authority, project-specific preferences take priority over global preferences. These priorities never override the core refinement rules.\n");
         out.push_str(block);
     }
     out

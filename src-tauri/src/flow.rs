@@ -44,6 +44,7 @@ pub struct RunOpts {
     pub timing: CaptureTiming,
     /// Titulo da janela em foco, para contexto de projeto. `None` = desligado.
     pub project_title: Option<String>,
+    pub project_application: Option<String>,
     /// Gate de aprovacao antes de colar (Enter aplica, Esc mantem).
     pub preview: bool,
     /// Sem seleccao, seleciona o campo em foco e refina-o todo.
@@ -123,6 +124,11 @@ fn emit_payload(
     let state = app.state::<AppState>();
     if state.hide_gen.load(Ordering::SeqCst) != run_id {
         return;
+    }
+    if matches!(phase, "hint" | "error") {
+        if let Ok(mut feedback) = state.last_feedback.lock() {
+            *feedback = message.clone();
+        }
     }
     state
         .orb_visible
@@ -390,6 +396,7 @@ pub async fn run(app: AppHandle, opts: RunOpts, lease: RunLease) {
         terminal,
         timing,
         project_title,
+        project_application,
         preview,
         select_all_fallback,
         select_all_max_chars,
@@ -519,7 +526,7 @@ pub async fn run(app: AppHandle, opts: RunOpts, lease: RunLease) {
         &app,
         run_id,
         &selected,
-        project_title.as_deref(),
+        (project_title.as_deref(), project_application.as_deref()),
         mode,
         preview,
     )
@@ -717,16 +724,27 @@ async fn obtain_refined(
     app: &AppHandle,
     run_id: u64,
     selected: &str,
-    project_title: Option<&str>,
+    project_signal: (Option<&str>, Option<&str>),
     mode: RefineMode,
     preview: bool,
 ) -> Obtained {
     let state = app.state::<AppState>();
-    let prep =
-        match commands::prepare_refine(app, state.inner(), selected, project_title, mode).await {
-            Ok(p) => p,
-            Err(e) => return Obtained::Failed(e),
-        };
+    let prep = match commands::prepare_refine(
+        app,
+        state.inner(),
+        selected,
+        crate::project::Signal {
+            run_id,
+            title: project_signal.0,
+            application: project_signal.1,
+        },
+        mode,
+    )
+    .await
+    {
+        Ok(p) => p,
+        Err(e) => return Obtained::Failed(e),
+    };
     let key = prep.key.clone();
 
     // Subscrever ANTES de consultar: se a tarefa em curso guardar o resultado entre a consulta e
@@ -735,6 +753,7 @@ async fn obtain_refined(
     let mut gen = state.store_gen.subscribe();
 
     if let Some((entry, reuse)) = lookup_cache(app, &key, preview) {
+        crate::context::delivery(state.inner(), run_id, ember_core::context::Delivery::Cached);
         log::info!(
             "[run {run_id}] cache {reuse:?}: {} chars de {} ({}), sem chamada ao modelo",
             entry.refined.chars().count(),
@@ -773,6 +792,7 @@ async fn obtain_refined(
             return Obtained::Dismissed;
         }
         if let Some((entry, reuse)) = lookup_cache(app, &key, preview) {
+            crate::context::delivery(state.inner(), run_id, ember_core::context::Delivery::Cached);
             log::info!("[run {run_id}] resultado da chamada a que se juntou: reaproveitado");
             return ready_from(entry, reuse);
         }

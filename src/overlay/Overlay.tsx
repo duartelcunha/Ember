@@ -29,7 +29,8 @@ function announcement(s: OverlayState): string | null {
 /** Raiz do overlay junto ao cursor: orb (refining) ou pilha (success/error/hint). */
 export function Overlay() {
   const s = useOverlayState();
-  const floating = useFloatingPosition("ember://overlay-at");
+  const floating = useFloatingPosition("ember://overlay-at", s.phase === "refining" ? "orb" : "surface");
+  const labels = useFloatingPosition("ember://overlay-at", "labels");
   const status = announcement(s);
   return (
     <LazyMotion features={domAnimation} strict>
@@ -63,55 +64,11 @@ export function Overlay() {
           <AnimatePresence mode="popLayout">
             {/* A direct motion child gives popLayout the DOM ref needed to remove
                 exiting content from measurement during phase changes. */}
-            {s.phase !== "hidden" && <m.div key={s.phase} exit={{ opacity: 0 }}>
+            {s.phase !== "hidden" && <m.div key={s.phase} exit={{ opacity: 0, transition: { duration: 0 } }}>
             {s.phase === "refining" && (
-              // Orb + legenda opcional: o nucleo emite "Trying <provider>..."/"Retrying..."
-              // durante fallback/retry, e a cauda do texto a ser gerado durante o stream,
-              // para o refine deixar de ser um orb mudo. Largura capada: a janela do
-              // overlay so clampa a caixa minuscula do orb ao ecra nesta fase (nao a
-              // legenda), por isso o texto tem de caber SEMPRE dentro da janela fixa.
+              // Independent labels cannot change the visible ring's cursor anchor.
               <div key="orb" className="ember-orb-row flex items-start gap-2">
-                {/* A faísca cresce quando há mensagem, que é exatamente quando o núcleo está
-                    a repetir ou a mudar de provider: o ponteiro diz "isto está a custar" antes
-                    de a legenda ao lado ser lida. */}
                 <Orb variant={s.message ? "retry" : "work"} />
-                {/* O projeto ativo aparece SEMPRE que existe, e não só quando há mensagem: é a
-                    resposta a "com que contexto é que este refine está a ser feito", e essa
-                    pergunta faz-se em todos os refines, não só nos que fazem retry. A cor
-                    diz que há um projeto; esta etiqueta diz qual. */}
-                <div className="flex min-w-0 max-w-[min(280px,calc(100vw-64px))] flex-col items-start gap-1">
-                {s.project && (
-                  <m.span
-                    className="ember-bubble min-w-0 max-w-full whitespace-normal break-words px-2 py-1 text-xs font-semibold"
-                    title={s.project}
-                    style={{
-                      borderRadius: 10,
-                      willChange: "opacity",
-                      color: "var(--color-accent)",
-                    }}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-                  >
-                    <span className="line-clamp-3">{s.project}</span>
-                  </m.span>
-                )}
-                {s.message && (
-                  <m.span
-                    // .ember-bubble tem backdrop-filter: so opacidade anima (sem translate),
-                    // senao o fundo desfocado re-amostrava a cada frame do movimento.
-                    className="ember-bubble min-w-0 max-w-full whitespace-normal break-words px-2 py-1 text-xs text-fg"
-                    style={{ borderRadius: 10, willChange: "opacity" }}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-                  >
-                    {s.message}
-                  </m.span>
-                )}
-                </div>
               </div>
             )}
             {s.phase === "success" && (
@@ -127,6 +84,12 @@ export function Overlay() {
             {s.phase === "preview" && s.preview && <Preview key="preview" value={s.preview} />}
             </m.div>}
           </AnimatePresence>
+        </div>
+        <div ref={labels} className="ember-floating fixed left-0 top-0 w-max max-w-[min(280px,calc(100vw-16px))]" aria-hidden>
+          {s.phase === "refining" && <div className="flex flex-col items-start gap-1">
+            {s.project && <span className="ember-bubble max-w-full rounded-lg px-2 py-1 text-xs font-medium truncate">{s.project}</span>}
+            {s.message && <span className="ember-bubble max-w-full rounded-lg px-2 py-1 text-xs line-clamp-2">{s.message}</span>}
+          </div>}
         </div>
       </MotionConfig>
     </LazyMotion>

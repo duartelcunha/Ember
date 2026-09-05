@@ -79,10 +79,7 @@ pub fn feedback_for(outcome: FlowOutcome) -> OverlayFeedback {
     match outcome {
         FlowOutcome::TargetUnverifiable => OverlayFeedback {
             phase: "hint",
-            message: Some(
-                "Can't verify this field. Select text in an accessible editor and try again."
-                    .into(),
-            ),
+            message: Some("Field unavailable. Select text in another editor.".into()),
             provider: None,
             hide_after_ms: 3500,
         },

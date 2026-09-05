@@ -1,4 +1,4 @@
-export interface CursorPosition { sequence?: number; x: number; y: number; originX: number; originY: number }
+export interface CursorPosition { sequence?: number; generation?: number; ready?: boolean; scale?: number; width?: number; height?: number; x: number; y: number; originX: number; originY: number }
 export interface Viewport { width: number; height: number; scale: number }
 
 /** Convert physical cursor coordinates once, then place measured logical content. */
@@ -15,4 +15,34 @@ export function placeFloating(cursor: CursorPosition, view: Viewport, content: {
   const x = Math.max(margin, Math.min(left ? cursorX - 14 - width : cursorX + 14, view.width - width - margin));
   const y = Math.max(margin, Math.min(cursorY + 18, view.height - height - margin));
   return { x: Math.round(x), y: Math.round(y), left };
+}
+
+// The visible pixel ring in Orb.tsx occupies (22, 2, 15, 15), not its 40px SVG.
+export const ORB_INK = { x: 22, y: 2, width: 15, height: 15 };
+export function geometryReady(cursor: CursorPosition, view: Viewport) {
+  return cursor.ready !== false && (cursor.scale === undefined ||
+    (Math.abs(cursor.scale - view.scale) < 0.01 &&
+     Math.abs((cursor.width ?? 0) / view.scale - view.width) <= 2 &&
+     Math.abs((cursor.height ?? 0) / view.scale - view.height) <= 2));
+}
+export function placeOrb(cursor: CursorPosition, view: Viewport, wasLeft: boolean) {
+  const cx = (cursor.x - cursor.originX) / view.scale;
+  const cy = (cursor.y - cursor.originY) / view.scale;
+  let left = wasLeft;
+  if (!left && cx + 10 + ORB_INK.width > view.width - 4) left = true;
+  else if (left && cx + 10 + ORB_INK.width < view.width - 36) left = false;
+  const inkX = Math.max(4, Math.min(left ? cx - 10 - ORB_INK.width : cx + 10, view.width - ORB_INK.width - 4));
+  const inkY = Math.max(4, Math.min(cy + 2, view.height - ORB_INK.height - 4));
+  return { x: inkX - ORB_INK.x, y: inkY - ORB_INK.y, left };
+}
+
+export function placeLabels(cursor: CursorPosition, view: Viewport, content: { width: number; height: number }, wasLeft: boolean) {
+  const cx = (cursor.x - cursor.originX) / view.scale;
+  const cy = (cursor.y - cursor.originY) / view.scale;
+  const positioned = placeFloating(cursor, view, content, wasLeft);
+  // Labels clear both the cursor and the ring, including at the bottom edge.
+  const inkY = placeOrb(cursor, view, wasLeft).y + ORB_INK.y;
+  const below = Math.max(8, cy + 26, inkY + ORB_INK.height + 8);
+  const y = below + content.height <= view.height - 8 ? below : Math.max(8, Math.min(cy - 8, inkY - 8) - content.height);
+  return { ...positioned, x: Math.max(8, Math.min(positioned.left ? cx - 10 - content.width : cx + 10, view.width - content.width - 8)), y };
 }

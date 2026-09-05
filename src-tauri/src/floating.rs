@@ -6,6 +6,11 @@ use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Webview
 #[serde(rename_all = "camelCase")]
 pub struct Position {
     pub sequence: u64,
+    pub generation: u64,
+    pub ready: bool,
+    pub scale: f64,
+    pub width: i32,
+    pub height: i32,
     pub x: f64,
     pub y: f64,
     pub origin_x: i32,
@@ -20,6 +25,8 @@ pub struct Surface {
     refreshed: Instant,
     placed: Option<(crate::geom::Rect, f64)>,
     last_cursor: Option<(i32, i32)>,
+    generation: u64,
+    pending: Option<((crate::geom::Rect, f64), Instant)>,
 }
 
 impl Surface {
@@ -33,6 +40,8 @@ impl Surface {
             refreshed: Instant::now(),
             placed: None,
             last_cursor: None,
+            generation: 0,
+            pending: None,
         }
     }
 
@@ -58,25 +67,79 @@ impl Surface {
         let transitioned = self.placed != Some(placement);
         if transitioned {
             let area = monitor.work;
-            if self
-                .window
-                .set_size(PhysicalSize::new(
-                    area.w.max(1) as u32,
-                    area.h.max(1) as u32,
-                ))
-                .is_err()
-                || self
+            if self.pending.is_none_or(|(target, started)| {
+                target != placement || started.elapsed() >= Duration::from_millis(500)
+            }) {
+                self.pending = Some((placement, Instant::now()));
+                self.generation = self
+                    .app
+                    .state::<crate::state::AppState>()
+                    .event_seq
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                    + 1;
+                // Invalidate the previous DOM geometry before changing the native surface.
+                let invalid = Position {
+                    sequence: self
+                        .app
+                        .state::<crate::state::AppState>()
+                        .event_seq
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                        + 1,
+                    generation: self.generation,
+                    ready: false,
+                    scale: monitor.scale,
+                    width: area.w,
+                    height: area.h,
+                    x: cursor.x,
+                    y: cursor.y,
+                    origin_x: area.x,
+                    origin_y: area.y,
+                };
+                let state = self.app.state::<crate::state::AppState>();
+                if let Ok(mut positions) = state.floating_positions.lock() {
+                    positions.insert(self.window.label().to_owned(), invalid.clone());
+                }
+                let _ = self.app.emit_to(self.window.label(), self.event, invalid);
+                if self
                     .window
-                    .set_position(PhysicalPosition::new(area.x, area.y))
+                    .set_size(PhysicalSize::new(
+                        area.w.max(1) as u32,
+                        area.h.max(1) as u32,
+                    ))
                     .is_err()
-            {
-                log::warn!("floating surface: monitor placement failed");
+                    || self
+                        .window
+                        .set_position(PhysicalPosition::new(area.x, area.y))
+                        .is_err()
+                {
+                    log::warn!("floating surface: monitor placement failed");
+                    return;
+                }
+            }
+            // A successful setter can precede the OS resize/DPI notification.
+            let coherent = self.window.inner_size().is_ok_and(|size| {
+                size.width == area.w.max(1) as u32 && size.height == area.h.max(1) as u32
+            }) && self
+                .window
+                .inner_position()
+                .is_ok_and(|pos| pos.x == area.x && pos.y == area.y)
+                && self
+                    .window
+                    .scale_factor()
+                    .is_ok_and(|scale| (scale - monitor.scale).abs() < 0.01);
+            if !coherent {
                 return;
             }
             self.placed = Some(placement);
+            self.pending = None;
         }
         if transitioned || self.last_cursor != Some(point) {
             let payload = Position {
+                generation: self.generation,
+                ready: true,
+                scale: monitor.scale,
+                width: monitor.work.w,
+                height: monitor.work.h,
                 sequence: self
                     .app
                     .state::<crate::state::AppState>()

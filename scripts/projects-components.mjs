@@ -30,6 +30,19 @@ export async function projectRegressions(page, origin) {
   assert.equal(await page.$eval('#brief-b', e => e.value), 'Brief for Beta');
 
   await edit('a');
+  await page.$eval('button[aria-label="Custom colour"]', e => e.scrollIntoView({ block: 'center', behavior: 'instant' }));
+  // The editor expands with animation. A native pointer click must target its settled
+  // position, otherwise pointer-down and pointer-up can land on different controls.
+  await page.waitForFunction(() => {
+    const button = document.querySelector('button[aria-label="Custom colour"]');
+    const r = button.getBoundingClientRect();
+    const position = `${r.x},${r.y},${r.width},${r.height}`;
+    const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+    const f = window.__projectsFixture;
+    f.buttonFrames = f.buttonPosition === position && hit && button.contains(hit) ? (f.buttonFrames ?? 0) + 1 : 0;
+    f.buttonPosition = position;
+    return f.buttonFrames >= 3;
+  });
   await page.click('button[aria-label="Custom colour"]');
   await page.waitForSelector('[aria-label="Colour wheel"]');
   await page.$eval('[aria-label="Colour wheel"]', element => element.scrollIntoView({ block: 'center', behavior: 'instant' }));
