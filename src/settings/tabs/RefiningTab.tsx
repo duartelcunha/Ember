@@ -195,7 +195,8 @@ export function RefiningTab({
     };
 
   return (
-    <div data-tab-body="" className="settings-two-col min-h-0 flex-1 items-start gap-[var(--card-gap,1rem)]">
+    <div data-tab-body="" className="settings-two-col min-h-0 flex-1">
+      <div data-settings-col="" className="settings-col settings-col-grow settings-col-wide">
       <Section
         title="Refine mode"
         titleId="refine-mode-heading"
@@ -239,7 +240,9 @@ export function RefiningTab({
           </Popover>
         </div>
       </Section>
+      </div>
 
+      <div data-settings-col="" className="settings-col">
       <Section title="Behaviour" hint="What happens around each refine.">
         <SwitchRow
           id="thinking-enabled"
@@ -324,6 +327,7 @@ export function RefiningTab({
           <CaptureTimingDialog s={s} setS={setS} />
         </div>
       </Section>
+      </div>
     </div>
   );
 }

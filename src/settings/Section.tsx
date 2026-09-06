@@ -38,6 +38,7 @@ export function Section({
   detail,
   action,
   badge,
+  elastic,
   className,
   children,
 }: {
@@ -53,17 +54,23 @@ export function Section({
   detail?: React.ReactNode;
   /** Optional control in the top-right corner of the card (e.g. "Get a key" on providers). */
   action?: React.ReactNode;
+  /** This card absorbs the column's leftover height, and hands it to its body rather than to its
+   *  own padding. At most one per column: two half-filled elastic regions read worse than one
+   *  full one. Only for bodies that read better tall (a list, an editor, a readout, a stage). */
+  elastic?: boolean;
   className?: string;
   children: React.ReactNode;
 }) {
   return (
     <div
+      data-elastic={elastic ? "" : undefined}
       className={cn(
         "rounded-lg border border-[color:var(--border-subtle)] bg-surface-1 p-[var(--card-pad,1.25rem)]",
+        elastic && "flex min-h-0 flex-1 flex-col",
         className,
       )}
     >
-      <div className="flex items-start justify-between gap-4">
+      <div className={cn("flex items-start justify-between gap-4", elastic && "shrink-0")}>
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
             <h3 id={titleId} className="truncate text-sm font-semibold text-fg">{title}</h3>
@@ -74,7 +81,9 @@ export function Section({
         </div>
         {action && <div className="shrink-0">{action}</div>}
       </div>
-      <div className="mt-[var(--card-gap,1rem)] flex flex-col gap-[var(--row-gap,1rem)]">{children}</div>
+      <div className={cn("mt-[var(--card-gap,1rem)] flex flex-col gap-[var(--row-gap,1rem)]", elastic && "min-h-0 flex-1")}>
+        {children}
+      </div>
     </div>
   );
 }

@@ -53,11 +53,23 @@ const TAB_LABELS = { providers: 'Providers', refining: 'Refining', hotkey: 'Shor
 export const LAYOUT_SIZES = [[720, 520], [720, 856], [1000, 640], [1400, 900]];
 
 /**
+ * Tabs that must OCCUPY their panel, not merely fit inside it. Grows as each tab is converted;
+ * the final step deletes the set so the rule is unconditional.
+ */
+const FILLS = new Set(['hotkey']);
+
+/**
  * The settings never scroll as a page. For every tab, at the minimum window, the default and a
  * large one, in both themes: the document and `main` do not scroll, no native <details> is
  * left, the size container has a height, and every element of the tab body lies inside `main`
  * unless it sits in a pane that is allowed to scroll (`data-scroll-pane`). The per-element
  * check is the real one: `main` is `overflow-hidden`, so its scrollHeight alone would pass.
+ *
+ * Fitting is not the same as looking designed, so tabs in FILLS are also held to the height
+ * contract: the body is as tall as its panel, and no container carries meaningfully more air
+ * below its children than above. A tab that fills passes with both gaps near zero, one that
+ * centres passes with equal gaps, and the original defect (everything pinned to the top with
+ * 40% empty beneath) fails.
  */
 export async function settingsLayoutRegressions(page, origin, capture, tabs = Object.keys(TAB_LABELS)) {
   await page.goto(`${origin}/__ember-test/settings`);
@@ -99,6 +111,27 @@ export async function settingsLayoutRegressions(page, origin, capture, tabs = Ob
           return issues;
         });
         assert.deepEqual(issues, [], `${tab} at ${width}x${height} (${theme})`);
+        if (FILLS.has(tab)) {
+          const air = await page.evaluate(() => {
+            const out = [];
+            const body = document.querySelector('[data-tab-body]');
+            const panel = body.parentElement;
+            const pr = panel.getBoundingClientRect(), br = body.getBoundingClientRect();
+            if (br.height < pr.height - 1) out.push(`tab body ${Math.round(br.height)} shorter than panel ${Math.round(pr.height)}`);
+            const measure = (container, name) => {
+              const kids = [...container.children].filter(el => { const r = el.getBoundingClientRect(); return r.width || r.height; });
+              if (!kids.length) return;
+              const cr = container.getBoundingClientRect();
+              const top = Math.min(...kids.map(el => el.getBoundingClientRect().top)) - cr.top;
+              const bottom = cr.bottom - Math.max(...kids.map(el => el.getBoundingClientRect().bottom));
+              if (bottom > Math.max(8, top + 8)) out.push(`${name}: ${Math.round(bottom)}px of air below, ${Math.round(top)}px above`);
+            };
+            measure(body, 'tab body');
+            document.querySelectorAll('[data-settings-col]').forEach((col, i) => measure(col, `column ${i}`));
+            return out;
+          });
+          assert.deepEqual(air, [], `${tab} at ${width}x${height} (${theme}) does not occupy its panel`);
+        }
         await capture(`${tab}-${width}x${height}-${theme}`);
       }
     }

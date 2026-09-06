@@ -250,6 +250,11 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--border-accent);
   --example: block;
   --example-button: none;
 }
+/* Tall windows breathe rather than stretch: more padding costs nothing and removes about 60px
+   of leftover per tab without opening a void anywhere. */
+@container settings (min-height: 760px) {
+  .settings-density { --card-pad: 1.5rem; --card-gap: 1.25rem; --row-gap: 1.25rem; }
+}
 @container settings (max-height: 560px) {
   .settings-density {
     --card-pad: 1rem;
@@ -262,13 +267,47 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--border-accent);
 }
 @container settings (max-width: 52rem) { [role="tab"] > svg { display: none; } }
 
-/* Two-column tab bodies. Wide containers get two columns because the cards have the width for
-   it; short containers get them even when narrow, because stacked cards would not fit the
-   height (the settings never scroll). A tall narrow window stacks: two 300px columns looked
-   cramped and left the bottom half empty. */
-.settings-two-col { display: grid; align-content: start; grid-template-columns: minmax(0, 1fr); }
-@container settings (min-width: 48rem) { .settings-two-col { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
-@container settings (min-width: 36rem) and (max-height: 560px) { .settings-two-col { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+/* The height contract. Every tab body IS the panel (`flex min-h-0 flex-1`). Its columns stretch
+   to the full height, which costs nothing because a column wrapper has no border, and each
+   column centres its cards when it has slack. Growth is spent inside ONE card per tab, on a body
+   that reads better tall (a list, an editor, a readout, a stage, a comparison), never as padding
+   inside a card that cannot use it: a five-row form spread over 700px reads as a broken
+   template, and a one-control card stretched to full height reads as a failure to load.
+
+   Flex and not grid: stacked, only ONE column may take the leftover height, and a grid cannot
+   say "this row is 1fr, that one is auto" without knowing which row it is. `align-content:
+   stretch` would split the leftover between both, which halves the effect and pulls the fixed
+   cards apart.
+
+   Two columns need width; short windows get them even when narrow, because stacked cards would
+   not fit the height. A tall narrow window stacks: two 300px columns looked cramped. */
+.settings-density { --col-dir: column; --col-grow: 0; --col-basis: auto; }
+@container settings (min-width: 48rem) { .settings-density { --col-dir: row; --col-grow: 1; --col-basis: 0%; } }
+@container settings (min-width: 36rem) and (max-height: 560px) { .settings-density { --col-dir: row; --col-grow: 1; --col-basis: 0%; } }
+
+/* `safe center` is the fallback for a stacked tab whose columns all keep their natural height:
+   the pair sits centred instead of hugging the top. Side by side the children fill the row, so
+   there is no free space and this is a no-op. */
+.settings-two-col { display: flex; flex-direction: var(--col-dir); gap: var(--card-gap, 1rem);
+                    justify-content: safe center; min-height: 0; }
+.settings-two-col > * { flex: var(--col-grow) 1 var(--col-basis); min-width: 0; min-height: 0; }
+/* Stacked, this is the column that takes the leftover. Side by side it is full height anyway. */
+.settings-two-col > .settings-col-grow { flex-grow: 1; }
+/* The column carrying the tab's evidence earns more width when there are two. */
+@container settings (min-width: 48rem) { .settings-two-col > .settings-col-wide { flex-grow: 1.6; } }
+
+/* A column of cards, top-aligned. Centring happens on the BLOCK (see `.settings-fit`), never per
+   column: two columns each centring their own cards stagger the tops of objects that are
+   obviously the same kind of thing, which reads as misaligned rather than as roomy. Measured on
+   About at 1000x640, where a 150px card and a 300px card ended up 75px out of line. */
+.settings-col { display: flex; flex-direction: column; gap: var(--card-gap, 1rem); min-height: 0; }
+
+/* For a tab whose content is forms and genuinely cannot grow (Providers, Shortcut): the whole
+   block of columns is centred, card tops level, so the leftover height is symmetric above and
+   below instead of pooling at the bottom. `safe` degrades to `start` on overflow, so a card
+   title is never what gets clipped, and the per-element scan catches the overflow instead. */
+.settings-fit { display: flex; flex-direction: column; justify-content: safe center; min-height: 0; }
+.settings-fit > .settings-two-col { align-items: start; }
 
 /* Provider cards fold into a summary row only when there is neither the width for two columns
    nor the height for two stacked cards. Elsewhere both stay expanded. */

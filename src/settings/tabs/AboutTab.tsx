@@ -200,7 +200,8 @@ function DiagnosticsSection({
 
 export function AboutTab({ s }: { s: EmberSettings }) {
   return (
-    <div data-tab-body="" className="settings-two-col min-h-0 flex-1 items-start gap-[var(--card-gap,1rem)]">
+    <div data-tab-body="" className="settings-two-col min-h-0 flex-1">
+      <div data-settings-col="" className="settings-col">
       <Section
         title="Ember"
         hint="Refines the text you select in any app: prompts, emails, messages, docs."
@@ -222,7 +223,11 @@ export function AboutTab({ s }: { s: EmberSettings }) {
           Source on GitHub
         </button>
       </Section>
+      </div>
+
+      <div data-settings-col="" className="settings-col">
       <DiagnosticsSection debugMode={s.debugMode} savePrompts={s.savePrompts} keepResults={s.keepResults} />
+      </div>
     </div>
   );
 }

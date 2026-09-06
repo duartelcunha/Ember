@@ -25,8 +25,9 @@ export function ShortcutTab({
   commitHotkey: (which: HotkeySlot, accel: string) => Promise<string | null>;
 }) {
   return (
-    <div data-tab-body="" className="settings-two-col min-h-0 flex-1 items-start gap-[var(--card-gap,1rem)]">
-      <div className="flex min-w-0 flex-col gap-[var(--card-gap,1rem)]">
+    <div data-tab-body="" className="settings-fit min-h-0 flex-1">
+      <div className="settings-two-col">
+      <div data-settings-col="" className="settings-col">
         <Section
           title="Global shortcut"
           titleId="hotkey-heading"
@@ -67,6 +68,7 @@ export function ShortcutTab({
           />
         </Section>
       </div>
+      <div data-settings-col="" className="settings-col">
       <Section
         title="Shortcuts per mode"
         hint="Optional. Fire one mode directly, without opening settings first."
@@ -91,6 +93,8 @@ export function ShortcutTab({
           </div>
         ))}
       </Section>
+      </div>
+      </div>
     </div>
   );
 }
