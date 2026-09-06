@@ -223,11 +223,31 @@
 .ember-floating { visibility: hidden; will-change: transform; }
 .ember-floating[data-side="left"] .ember-orb-row { flex-direction: row-reverse; }
 
+/* Every incoming surface opens; only the ones that follow the loading ring morph from it.
+   A hint fired with nothing selected goes straight from hidden to hint, never passing through
+   the loading phase, so it used to arrive fully drawn in a single frame. This opens it from the
+   cursor-facing edge instead. Declared BEFORE the morph on purpose: both are attribute selectors
+   of equal specificity on the same element, so the morph wins the `animation` shorthand and only
+   one animation ever runs. */
+[data-enter] {
+  --ember-open-start: inset(0 30% 0 0 round 8px);
+  animation: ember-surface-open 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.ember-floating[data-side="left"] [data-enter] {
+  --ember-open-start: inset(0 0 0 30% round 8px);
+}
+@keyframes ember-surface-open {
+  from { clip-path: var(--ember-open-start); opacity: 0; }
+  to { clip-path: inset(-6px -6px -6px -6px round 8px); opacity: 1; }
+}
+
 /* The incoming solid surface grows from the visible 15px ring, without scaling
-   text or animating the translation owned by the cursor geometry controller. */
+   text or animating the translation owned by the cursor geometry controller.
+   Opacity stays at 1 throughout: the ring is already lit, so fading the surface in over it
+   would read as a second object rather than the same one changing shape. */
 [data-morph-from-orb] {
   --ember-morph-start: inset(0 calc(100% - 15px) calc(100% - 15px) 0 round 7.5px);
-  animation: ember-surface-morph 180ms cubic-bezier(.2, .7, .2, 1);
+  animation: ember-surface-morph 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 .ember-floating[data-side="left"] [data-morph-from-orb] {
   --ember-morph-start: inset(0 0 calc(100% - 15px) calc(100% - 15px) round 7.5px);
@@ -236,8 +256,23 @@
   from { clip-path: var(--ember-morph-start); }
   to { clip-path: inset(-6px -6px -6px -6px round 8px); }
 }
+
+/* The surface opening is the box; this is what happens inside it. Without it the clip reveals
+   text that is already finished, which reads as a cut-out rather than a surface filling up.
+   Transform on a CHILD never changes the chip's own box, so the measured geometry the cursor
+   anchor depends on stays constant. Delays are the ones the pill carried before it was
+   stripped: icon first, then the words. */
+.ember-chip > *, .ember-label-in {
+  animation: ember-content-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.ember-chip > *:nth-child(2) { animation-delay: 50ms; }
+@keyframes ember-content-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: none; }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  [data-morph-from-orb] { animation: none; }
+  [data-morph-from-orb], [data-enter], .ember-chip > *, .ember-label-in { animation: none; }
 }
 
 

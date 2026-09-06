@@ -134,6 +134,17 @@ test("UI components preserve geometry and asynchronous ownership", (t) => withBr
       await page.setViewport({ width: 800, height: 600, deviceScaleFactor: 1 });
       await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'no-preference' }]);
       let sequence = 300;
+      // A hint fired with nothing selected goes straight from hidden to hint, so it never gets
+      // the morph. It used to arrive fully drawn in a single frame; it now opens from the
+      // cursor-facing edge like every other surface.
+      await send('ember://overlay-at', { sequence: 4999, generation: 299, ready: true, scale: 1, width: 800, height: 600, x: 300, y: 180, originX: 0, originY: 0 });
+      await send('ember://state', { sequence: 299, runId: 6, phase: 'hidden' });
+      await presented();
+      await send('ember://state', { sequence: 300, runId: 6, phase: 'hint', message: 'Select text first' });
+      await presented();
+      assert.equal(await page.$eval('[data-enter]', e => getComputedStyle(e).animationName), 'ember-surface-open');
+      assert.equal(await page.$$eval('[data-morph-from-orb]', nodes => nodes.length), 0);
+      sequence = 301;
       for (const x of [300, 790]) {
         await send('ember://overlay-at', { sequence: 5000 + sequence, generation: sequence, ready: true, scale: 1, width: 800, height: 600, x, y: 180, originX: 0, originY: 0 });
         await send('ember://state', { sequence: sequence++, runId: 6, phase: 'refining' });
@@ -179,6 +190,12 @@ test("UI components preserve geometry and asynchronous ownership", (t) => withBr
       await send('ember://state', { sequence: sequence++, runId: 6, phase: 'preview', confirmationScope: 'selection' });
       await presented();
       assert.equal(await page.$eval('[data-morph-from-orb]', e => getComputedStyle(e).animationName), 'none');
+      await send('ember://state', { sequence: sequence++, runId: 6, phase: 'hidden' });
+      await presented();
+      await send('ember://state', { sequence: sequence++, runId: 6, phase: 'hint', message: 'Select text first' });
+      await presented();
+      assert.equal(await page.$eval('[data-enter]', e => getComputedStyle(e).animationName), 'none');
+      assert.equal(await page.$$eval('.ember-chip > *', nodes => nodes.every(e => getComputedStyle(e).animationName === 'none')), true);
     });
     await page.goto(`${origin}/__ember-test/picker`);
     await page.waitForFunction(() => window.__pickerReady === true && document.querySelector('.ember-floating'));
