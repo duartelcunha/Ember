@@ -149,7 +149,7 @@
    reads as material instead of a painted rectangle. Opaque on purpose: backdrop-filter over a
    transparent window re-samples every frame the content moves. */
 .ember-bubble {
-  background: var(--color-surface-1);
+  background: var(--ember-bubble-bg, var(--color-surface-1));
   border: 1px solid var(--border-default);
   box-shadow: var(--shadow-pop), inset 0 1px 0 rgba(255, 246, 235, 0.06);
   color: var(--color-fg);
@@ -166,7 +166,33 @@
   line-height: 16px;
   min-height: 28px;
 }
-:root[data-theme="cream"] .ember-bubble { background: #f7f2e9; }
+:root[data-theme="cream"] { --ember-bubble-bg: #f7f2e9; }
+
+/* The overlay preview in the settings opts out of the theme.
+   The overlay window never gets a `data-theme` attribute, so it is always dark: it appears over
+   whatever application you were typing in, and a surface that followed your settings would be
+   unreadable over half of them. A preview that went cream inside a cream settings window would
+   therefore be showing something the user will never see. These are exactly the tokens the
+   overlay pieces read (`.ember-bubble`, `.ember-chip`, `.ember-confirmation`, Pill, Preview,
+   Orb); a test asserts the subtree computes identically in both themes, which is what stops the
+   list drifting from the @theme block. */
+.ember-overlay-preview {
+  --ember-bubble-bg: #1b1713;
+  --color-surface-1: #1b1713;
+  --color-surface-2: #251f19;
+  --color-fg: #f6f2ec;
+  --color-fg-muted: #b8afa3;
+  --color-accent: #fd8c3c;
+  --color-accent-fg: #1a0e03;
+  --color-error: #ff5d5d;
+  --color-ember-glow: #ffd9a8;
+  --color-ember-raw: #b4512a;
+  --border-default: rgba(255, 246, 235, 0.14);
+  --border-subtle: rgba(255, 246, 235, 0.09);
+  --shadow-pop: 0 2px 8px rgba(0, 0, 0, 0.22), 0 12px 28px rgba(0, 0, 0, 0.3);
+  color-scheme: dark;
+  max-block-size: 26rem;
+}
 
 /* Thin dark scrollbar to match the glassy theme. The settings window no longer scrolls as a
    page; this styles the panes that do (editors, the project list, dialog bodies). WebView2 is

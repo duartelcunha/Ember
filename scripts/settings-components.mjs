@@ -49,6 +49,64 @@ export async function settingsRegressions(page, origin, capture) {
   }
 }
 
+/**
+ * The overlay preview shows the real components, so two things can silently break it.
+ *
+ * The theme: `.ember-bubble` follows `data-theme`, and the overlay window never has one, so a
+ * preview that went cream inside a cream settings window would depict something the user will
+ * never see. Asserted by computing the same styles under both themes.
+ *
+ * The orb: it renders through motion's `m.div`, whose features only load under a `LazyMotion`
+ * ancestor. Without one it mounts at opacity 0. The whole suite runs under reduced motion, where
+ * the orb's own still branch starts it opaque and hides exactly that bug, so this flips the
+ * emulation and puts it back.
+ */
+export async function appearanceRegressions(page, origin, capture) {
+  await page.setViewport({ width: 1000, height: 640, deviceScaleFactor: 1 });
+  await page.goto(`${origin}/__ember-test/settings`);
+  await page.waitForSelector('[role=tab]');
+  const openAppearance = async () => {
+    const trigger = (await page.$$('[role=tab]'))[5];
+    await trigger.click();
+    await page.waitForSelector('[data-overlay-preview]');
+  };
+  const pick = value => page.evaluate(v => {
+    document.querySelector(`input[name="preview-state"][value="${v}"]`).click();
+  }, value);
+  await openAppearance();
+
+  await pick('confirm');
+  await page.waitForSelector('[data-overlay-preview] .ember-bubble');
+  const bubble = () => page.evaluate(() => {
+    const s = getComputedStyle(document.querySelector('[data-overlay-preview] .ember-bubble'));
+    return [s.backgroundColor, s.color, s.borderTopColor];
+  });
+  await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
+  const dark = await bubble();
+  assert.equal(dark[0], 'rgb(27, 23, 19)', 'the preview bubble must use the dark surface');
+  await capture('appearance-preview-dark');
+  await page.evaluate(() => { document.documentElement.dataset.theme = 'cream'; });
+  assert.deepEqual(await bubble(), dark, 'the overlay preview must not follow the settings theme');
+  await capture('appearance-preview-cream');
+  await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
+
+  // The orb, under the media state that would expose a missing LazyMotion.
+  await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'no-preference' }]);
+  await page.reload();
+  await page.waitForSelector('[role=tab]');
+  await openAppearance();
+  await pick('refining');
+  await page.waitForSelector('[data-overlay-preview] svg');
+  await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 500)));
+  const orb = await page.$eval('[data-overlay-preview] svg', e => {
+    const box = e.getBoundingClientRect();
+    return { opacity: getComputedStyle(e.parentElement).opacity, width: box.width, height: box.height };
+  });
+  assert.equal(orb.opacity, '1', 'the orb needs a LazyMotion ancestor or it never fades in');
+  assert.ok(orb.width > 0 && orb.height > 0, `the orb has no box: ${JSON.stringify(orb)}`);
+  await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
+}
+
 const TAB_LABELS = { providers: 'Providers', refining: 'Refining', hotkey: 'Shortcut', projects: 'Projects', profile: 'Profile', appearance: 'Appearance', about: 'About' };
 export const LAYOUT_SIZES = [[720, 520], [720, 856], [1000, 640], [1400, 900]];
 
@@ -56,7 +114,7 @@ export const LAYOUT_SIZES = [[720, 520], [720, 856], [1000, 640], [1400, 900]];
  * Tabs that must OCCUPY their panel, not merely fit inside it. Grows as each tab is converted;
  * the final step deletes the set so the rule is unconditional.
  */
-const FILLS = new Set(['hotkey', 'projects', 'providers', 'about', 'refining']);
+const FILLS = new Set(['hotkey', 'projects', 'providers', 'about', 'refining', 'appearance']);
 
 /**
  * The settings never scroll as a page. For every tab, at the minimum window, the default and a
