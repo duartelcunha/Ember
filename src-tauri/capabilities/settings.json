@@ -8,7 +8,7 @@
   "permissions": [
     "core:default",
     "core:window:allow-minimize",
-    "core:window:allow-hide",
+    "core:window:allow-close",
     "core:window:allow-start-dragging",
     "autostart:default",
     "updater:default",

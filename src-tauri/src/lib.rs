@@ -36,6 +36,7 @@ use tauri::window::Color;
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
 /// Medidas do overlay (faisca, pilula, padding, tamanho da janela) vivem em
 /// `ember_core::overlay_geom::DEFAULT_LAYOUT`, com os testes de geometria ao lado delas. Estao
@@ -43,6 +44,64 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 /// `width`/`height` da janela "overlay" (tauri.conf.json). Muda uma, muda a outra, senao a
 /// orbita descentra-se do ponteiro.
 use ember_core::overlay_geom as geom;
+use ember_core::window_geom;
+
+/// Size and position only. The settings window is never maximised or fullscreen, and saving
+/// `VISIBLE` would make a window that was hidden at quit come back hidden after a restart.
+fn window_state_flags() -> StateFlags {
+    StateFlags::SIZE | StateFlags::POSITION
+}
+
+/// Whether the window-state file already has an entry for the settings window. Read once per
+/// open; the file is a few hundred bytes.
+fn has_saved_settings_state(app: &AppHandle) -> bool {
+    let Ok(dir) = app.path().app_config_dir() else {
+        return false;
+    };
+    let Ok(raw) = std::fs::read(dir.join(app.filename())) else {
+        return false;
+    };
+    serde_json::from_slice::<serde_json::Value>(&raw)
+        .ok()
+        .map(|v| v.get("settings").is_some())
+        .unwrap_or(false)
+}
+
+/// The plugin restores the saved geometry when the window is created. Centre only when there
+/// is nothing saved (first launch) or the saved spot is unreachable today (monitor unplugged,
+/// DPI changed): with no native title bar and no maximise button, an off-screen window cannot
+/// be dragged back. When the spot is fine but the saved size no longer fits the monitor, the
+/// window is shrunk in place instead of being moved.
+fn needs_centering(app: &AppHandle, w: &WebviewWindow) -> bool {
+    if !has_saved_settings_state(app) {
+        return true;
+    }
+    let (Ok(pos), Ok(size)) = (w.outer_position(), w.outer_size()) else {
+        return true;
+    };
+    let win = geom::Rect::new(pos.x, pos.y, size.width as i32, size.height as i32);
+    let areas: Vec<geom::Rect> = monitors_of(w).into_iter().map(|m| m.work).collect();
+    let scale = w.scale_factor().unwrap_or(1.0);
+    // The strip is 36 logical px (TitleBar h-9); 160 logical px is enough width to grab.
+    let strip = (36.0 * scale).round() as i32;
+    let min_w = (160.0 * scale).round() as i32;
+    match window_geom::strip_area(win, &areas, strip, min_w) {
+        None => {
+            log::info!("settings: saved position {win:?} is off every monitor, centring");
+            true
+        }
+        Some(area) => {
+            let margin = (12.0 * scale).round() as i32;
+            if let Some((cw, ch)) = window_geom::shrink_to_fit(win, area, margin) {
+                log::info!("settings: saved size {}x{} exceeds the work area, shrinking to {cw}x{ch}", win.w, win.h);
+                if let Err(e) = w.set_size(tauri::PhysicalSize::new(cw as u32, ch as u32)) {
+                    log::warn!("settings: shrink failed: {e}");
+                }
+            }
+            false
+        }
+    }
+}
 
 /// Um monitor como o SO o descreve: retangulo completo (para saber onde o cursor esta), area
 /// util (para clampar sem meter a pilula por baixo da barra de tarefas) e a ESCALA DELE.
@@ -116,6 +175,12 @@ pub(crate) fn get_or_create_window(app: &AppHandle, label: &str) -> Option<Webvi
         w.on_window_event(move |event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
+                // The window-state plugin only writes its file on process exit, and a tray app
+                // can run for weeks. A crash or a forced shutdown in between would lose the
+                // geometry the user just chose, so every hide saves it.
+                if let Err(e) = win.app_handle().save_window_state(window_state_flags()) {
+                    log::warn!("settings: window state not saved: {e}");
+                }
                 let _ = win.hide();
             }
         });
@@ -217,8 +282,10 @@ pub(crate) fn show_settings(app: &AppHandle) {
         // These three calls used to have their errors dropped with `let _ =`. A failing `show()`
         // gave exactly what we saw while debugging this: no window, no clue, nothing in the log.
         // You do not discard what you need to read when things go wrong.
-        if let Err(e) = w.center() {
-            log::warn!("settings: center failed: {e}");
+        if needs_centering(app, &w) {
+            if let Err(e) = w.center() {
+                log::warn!("settings: center failed: {e}");
+            }
         }
         if let Err(e) = w.show() {
             log::error!("settings: show failed: {e}");
@@ -568,6 +635,14 @@ pub fn run() {
             MacosLauncher::LaunchAgent,
             None,
         ))
+        // Remembers where the user left the settings window. Floating surfaces are placed by
+        // floating.rs every frame; a restored position there would be last week's cursor.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(window_state_flags())
+                .with_denylist(&["overlay", "picker", "splash", "startup_anim", "quit_anim"])
+                .build(),
+        )
         .manage(state::AppState::new())
         .invoke_handler(tauri::generate_handler![
             commands::get_settings,
