@@ -107,6 +107,64 @@ export async function appearanceRegressions(page, origin, capture) {
   await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
 }
 
+/**
+ * Each tab shows the thing it claims to show, and the data it already had. These are content
+ * assertions, not layout ones: they fail if a refactor quietly drops the comparison back to a
+ * dropdown, hides the shortcut descriptions, stops reading ProviderHealth, or puts the
+ * diagnostics report back behind a button.
+ */
+export async function tabContentRegressions(page, origin) {
+  await page.setViewport({ width: 1000, height: 640, deviceScaleFactor: 1 });
+  await page.goto(`${origin}/__ember-test/settings`);
+  await page.waitForSelector('[role=tab]');
+  const open = async (index, ready) => {
+    const trigger = (await page.$$('[role=tab]'))[index];
+    await trigger.click();
+    await page.waitForSelector(ready);
+  };
+
+  // Providers: the try order, fed by the health fields the tab used to discard.
+  await open(0, '[data-try-order]');
+  const strip = await page.$eval('[data-try-order]', e => e.textContent);
+  assert.match(strip, /Gemini/, `the strip should name the primary first: ${strip}`);
+  assert.match(strip, /No pre-validated fallback/, `the strip should carry the health verdict: ${strip}`);
+
+  // Refining: three radios, all three outputs on screen, arrows move the selection.
+  await open(1, 'input[name="refine-mode"]');
+  assert.equal(await page.$$eval('input[name="refine-mode"]', e => e.length), 3);
+  const outputs = await page.$$eval('.mode-example', e => e.map(x => x.textContent).join(' | '));
+  for (const expected of ['Set up a meeting', 'Schedule a meeting', 'scheduling assistant']) {
+    assert.ok(outputs.includes(expected), `every mode's example should be on screen: ${outputs}`);
+  }
+  await page.evaluate(() => window.__settingsFixture.modes.length = 0);
+  await page.focus('input[name="refine-mode"]:checked');
+  await page.keyboard.press('ArrowRight');
+  await page.waitForFunction(() => window.__settingsFixture.modes.length >= 1);
+  const [on, off] = await page.evaluate(() => {
+    const labels = [...document.querySelectorAll('.mode-option')];
+    const picked = labels.find(l => l.querySelector('input').checked);
+    return [getComputedStyle(picked).borderTopColor, getComputedStyle(labels.find(l => l !== picked)).borderTopColor];
+  });
+  assert.notEqual(on, off, 'the chosen mode needs a visible difference, not only a checked input');
+
+  // Shortcut: all four in one list, each saying what it does.
+  await open(2, '[aria-label="Global shortcut shortcut"]');
+  assert.equal(await page.$$eval('[aria-label$=" shortcut"]', e => e.length), 4);
+  assert.ok(await page.evaluate(() =>
+    document.querySelector('[data-tab-body]').innerText.includes('Fixes spelling and wording')));
+
+  // About: the report is on screen, read-only, with Copy beside it.
+  await open(6, '[aria-label="Diagnostics report"]');
+  const report = await page.$eval('[aria-label="Diagnostics report"]', e => ({
+    tag: e.tagName, pane: e.hasAttribute('data-scroll-pane'), text: e.textContent, editable: e.isContentEditable,
+  }));
+  assert.equal(report.tag, 'PRE');
+  assert.ok(report.pane, 'the report must be a scroll pane or it overflows a short window');
+  assert.ok(!report.editable);
+  assert.ok(report.text.includes('Ember 1.1.0-test'), report.text.slice(0, 60));
+  assert.ok(await page.$$eval('button', b => b.some(x => x.textContent.trim() === 'Copy')));
+}
+
 const TAB_LABELS = { providers: 'Providers', refining: 'Refining', hotkey: 'Shortcut', projects: 'Projects', profile: 'Profile', appearance: 'Appearance', about: 'About' };
 export const LAYOUT_SIZES = [[720, 520], [720, 856], [1000, 640], [1400, 900]];
 

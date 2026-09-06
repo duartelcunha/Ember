@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { withBrowser } from "./browser-harness.mjs";
 import { projectRegressions } from "./projects-components.mjs";
-import { appearanceRegressions, settingsLayoutRegressions, settingsRegressions } from "./settings-components.mjs";
+import { appearanceRegressions, settingsLayoutRegressions, settingsRegressions, tabContentRegressions } from "./settings-components.mjs";
 
 // Every settings surface: the profile editor, the context line, the projects tab and the full
 // settings shell. Browser evidence only, like the overlay test.
@@ -110,6 +110,7 @@ test("settings surfaces fit the window and keep their behaviour", (t) => withBro
     });
     await t.test("project distillation and colour responses preserve the current draft", () => projectRegressions(page, `${origin}`, capture));
     await t.test("settings preserve busy labels, contrast and keyboard navigation in both themes", () => settingsRegressions(page, `${origin}`, capture));
+    await t.test("each tab shows the data it already had", () => tabContentRegressions(page, `${origin}`));
     await t.test("the overlay preview keeps its own palette and its orb is visible", () => appearanceRegressions(page, `${origin}`, capture));
     await t.test("every tab fits the window at three sizes in both themes", () => settingsLayoutRegressions(page, `${origin}`, capture));
 }));
