@@ -137,11 +137,28 @@
 }
 
 /* Solid floating cards keep contrast independent of the application underneath. */
+/* Floating surface over someone else's app. Depth comes from the layered pop shadow the
+   settings already use (offset + soft blur), not from a flat 6px smudge: the surface has to
+   separate from arbitrary content underneath, light or dark. The 1px inset highlight is what
+   reads as material instead of a painted rectangle. Opaque on purpose: backdrop-filter over a
+   transparent window re-samples every frame the content moves. */
 .ember-bubble {
-  background: #1a1511;
+  background: var(--color-surface-1);
   border: 1px solid var(--border-default);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.24);
+  box-shadow: var(--shadow-pop), inset 0 1px 0 rgba(255, 246, 235, 0.06);
   color: var(--color-fg);
+}
+
+/* One chip spec for every cursor-side message (result pill, keyboard confirmation, project
+   and retry labels). They used to differ by a pixel or two of padding, radius and type size,
+   which read as three components instead of one voice. 8px radius matches the morph's final
+   `round 8px`, so the surface does not change shape as it finishes growing. */
+.ember-chip {
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 16px;
+  min-height: 28px;
 }
 :root[data-theme="cream"] .ember-bubble { background: #f7f2e9; }
 
@@ -195,9 +212,14 @@
 @media (prefers-reduced-motion: reduce) { .ember-spinner * { animation: none !important; } }
 
 
-/* Confirmation is a keyboard hint, not a document viewer. */
-.ember-confirmation { width: max-content; max-width: calc(100vw - 16px); min-height: 26px; padding: 5px 8px; border-radius: 8px; font-size: 11px; line-height: 14px; }
+/* Confirmation is a keyboard hint, not a document viewer. Metrics come from .ember-chip. */
+.ember-confirmation { width: max-content; max-width: calc(100vw - 16px); }
 .ember-confirmation > span { display: inline; }
+.ember-confirmation kbd {
+  font: inherit;
+  font-weight: 500;
+  color: var(--color-ember-glow);
+}
 
 /* Shared keyboard affordances apply to native details and smaller secondary actions. */
 button:focus-visible, summary:focus-visible, a:focus-visible { outline: 2px solid var(--border-accent); outline-offset: 3px; }

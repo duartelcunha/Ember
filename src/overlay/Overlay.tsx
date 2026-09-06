@@ -95,8 +95,8 @@ export function Overlay() {
         </div>
         <div ref={labels} className="ember-floating fixed left-0 top-0 w-max max-w-[min(280px,calc(100vw-16px))]" aria-hidden>
           {s.phase === "refining" && <div className="flex flex-col items-start gap-1">
-            {s.project && <span className="ember-bubble max-w-full rounded-lg px-2 py-1 text-xs font-medium truncate">{s.project}</span>}
-            {s.message && <span className="ember-bubble max-w-full rounded-lg px-2 py-1 text-xs line-clamp-2">{s.message}</span>}
+            {s.project && <span className="ember-bubble ember-chip max-w-full font-medium truncate">{s.project}</span>}
+            {s.message && <span className="ember-bubble ember-chip max-w-full line-clamp-2">{s.message}</span>}
           </div>}
         </div>
       </MotionConfig>
