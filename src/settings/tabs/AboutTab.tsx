@@ -79,15 +79,6 @@ function DiagnosticsSection({
 
   const openLogDir = () => ipc.revealLogDir().catch(() => toast.error("Couldn't open the log folder."));
 
-  const copyDiagnostics = async () => {
-    try {
-      await navigator.clipboard.writeText(await ipc.getDiagnostics());
-      toast.success("Diagnostics copied.");
-    } catch {
-      toast.error("Couldn't copy diagnostics.");
-    }
-  };
-
   return (
     <Section
       title="Diagnostics"
@@ -190,10 +181,62 @@ function DiagnosticsSection({
         <Button variant="ghost" size="sm" onClick={openLogDir}>
           Open log folder
         </Button>
-        <Button variant="ghost" size="sm" onClick={copyDiagnostics}>
-          Copy diagnostics
-        </Button>
       </div>
+    </Section>
+  );
+}
+
+/**
+ * The report Ember would attach to a bug report, on screen.
+ *
+ * `get_diagnostics` has always existed and its output only ever went to the clipboard, so the
+ * one thing you could not do was read it before pasting it somewhere public. Showing it is both
+ * the honest version and the one that uses the height this tab had spare. Safe to render: the
+ * Rust side prints `key_state`, which is only set, missing or unreadable, never key material.
+ * Radix unmounts inactive tab panels, so nothing is read until the tab is opened.
+ */
+function DiagnosticsReport() {
+  const [report, setReport] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let live = true;
+    ipc
+      .getDiagnostics()
+      .then((text) => { if (live) setReport(text); })
+      .catch(() => { if (live) setReport(null); })
+      .finally(() => { if (live) setLoading(false); });
+    return () => { live = false; };
+  }, []);
+
+  const copy = async () => {
+    if (!report) return;
+    try {
+      await navigator.clipboard.writeText(report);
+      toast.success("Diagnostics copied.");
+    } catch {
+      toast.error("Couldn't copy diagnostics.");
+    }
+  };
+
+  return (
+    <Section
+      title="Diagnostics report"
+      elastic
+      hint="What Ember would attach to a bug report. Nothing here leaves your machine."
+      action={
+        <Button variant="ghost" size="sm" onClick={copy} disabled={!report}>
+          Copy
+        </Button>
+      }
+    >
+      <pre
+        data-scroll-pane=""
+        tabIndex={0}
+        aria-label="Diagnostics report"
+        className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words rounded-md border border-[color:var(--border-subtle)] bg-surface-2 p-3 font-mono text-[11px] leading-relaxed text-fg-muted"
+      >
+        {report ?? (loading ? "Reading…" : "Diagnostics are unavailable right now.")}
+      </pre>
     </Section>
   );
 }
@@ -223,10 +266,11 @@ export function AboutTab({ s }: { s: EmberSettings }) {
           Source on GitHub
         </button>
       </Section>
+      <DiagnosticsSection debugMode={s.debugMode} savePrompts={s.savePrompts} keepResults={s.keepResults} />
       </div>
 
-      <div data-settings-col="" className="settings-col">
-      <DiagnosticsSection debugMode={s.debugMode} savePrompts={s.savePrompts} keepResults={s.keepResults} />
+      <div data-settings-col="" className="settings-col settings-col-grow settings-col-wide">
+      <DiagnosticsReport />
       </div>
     </div>
   );

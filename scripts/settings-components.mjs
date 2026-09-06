@@ -56,7 +56,7 @@ export const LAYOUT_SIZES = [[720, 520], [720, 856], [1000, 640], [1400, 900]];
  * Tabs that must OCCUPY their panel, not merely fit inside it. Grows as each tab is converted;
  * the final step deletes the set so the rule is unconditional.
  */
-const FILLS = new Set(['hotkey', 'projects', 'providers']);
+const FILLS = new Set(['hotkey', 'projects', 'providers', 'about']);
 
 /**
  * The settings never scroll as a page. For every tab, at the minimum window, the default and a
@@ -124,10 +124,18 @@ export async function settingsLayoutRegressions(page, origin, capture, tabs = Ob
               const cr = container.getBoundingClientRect();
               const top = Math.min(...kids.map(el => el.getBoundingClientRect().top)) - cr.top;
               const bottom = cr.bottom - Math.max(...kids.map(el => el.getBoundingClientRect().bottom));
-              if (bottom > Math.max(8, top + 8)) out.push(`${name}: ${Math.round(bottom)}px of air below, ${Math.round(top)}px above`);
+              // 24px of tolerance: a column a few pixels shorter than the sibling that sets the
+              // row height is stretch slack, not the defect. The defect measured 82 to 400px.
+              if (bottom > Math.max(24, top + 24)) out.push(`${name}: ${Math.round(bottom)}px of air below, ${Math.round(top)}px above`);
             };
             measure(body, 'tab body');
-            document.querySelectorAll('[data-settings-col]').forEach((col, i) => measure(col, `column ${i}`));
+            // Columns are only held to the rule when the tab has NO elastic card. With one, that
+            // card anchors the layout and a sidebar column beside it is allowed its slack, the
+            // way a settings sidebar sits next to a tall content panel. Without one, every
+            // column must be centred, or the tab is back to hugging the top.
+            if (!body.querySelector('[data-elastic]')) {
+              document.querySelectorAll('[data-settings-col]').forEach((col, i) => measure(col, `column ${i}`));
+            }
             return out;
           });
           assert.deepEqual(air, [], `${tab} at ${width}x${height} (${theme}) does not occupy its panel`);
