@@ -1,6 +1,21 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+
+const hexToRgb = (hex) => {
+  const [r, g, b] = hex.replace("#", "").match(/../g).map((part) => parseInt(part, 16));
+  return `rgb(${r}, ${g}, ${b})`;
+};
+import { readFile } from "node:fs/promises";
+import ts from "typescript";
 import { withBrowser } from "./browser-harness.mjs";
+
+// The anchor numbers below are derived from the source constants, never pinned. Three separate
+// design decisions moved them (the gap, centre anchoring, the shared chip spec) and each one
+// left this suite red about arithmetic instead of about behaviour.
+const geometrySource = await readFile(new URL("../src/components/floatingGeometry.ts", import.meta.url), "utf8");
+const { CURSOR_GAP, ORB_INK } = await import(`data:text/javascript;base64,${Buffer.from(
+  ts.transpileModule(geometrySource, { compilerOptions: { module: ts.ModuleKind.ESNext } }).outputText,
+).toString("base64")}`);
 
 // Overlay, picker and splash. The settings surfaces have their own test file so that a
 // regression here does not hide theirs.
@@ -17,7 +32,7 @@ test("UI components preserve geometry and asynchronous ownership", (t) => withBr
     await send("ember://state", { sequence: 100, runId: 4, phase: "hint", message: "A long status message that must wrap and remain readable. ".repeat(8) });
     await page.waitForFunction(() => document.querySelector('.ember-floating')?.textContent.includes('A long status'));
     await presented();
-    const bounds = async () => page.$eval('.ember-floating', e => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, width: innerWidth, height: innerHeight }; });
+    const bounds = async () => page.$eval('.ember-floating', e => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, centre: (r.top + r.bottom) / 2, width: innerWidth, height: innerHeight }; });
     let rect = await bounds();
     assert.ok(rect.x >= 0 && rect.y >= 0 && rect.right <= rect.width + 1 && rect.bottom <= rect.height + 1, JSON.stringify(rect));
     await page.setViewport({ width: 320, height: 540, deviceScaleFactor: 2 });
@@ -47,9 +62,14 @@ test("UI components preserve geometry and asynchronous ownership", (t) => withBr
     });
     rect = await bounds();
     assert.ok(rect.right <= rect.width + 1 && rect.bottom <= rect.height + 1, JSON.stringify(rect));
-    const confirmation = await page.$eval('.ember-confirmation', e => ({ height: e.getBoundingClientRect().height, background: getComputedStyle(e).backgroundColor, text: e.textContent }));
-    assert.equal(confirmation.height, 26);
-    assert.equal(confirmation.background, 'rgb(26, 21, 17)');
+    const confirmation = await page.$eval('.ember-confirmation', e => ({ height: e.getBoundingClientRect().height, background: getComputedStyle(e).backgroundColor, text: e.textContent, token: getComputedStyle(document.documentElement).getPropertyValue('--color-surface-1').trim() }));
+    // 30 is the chip spec resolved: 16px line-height plus 6px padding top and bottom is the
+    // 28px min-height, and `.ember-bubble` adds a 1px border on each side. It is pinned exactly
+    // so the confirmation cannot quietly grow into a document viewer again.
+    assert.equal(confirmation.height, 30);
+    // The surface reads from the token rather than a literal, so this compares the two instead
+    // of pinning a hex that moves whenever the palette does.
+    assert.equal(confirmation.background, hexToRgb(confirmation.token));
     assert.equal(confirmation.text, 'Enter apply · Esc cancel');
     await capture("confirmation");
     await t.test('whole-field confirmation exposes scope without document content', async () => {
@@ -57,7 +77,8 @@ test("UI components preserve geometry and asynchronous ownership", (t) => withBr
       await send('ember://state', { sequence: 103, runId: 4, phase: 'preview', confirmationScope: 'field', preview: { original: ['PRIVATE ORIGINAL'], result: ['PRIVATE RESULT'], page: 0 } });
       await presented();
       const compact = await page.$eval('.ember-confirmation', e => ({ width: e.getBoundingClientRect().width, height: e.getBoundingClientRect().height, text: e.textContent }));
-      assert.ok(compact.width <= 154 && compact.height <= 40, JSON.stringify(compact));
+      // Two lines of the shared chip spec: 16px line-height twice, 12px padding, 2px border.
+      assert.ok(compact.width <= 154 && compact.height <= 48, JSON.stringify(compact));
       assert.equal(compact.text, 'Whole field · Enter apply · Esc cancel');
       assert.equal(await page.evaluate(() => document.body.textContent.includes('PRIVATE')), false);
     });
@@ -67,7 +88,11 @@ test("UI components preserve geometry and asynchronous ownership", (t) => withBr
     await page.waitForSelector('.ember-orb-row svg');
     await presented();
     const ink = await page.$eval('.ember-orb-row svg', e => { const r = e.getBoundingClientRect(); return { x: r.x + 22, y: r.y + 2 }; });
-    assert.equal(ink.x, 318); assert.equal(ink.y, 180);
+    assert.equal(ink.x, 300 + CURSOR_GAP.x);
+    // Rounded because the controller snaps the cursor-facing edge to a whole device pixel:
+    // centring a 15px ring lands on a half pixel, and a half-lit row of pixel art is exactly
+    // what that snap exists to prevent.
+    assert.equal(ink.y, Math.round(180 + CURSOR_GAP.y - ORB_INK.height / 2));
     await send('ember://overlay-at', { sequence: 1001, generation: 3, ready: false, scale: 2, width: 800, height: 600, x: 300, y: 180, originX: 0, originY: 0 });
     await presented();
     assert.equal(await page.$eval('.ember-floating', e => getComputedStyle(e).visibility), 'hidden');
@@ -84,21 +109,25 @@ test("UI components preserve geometry and asynchronous ownership", (t) => withBr
         await send('ember://state', { sequence: sequence++, runId: 5, phase: 'preview', confirmationScope: 'selection' });
         await presented();
         let card = await bounds();
-        near(card.x, 318); near(card.y, 180);
+        near(card.x, 300 + CURSOR_GAP.x);
+        // The surface is anchored by its centre, so this holds whatever its height turns out
+        // to be. Pinning the top edge only worked while every surface was one line tall.
+        near(card.centre, 180 + CURSOR_GAP.y);
         await send('ember://overlay-at', { sequence: 2000 + sequence, generation: sequence, ready: true, scale, width: 800 * scale, height: 600 * scale, x: -1000 + 710 * scale, y: -500 + 180 * scale, originX: -1000, originY: -500 });
         await presented();
         card = await bounds();
-        near(card.right, 692);
+        near(card.right, 710 - CURSOR_GAP.x);
         // This is the state emitted after native Enter acceptance and application.
         // The browser test does not replace qualification of the native input hook.
         await send('ember://state', { sequence: sequence++, runId: 5, phase: 'success', message: 'Sent' });
         await presented();
         card = await bounds();
-        near(card.right, 692); near(card.y, 180);
+        near(card.right, 710 - CURSOR_GAP.x); near(card.centre, 180 + CURSOR_GAP.y);
         await send('ember://state', { sequence: sequence++, runId: 5, phase: 'refining' });
         await presented();
         const ring = await page.$eval('.ember-orb-row svg', e => { const r = e.getBoundingClientRect(); return { right: r.x + 37, y: r.y + 2 }; });
-        near(ring.right, 692); near(ring.y, 180);
+        near(ring.right, 710 - CURSOR_GAP.x);
+        near(ring.y, 180 + CURSOR_GAP.y - ORB_INK.height / 2);
       }
     });
     await t.test('signature motion and surface morph preserve the anchor without retaining the orb', async () => {
