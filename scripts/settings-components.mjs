@@ -56,7 +56,7 @@ export const LAYOUT_SIZES = [[720, 520], [720, 856], [1000, 640], [1400, 900]];
  * Tabs that must OCCUPY their panel, not merely fit inside it. Grows as each tab is converted;
  * the final step deletes the set so the rule is unconditional.
  */
-const FILLS = new Set(['hotkey']);
+const FILLS = new Set(['hotkey', 'projects']);
 
 /**
  * The settings never scroll as a page. For every tab, at the minimum window, the default and a

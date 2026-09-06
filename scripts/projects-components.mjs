@@ -17,9 +17,23 @@ export async function projectRegressions(page, origin, capture = async () => {})
       if (!card || card.disabled) throw new Error('Editor unavailable');
       card.click();
     }, id);
+    // The editor pane is created on select, so wait for the section itself before anything
+    // measures geometry: the grid goes from one column to two as it appears.
+    await page.waitForSelector('[aria-label="Project editor"]');
     await page.waitForSelector(`#name-${id}`);
   };
+
+  // No editor pane exists until a project is selected, and the list spans the whole tab.
+  assert.equal(await page.$('[aria-label="Project editor"]'), null);
+  const short = await page.evaluate(() => {
+    const list = document.querySelector('[aria-label="Projects"]').getBoundingClientRect();
+    const body = document.querySelector('[data-tab-body]').getBoundingClientRect();
+    return Math.round(body.width - list.width);
+  });
+  assert.ok(short <= 1, `the list should span the tab, short by ${short}px`);
+
   await edit('a');
+  assert.ok(await page.$('[aria-label="Project editor"]'));
   await page.click('button[aria-label="Manage automatic context"]');
   await page.waitForFunction(() => document.querySelector('[role=dialog]')?.innerText.includes('AGENTS.md'));
   assert.equal(await page.evaluate(() => document.body.innerText.includes('/fixture/Alpha/AGENTS.md')), false);
@@ -94,4 +108,6 @@ export async function projectRegressions(page, origin, capture = async () => {})
   assert.equal(saved.name, 'Alpha revised');
   assert.equal(saved.accentCustom, '#123456');
   assert.equal(saved.brief, 'Brief for Alpha');
+  // Closing removes the pane rather than hiding it, so the list goes back to the full width.
+  await page.waitForFunction(() => !document.querySelector('[aria-label="Project editor"]'));
 }

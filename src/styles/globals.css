@@ -309,6 +309,13 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--border-accent);
 .settings-fit { display: flex; flex-direction: column; justify-content: safe center; min-height: 0; }
 .settings-fit > .settings-two-col { align-items: start; }
 
+/* The four shortcut rows. Two-up when there is width for it, and also in short windows whatever
+   the width, because four stacked capture rows do not fit a 520px-tall panel. */
+.shortcut-rows { display: grid; grid-template-columns: repeat(var(--shortcut-cols, 1), minmax(0, 1fr));
+                 gap: var(--row-gap, 1rem) 1rem; }
+@container settings (min-width: 48rem) { .settings-density { --shortcut-cols: 2; } }
+@container settings (max-height: 560px) { .settings-density { --shortcut-cols: 2; } }
+
 /* Provider cards fold into a summary row only when there is neither the width for two columns
    nor the height for two stacked cards. Elsewhere both stay expanded. */
 .provider-summary { display: none; }

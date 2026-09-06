@@ -872,7 +872,15 @@ export function ProjectsTab({
     <div data-tab-body="" className="flex min-h-0 flex-1 flex-col gap-[var(--card-gap,1rem)]">
       <ContextInspector />
       {error && <Feedback tone="error">{error}</Feedback>}
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-[var(--card-gap,1rem)] @3xl/settings:grid-cols-[minmax(240px,2fr)_3fr]">
+      {/* No editor pane exists until a project is selected: an empty container waiting for
+          content is the thing this layout work is removing. The list spans the tab until then,
+          and the grid splits only when there is something to split for. */}
+      <div
+        className={cn(
+          "grid min-h-0 flex-1 gap-[var(--card-gap,1rem)]",
+          editing ? "grid-cols-1 @3xl/settings:grid-cols-[minmax(240px,2fr)_3fr]" : "grid-cols-1",
+        )}
+      >
         <section
           aria-label="Projects"
           className={cn(
@@ -981,16 +989,15 @@ export function ProjectsTab({
           </ul>
         </section>
 
-        <section
-          aria-label="Project editor"
-          className={cn(
-            "flex min-h-0 flex-col overflow-hidden rounded-lg border bg-surface-1",
-            isNew ? "border-[color:var(--border-accent)]" : "border-[color:var(--border-subtle)]",
-            !editing && "hidden @3xl/settings:flex",
-          )}
-        >
-          {editing ? (
-            // Switching projects crossfades the editor; opacity only, so nothing else moves.
+        {editing && (
+          <section
+            aria-label="Project editor"
+            className={cn(
+              "flex min-h-0 flex-col overflow-hidden rounded-lg border bg-surface-1",
+              isNew ? "border-[color:var(--border-accent)]" : "border-[color:var(--border-subtle)]",
+            )}
+          >
+            {/* Switching projects crossfades the editor; opacity only, so nothing else moves. */}
             <motion.div
               key={openId}
               className="flex min-h-0 flex-1 flex-col"
@@ -1020,12 +1027,8 @@ export function ProjectsTab({
                 distilling={distilling}
               />
             </motion.div>
-          ) : (
-            <div className="flex flex-1 items-center justify-center p-6 text-center text-xs text-fg-muted">
-              Select a project to edit it, or add one.
-            </div>
-          )}
-        </section>
+          </section>
+        )}
       </div>
     </div>
   );
