@@ -111,12 +111,6 @@ const TAB_LABELS = { providers: 'Providers', refining: 'Refining', hotkey: 'Shor
 export const LAYOUT_SIZES = [[720, 520], [720, 856], [1000, 640], [1400, 900]];
 
 /**
- * Tabs that must OCCUPY their panel, not merely fit inside it. Grows as each tab is converted;
- * the final step deletes the set so the rule is unconditional.
- */
-const FILLS = new Set(['hotkey', 'projects', 'providers', 'about', 'refining', 'appearance']);
-
-/**
  * The settings never scroll as a page. For every tab, at the minimum window, the default and a
  * large one, in both themes: the document and `main` do not scroll, no native <details> is
  * left, the size container has a height, and every element of the tab body lies inside `main`
@@ -169,7 +163,7 @@ export async function settingsLayoutRegressions(page, origin, capture, tabs = Ob
           return issues;
         });
         assert.deepEqual(issues, [], `${tab} at ${width}x${height} (${theme})`);
-        if (FILLS.has(tab)) {
+        {
           const air = await page.evaluate(() => {
             const out = [];
             const body = document.querySelector('[data-tab-body]');
