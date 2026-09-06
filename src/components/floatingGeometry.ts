@@ -1,10 +1,20 @@
 export interface CursorPosition { sequence?: number; generation?: number; ready?: boolean; scale?: number; width?: number; height?: number; x: number; y: number; originX: number; originY: number }
 export interface Viewport { width: number; height: number; scale: number }
 // Anchor the visible ring beside the standard arrow's right diagonal. This is a
-// logical offset from the hotspot, not SVG-box padding. 14 keeps ~5px of air at
-// the arrow's widest point (x=12 at y=12): close enough to read as attached to
-// the pointer, which 18 did not. Custom pointer artwork can differ.
-export const CURSOR_GAP = { x: 14, y: 0 };
+// logical offset from the hotspot, not SVG-box padding.
+//
+// The ring is a diamond, so its lower-left edge already runs at the arrow's own
+// ~45 degrees: the two are parallel by construction and the gap between them is
+// constant. What was wrong was the size of that gap. At 14 the measured
+// clearance was 3.3px at every point along the edge, and the heat glow (a soft
+// circle centred on the ring) washed across the arrow itself, so the pair read
+// as one smudge rather than a mark set beside the pointer. 19 puts it at 6.8px,
+// which is air you can see without the ring drifting away from the cursor.
+//
+// The same offset anchors the result surface, because the morph grows it from
+// the ring's own 15px corner: a different gap there would make the surface jump
+// at the instant it takes over. Custom pointer artwork can differ.
+export const CURSOR_GAP = { x: 19, y: 0 };
 type PlacementOptions = { gap?: { x: number; y: number }; preserveSide?: boolean };
 
 /** Convert physical cursor coordinates once, then place measured logical content. */

@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 import { Spinner } from "./spinner";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 rounded-sm text-sm font-medium transition-[color,background-color,border-color,transform] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--border-accent)] active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50 disabled:active:scale-100",
+  "relative inline-flex items-center justify-center gap-2 rounded-sm text-sm font-medium transition-[color,background-color,border-color,transform] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--border-accent)] active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50 disabled:active:scale-100",
   {
     variants: {
       variant: {
@@ -33,7 +33,15 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     const Comp = asChild ? Slot : "button";
     return (
       <Comp ref={ref} type={asChild ? undefined : "button"} className={cn(buttonVariants({ variant, size }), loading && "disabled:opacity-100", className)} disabled={disabled || loading} aria-busy={loading || undefined} {...props}>
-        {loading === undefined || asChild ? children : <><span className="inline-flex w-4 shrink-0 justify-center" aria-hidden>{loading && <Spinner size={14} />}</span>{children}</>}
+        {loading === undefined || asChild ? children : <>
+          {/* The label stays in flow and keeps its own width, so the button never resizes when
+              the spinner appears. `opacity-0` rather than `invisible`: a hidden label is dropped
+              from the accessibility tree, and a busy button with no accessible name is worse
+              than a briefly invisible one. The previous fix reserved a 16px slot beside the
+              label instead, which held the width but pushed every idle label off centre. */}
+          <span className={loading ? "opacity-0" : undefined}>{children}</span>
+          {loading && <span className="absolute inset-0 grid place-items-center" aria-hidden><Spinner size={14} /></span>}
+        </>}
       </Comp>
     );
   },
