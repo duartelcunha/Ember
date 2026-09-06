@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 
 export async function projectRegressions(page, origin, capture = async () => {}) {
-  await page.setViewport({ width: 900, height: 900, deviceScaleFactor: 1 });
+  await page.setViewport({ width: 1000, height: 640, deviceScaleFactor: 1 });
   await page.goto(`${origin}/__ember-test/projects`);
   await page.waitForSelector('button[aria-label="Edit"]');
   const click = async label => page.evaluate(label => {
@@ -20,13 +20,15 @@ export async function projectRegressions(page, origin, capture = async () => {})
     await page.waitForSelector(`#name-${id}`);
   };
   await edit('a');
-  await page.evaluate(() => Array.from(document.querySelectorAll('summary')).find(e => e.textContent === 'Automatic context').focus());
-  await page.keyboard.press('Enter');
-  await page.waitForFunction(() => document.body.innerText.includes('AGENTS.md'));
+  await page.click('button[aria-label="Manage automatic context"]');
+  await page.waitForFunction(() => document.querySelector('[role=dialog]')?.innerText.includes('AGENTS.md'));
   assert.equal(await page.evaluate(() => document.body.innerText.includes('/fixture/Alpha/AGENTS.md')), false);
-  await page.evaluate(() => Array.from(document.querySelectorAll('summary')).find(e => e.textContent === 'AGENTS.md').focus());
+  await page.evaluate(() => Array.from(document.querySelectorAll('[role=dialog] button')).find(e => e.textContent === 'AGENTS.md').focus());
   await page.keyboard.press('Enter');
   assert.equal(await page.evaluate(() => document.body.innerText.includes('/fixture/Alpha/AGENTS.md')), true);
+  await capture('dialog-project-context');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('[role=dialog]'));
   for (const theme of ['dark', 'cream']) {
     await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
     await capture(`projects-${theme}`);

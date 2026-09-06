@@ -67,6 +67,9 @@
   /* Sombra de popovers/dropdowns (dark): duas camadas, contacto curto + difusa, suave. */
   --shadow-pop: 0 2px 8px rgba(0, 0, 0, 0.22), 0 12px 28px rgba(0, 0, 0, 0.3);
 
+  /* Dialog scrim (dark): warm near-black, strong enough to park the tab behind it. */
+  --overlay-scrim: rgba(8, 6, 4, 0.55);
+
   /* Canvas nativo do WebView2, scrollbars e spinners a modo escuro (tema default). Sem isto, a
      janela settings (que NAO e transparent) mostrava o canvas BRANCO do SO por tras do body
      transparente: scrollbar clara e flash branco. O tema creme sobrepoe para `light`. */
@@ -116,6 +119,9 @@
      dura sobre o fundo claro. */
   --shadow-pop: 0 2px 8px rgba(80, 55, 30, 0.1), 0 12px 28px rgba(80, 55, 30, 0.14);
 
+  /* Dialog scrim on cream: the same brown as the text, translucent, never grey. */
+  --overlay-scrim: rgba(46, 37, 25, 0.35);
+
   /* Canvas nativo do WebView2 claro (casa com o backgroundColor pintado no Rust). */
   color-scheme: light;
 }
@@ -162,9 +168,9 @@
 }
 :root[data-theme="cream"] .ember-bubble { background: #f7f2e9; }
 
-/* Scrollbar fina e escura, a condizer com o tema glassy (a janela de settings e a unica que
-   scrolla). WebView2 e Chromium, por isso os pseudo-elementos ::-webkit-scrollbar aplicam-se;
-   as janelas overlay/splash nao scrollam, logo isto so se ve nas settings. */
+/* Thin dark scrollbar to match the glassy theme. The settings window no longer scrolls as a
+   page; this styles the panes that do (editors, the project list, dialog bodies). WebView2 is
+   Chromium, so the ::-webkit-scrollbar pseudo-elements apply. */
 * {
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
@@ -221,12 +227,53 @@
   color: var(--color-ember-glow);
 }
 
-/* Shared keyboard affordances apply to native details and smaller secondary actions. */
-button:focus-visible, summary:focus-visible, a:focus-visible { outline: 2px solid var(--border-accent); outline-offset: 3px; }
-summary { cursor: pointer; border-radius: 4px; }
+/* Shared keyboard affordances for buttons and links (the settings have no native <details>). */
+button:focus-visible, a:focus-visible { outline: 2px solid var(--border-accent); outline-offset: 3px; }
 @media (prefers-reduced-motion: reduce) {
   button { transition: none !important; transform: none !important; }
   .animate-pulse { animation: none !important; }
 }
 
-@media (max-width: 860px) { [role="tab"] > svg { display: none; } }
+/* ----------------------------------------------------------------------------------
+   Settings layout. The viewport column is a size container named `settings`; the tabs pick
+   their column count from its width (Tailwind `@xl/settings:` variants) and their spacing from
+   its height (the variables below, read by the cards through `var(--card-pad, ...)`). Height
+   container queries have no Tailwind variant, hence the plain CSS. The variables live on the
+   container's CHILD because a container query never matches the container itself.
+---------------------------------------------------------------------------------- */
+.settings-viewport { container: settings / size; }
+.settings-density {
+  --card-pad: 1.25rem;
+  --card-gap: 1rem;
+  --row-gap: 1rem;
+  --hint: block;
+  --example: block;
+  --example-button: none;
+}
+@container settings (max-height: 560px) {
+  .settings-density {
+    --card-pad: 1rem;
+    --card-gap: 0.75rem;
+    --row-gap: 0.5rem;
+    --hint: none;
+    --example: none;
+    --example-button: block;
+  }
+}
+@container settings (max-width: 52rem) { [role="tab"] > svg { display: none; } }
+
+/* Dialogs and popovers enter with the shell's own ease, on opacity and the individual `scale`
+   property so the centring `translate` utilities keep their value. Compositor-only. */
+@keyframes ember-layer-in {
+  from { opacity: 0; scale: 0.985; }
+  to { opacity: 1; scale: 1; }
+}
+@keyframes ember-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.ember-dialog, .ember-popover { animation: ember-layer-in 180ms cubic-bezier(0.22, 1, 0.36, 1); }
+.ember-dialog-overlay { animation: ember-fade-in 180ms ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .ember-dialog, .ember-popover, .ember-dialog-overlay { animation: none; }
+}

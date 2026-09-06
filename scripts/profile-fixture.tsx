@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { DEFAULT_SETTINGS, type ProfileImport } from "../src/lib/ipc";
 import { ProfileEditor } from "../src/settings/ProfileEditor";
+import { SettingsViewport } from "../src/settings/SettingsViewport";
 import "../src/styles/globals.css";
 
 const migration = location.pathname.includes("migration");
@@ -31,6 +32,6 @@ mockIPC((command, args) => {
 });
 function Fixture() {
   const [settings, setSettings] = useState(stored);
-  return <ProfileEditor settings={settings} onSaved={setSettings} />;
+  return <main className="flex h-screen flex-col overflow-hidden bg-panel text-fg"><SettingsViewport><ProfileEditor settings={settings} onSaved={setSettings} /></SettingsViewport></main>;
 }
 createRoot(document.getElementById("root")!).render(<React.StrictMode><Fixture /></React.StrictMode>);

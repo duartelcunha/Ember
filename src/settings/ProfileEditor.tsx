@@ -5,8 +5,34 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Dialog,
+  DialogBody,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { ipc, type EmberSettings, type ProfileProvenance } from "@/lib/ipc";
 
+function Pane({ title, text }: { title: string; text: string }) {
+  return (
+    <div className="min-w-0">
+      <p className="text-xs font-medium text-fg">{title}</p>
+      <pre className="mt-1 whitespace-pre-wrap break-words rounded-md border border-[color:var(--border-subtle)] bg-surface-2 p-3 font-mono text-[11px] leading-relaxed text-fg-muted">{text}</pre>
+    </div>
+  );
+}
+
+/**
+ * The profile editor fills its tab: the textarea takes whatever height is left and is the only
+ * thing that scrolls. Everything optional (the archived profile, the review of an imported
+ * file, the provenance list) opens on top instead of pushing the editor down.
+ */
 export function ProfileEditor({ settings, onSaved }: { settings: EmberSettings; onSaved: (settings: EmberSettings) => void }) {
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState(settings.profileText);
@@ -15,6 +41,8 @@ export function ProfileEditor({ settings, onSaved }: { settings: EmberSettings; 
   const [importing, setImporting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveTarget, setSaveTarget] = useState<"save" | "reset" | null>(null);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [restoreOpen, setRestoreOpen] = useState(false);
   const epoch = useRef(0);
   const persisted = JSON.stringify([settings.profileText, settings.profileSources]);
   useEffect(() => {
@@ -66,37 +94,126 @@ export function ProfileEditor({ settings, onSaved }: { settings: EmberSettings; 
     } finally { setSaving(false); setSaveTarget(null); }
   }
 
-  return <section className="space-y-4" aria-labelledby="profile-heading">
-    <div><h2 id="profile-heading" className="text-sm font-semibold">Personalization profile</h2>
-      <p className="mt-1 text-sm text-fg-muted">Writing preferences and technical context for every refinement. Files are used only after you import, review and save a snapshot.</p></div>
-    {settings.legacyAutoProfileDisabled && <p role="status" className="text-sm text-fg-muted">Automatic agent-profile loading has been disabled. Import the files you want to use, or keep Ember's default profile.</p>}
-    <p className="text-xs text-fg-muted">Current source: {settings.profileSource === "default" ? "Ember default" : settings.profileSources.length ? "reviewed file import, with your edits" : "your saved preferences"}.</p>
-    {settings.profileReview != null && <details className="rounded-lg border border-[color:var(--border-subtle)] p-3 text-xs">
-      <summary className="cursor-pointer font-medium">Review imported instructions</summary>
-      <p className="mt-2 text-fg-muted">Operational instructions are excluded from requests. Your saved original is preserved.</p>
-      <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        <div><p className="font-medium">Saved original</p><pre className="max-h-48 overflow-auto whitespace-pre-wrap">{settings.profileText}</pre></div>
-        <div><p className="font-medium">Writing and technical context</p><pre className="max-h-48 overflow-auto whitespace-pre-wrap">{settings.profileReview || "No relevant preferences found."}</pre></div>
+  /** Puts text in the editor as a draft. Nothing is saved until "Save reviewed profile". */
+  function useAsDraft(next: string, warning: string) {
+    epoch.current++;
+    setText(next);
+    setWarnings([warning]);
+  }
+
+  const source = settings.profileSource === "default"
+    ? "Ember default"
+    : settings.profileSources.length ? "reviewed file import, with your edits" : "your saved preferences";
+  const excluded = settings.profileText.split("\n")
+    .filter(line => line.trim() && !settings.profileReview?.includes(line.trim())).join("\n");
+
+  return (
+    <section data-tab-body="" className="flex min-h-0 flex-1 flex-col gap-3" aria-labelledby="profile-heading">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 id="profile-heading" className="text-sm font-semibold">Personalization profile</h2>
+          <p className="mt-0.5 truncate text-xs text-fg-muted" title={`Writing preferences and technical context, included in every refinement. Files are used only after you import, review and save a snapshot. Current source: ${source}.`}>
+            Included in every refinement. Current source: {source}.
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+          {sources.length > 0 && (
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="ghost" size="sm">{sources.length} {sources.length === 1 ? "source" : "sources"}</Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-96">
+                <p>These fingerprints identify the imported snapshots. Changes to the files do not change the saved profile. Import again to review new content.</p>
+                <ul className="mt-2 flex flex-col gap-2">
+                  {sources.map(source => (
+                    <li key={source.path} className="flex flex-col gap-0.5 break-all">
+                      <SourcePath path={source.path} />
+                      <span className="font-mono text-[10px]">{source.fingerprint}</span>
+                    </li>
+                  ))}
+                </ul>
+              </PopoverContent>
+            </Popover>
+          )}
+          {settings.profileArchive && (
+            <Dialog open={restoreOpen} onOpenChange={setRestoreOpen}>
+              <DialogTrigger asChild>
+                <Button variant="ghost" size="sm">Restore previous…</Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Previous profile</DialogTitle>
+                  <DialogDescription>The profile that was in use before the last save. Restoring puts it in the editor as a draft; nothing changes until you save.</DialogDescription>
+                </DialogHeader>
+                <DialogBody>
+                  <pre className="whitespace-pre-wrap break-words rounded-md border border-[color:var(--border-subtle)] bg-surface-2 p-3 font-mono text-[11px] leading-relaxed text-fg-muted">{settings.profileArchive}</pre>
+                </DialogBody>
+                <DialogFooter>
+                  <DialogClose asChild>
+                    <Button variant="ghost">Cancel</Button>
+                  </DialogClose>
+                  <Button variant="primary" disabled={saving} onClick={() => {
+                    useAsDraft(settings.profileArchive ?? "", "Restored the previous profile as a draft. Save to keep it.");
+                    setRestoreOpen(false);
+                  }}>Restore as draft</Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          )}
+          {settings.profileReview != null && (
+            <Dialog open={reviewOpen} onOpenChange={setReviewOpen}>
+              <DialogTrigger asChild>
+                <Button variant="ghost" size="sm">Review imported instructions…</Button>
+              </DialogTrigger>
+              <DialogContent size="lg">
+                <DialogHeader>
+                  <DialogTitle>Review imported instructions</DialogTitle>
+                  <DialogDescription>Operational instructions are excluded from requests. Your saved original is preserved.</DialogDescription>
+                </DialogHeader>
+                <DialogBody className="flex flex-col gap-3">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Pane title="Saved original" text={settings.profileText} />
+                    <Pane title="Writing and technical context" text={settings.profileReview || "No relevant preferences found."} />
+                  </div>
+                  <Pane title="Excluded content" text={excluded || "Nothing was excluded."} />
+                </DialogBody>
+                <DialogFooter>
+                  <DialogClose asChild>
+                    <Button variant="ghost">Close</Button>
+                  </DialogClose>
+                  <Button variant="primary" disabled={saving} onClick={() => {
+                    useAsDraft(settings.profileReview ?? "", "Review this draft before saving. The previous profile will remain archived.");
+                    setReviewOpen(false);
+                  }}>Use as draft</Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          )}
+        </div>
       </div>
-      <details className="mt-3"><summary>Excluded content</summary><pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap">{settings.profileText.split("\n").filter(line => line.trim() && !settings.profileReview?.includes(line.trim())).join("\n")}</pre></details>
-      <Button className="mt-3" variant="ghost" disabled={saving} onClick={() => { epoch.current++; setText(settings.profileReview ?? ""); setWarnings(["Review this draft before saving. The previous profile will remain archived."]); }}>Use as draft</Button>
-    </details>}
-    {settings.profileArchive && <details className="text-xs text-fg-muted"><summary>Previous profile</summary><pre className="max-h-48 overflow-auto whitespace-pre-wrap">{settings.profileArchive}</pre></details>}
-    {error && <Feedback tone="error">{error}</Feedback>}
-    <Textarea aria-invalid={tooLong} aria-labelledby="profile-heading" className="h-[clamp(140px,38vh,420px)] min-h-0 resize-none overflow-y-auto"
-      value={text} disabled={saving} onChange={event => { epoch.current++; setText(event.target.value); }}
-      placeholder="Your writing preferences and technical facts." />
-    <p className="text-xs text-fg-muted">{profileBytes.toLocaleString()} / {settings.profileLimitBytes.toLocaleString()} bytes. This profile is included in every refinement.</p>
-    {tooLong && <p role="alert" className="text-sm text-error">This profile is too long. Shorten it before saving. The imported draft has not been truncated.</p>}
-    {warnings.length > 0 && <div role="status" className="space-y-2 text-xs text-fg-muted">{warnings.map((warning, index) => <p key={index}>{warning}</p>)}</div>}
-    {sources.length > 0 && <details className="text-xs text-fg-muted"><summary className="cursor-pointer">Import provenance ({sources.length} sources)</summary>
-      <p className="mt-2">These fingerprints identify the imported snapshots. Changes to the files do not change the saved profile. Import again to review new content.</p>
-      <ul className="mt-2 space-y-2">{sources.map(source => <li key={source.path} className="break-all"><SourcePath path={source.path} /><span className="font-mono">{source.fingerprint}</span></li>)}</ul>
-    </details>}
-    <div className="flex flex-wrap gap-2">
-      <Button variant="primary" loading={saveTarget === "save"} disabled={saving || importing || tooLong} onClick={() => void persist(false)}>Save reviewed profile</Button>
-      <Button variant="ghost" loading={importing} disabled={saving || importing} onClick={() => void importFiles()}>Import files...</Button>
-      <Button variant="ghost" loading={saveTarget === "reset"} disabled={saving} onClick={() => void persist(true)}>Use Ember default</Button>
-    </div>
-  </section>;
+      {settings.legacyAutoProfileDisabled && (
+        <p role="status" className="truncate text-xs text-fg-muted" title="Automatic agent-profile loading has been disabled. Import the files you want to use, or keep Ember's default profile.">
+          Automatic agent-profile loading has been disabled. Import the files you want to use, or keep Ember's default profile.
+        </p>
+      )}
+      {error && <Feedback tone="error">{error}</Feedback>}
+      <Textarea data-scroll-pane="" aria-invalid={tooLong} aria-labelledby="profile-heading" className="min-h-[120px] flex-1"
+        value={text} disabled={saving} onChange={event => { epoch.current++; setText(event.target.value); }}
+        placeholder="Your writing preferences and technical facts." />
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <p className="shrink-0 text-xs text-fg-muted" title="This profile is included in every refinement.">
+          {profileBytes.toLocaleString()} / {settings.profileLimitBytes.toLocaleString()} bytes
+        </p>
+        {tooLong && <p role="alert" className="min-w-0 flex-1 truncate text-xs text-error" title="This profile is too long. Shorten it before saving. The imported draft has not been truncated.">This profile is too long. Shorten it before saving. The imported draft has not been truncated.</p>}
+        {!tooLong && warnings.length > 0 && (
+          <p role="status" className="min-w-0 flex-1 truncate text-xs text-fg-muted" title={warnings.join(" ")}>{warnings.join(" ")}</p>
+        )}
+        <div className="ml-auto flex flex-wrap gap-2">
+          <Button variant="ghost" size="sm" loading={importing} disabled={saving || importing} onClick={() => void importFiles()}>Import files...</Button>
+          <Button variant="ghost" size="sm" loading={saveTarget === "reset"} disabled={saving} onClick={() => void persist(true)}>Use Ember default</Button>
+          <Button variant="primary" size="sm" loading={saveTarget === "save"} disabled={saving || importing || tooLong} onClick={() => void persist(false)}>Save reviewed profile</Button>
+        </div>
+      </div>
+    </section>
+  );
 }

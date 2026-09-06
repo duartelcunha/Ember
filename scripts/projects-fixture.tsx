@@ -4,6 +4,7 @@ import { MotionConfig } from "motion/react";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { DEFAULT_SETTINGS, type AccentPreview, type Project } from "../src/lib/ipc";
 import { ProjectsTab } from "../src/settings/ProjectsTab";
+import { SettingsViewport } from "../src/settings/SettingsViewport";
 import "../src/styles/globals.css";
 
 const project = (id: string, name: string): Project => ({ id, name, brief: `Brief for ${name}`,
@@ -29,6 +30,6 @@ mockIPC((command, args) => {
 });
 function Fixture() {
   const [settings, setSettings] = useState(stored);
-  return <MotionConfig reducedMotion="user"><ProjectsTab s={settings} setS={setSettings} /></MotionConfig>;
+  return <MotionConfig reducedMotion="user"><main className="flex h-screen flex-col overflow-hidden bg-panel text-fg"><SettingsViewport><ProjectsTab s={settings} setS={setSettings} /></SettingsViewport></main></MotionConfig>;
 }
 createRoot(document.getElementById("root")!).render(<React.StrictMode><Fixture /></React.StrictMode>);
