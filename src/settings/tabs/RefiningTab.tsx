@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
+import { Check } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Dialog,
   DialogBody,
@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/dialog";
 import { Section, SwitchRow } from "../Section";
 import { ipc, type EmberSettings, type RefineMode, type ThinkingLevel } from "@/lib/ipc";
+import { cn } from "@/lib/utils";
 
 // Os nomes visiveis sao VERBOS, nao adjetivos. "Adaptive", "Polish" e "Turbo" descreviam o
 // comportamento interno e obrigavam a ler tres frases para perceber a diferenca; "Fix", "Improve"
@@ -58,18 +59,66 @@ const MODE_EXAMPLE = {
   } as Record<RefineMode, string>,
 };
 
-/** Mostra o exemplo do modo escolhido, antes e depois. */
-function ModeExample({ mode }: { mode: RefineMode }) {
+/**
+ * The three modes, compared, choosable.
+ *
+ * All three example outputs have always existed in this file and only the selected one was ever
+ * on screen, behind a dropdown. Side by side the choice becomes visual: you pick by reading what
+ * comes out, not by reading a label and then a sample of it.
+ *
+ * Native radios in visually hidden inputs, not a role=radio grid: arrow-key roving focus, Space,
+ * wrapping and a single tab stop all come for free and cannot drift. The ring sits on the label
+ * through `focus-within` rather than `:has()`, which shipped in exactly the build-target
+ * Chromium. The checked styling is driven from React state, not `:checked`, because border
+ * colour alone disappears in the cream theme's lower-contrast borders, so it needs the fill and
+ * the glyph too.
+ */
+function ModeComparison({ mode, onPick }: { mode: RefineMode; onPick: (mode: RefineMode) => void }) {
   return (
-    <div className="rounded-sm border border-[color:var(--border-subtle)] bg-surface-2 p-3">
-      <p className="text-[10px] uppercase tracking-wide text-fg-muted">Example</p>
-      <p className="mt-1.5 font-mono text-xs text-fg-muted line-through decoration-1">
-        {MODE_EXAMPLE.input}
-      </p>
-      <p className="mt-1.5 whitespace-pre-line font-mono text-xs text-fg">
-        {MODE_EXAMPLE.outputs[mode]}
-      </p>
-    </div>
+    // The safety valve, not the plan: at every size but one the three panels fit and nothing
+    // scrolls. Stacked at 720x856 the five switches below leave about 280px, which three panels
+    // cannot have, and scrolling a little beats budgeting pixels that the next copy change
+    // would break.
+    <fieldset data-scroll-pane="" className="mode-compare min-h-0 flex-auto">
+      <legend className="sr-only">Refine mode</legend>
+      {(Object.keys(MODE_COPY) as RefineMode[]).map((m) => {
+        const on = mode === m;
+        return (
+          <label
+            key={m}
+            className={cn(
+              "mode-option flex min-w-0 cursor-pointer flex-col rounded-sm border p-3 transition-colors",
+              "focus-within:outline-none focus-within:ring-2 focus-within:ring-[color:var(--border-accent)]",
+              on
+                ? "border-[color:var(--border-accent)] bg-surface-3"
+                : "border-[color:var(--border-subtle)] bg-surface-2 hover:border-[color:var(--border-default)]",
+            )}
+          >
+            <input
+              type="radio"
+              name="refine-mode"
+              value={m}
+              className="sr-only"
+              checked={on}
+              onChange={() => onPick(m)}
+              aria-describedby={`mode-${m}-out`}
+            />
+            <span className="flex items-center gap-1.5">
+              <span className="text-sm font-semibold text-fg">{MODE_COPY[m].title}</span>
+              {on && <Check size={12} weight="bold" aria-hidden="true" className="shrink-0 text-accent" />}
+            </span>
+            <span className="mt-0.5 text-xs text-fg-muted [display:var(--mode-hint,block)]">{MODE_COPY[m].hint}</span>
+            <span
+              id={`mode-${m}-out`}
+              className="mode-example mt-2 whitespace-pre-line font-mono text-xs text-fg"
+              title={MODE_EXAMPLE.outputs[m]}
+            >
+              {MODE_EXAMPLE.outputs[m]}
+            </span>
+          </label>
+        );
+      })}
+    </fieldset>
   );
 }
 
@@ -200,45 +249,21 @@ export function RefiningTab({
       <Section
         title="Refine mode"
         titleId="refine-mode-heading"
-        hint={MODE_COPY[s.mode].hint}
+        elastic
+        hint="What your main shortcut does. Pick one; the examples are written by hand."
         detail={
           <p>
-            This is what your main shortcut does. The example is written by hand to show the
-            difference between the three, not a live refine. Bind a shortcut to Fix or Rebuild
-            under Shortcut to switch as you press.
+            The three examples are the same sentence refined by each mode, written by hand to
+            show the difference, not live refines. Bind a shortcut to Fix or Rebuild under
+            Shortcut to switch as you press.
           </p>
         }
       >
-        <Select value={s.mode} onValueChange={(v) => setMode(v as RefineMode)}>
-          <SelectTrigger aria-labelledby="refine-mode-heading">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {(Object.keys(MODE_COPY) as RefineMode[]).map((m) => (
-              <SelectItem key={m} value={m}>
-                {MODE_COPY[m].title}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        {/* Inline when there is height for it; a popover button under compact density. */}
-        <div className="[display:var(--example,block)]">
-          <ModeExample mode={s.mode} />
-        </div>
-        {/* The wrapper carries the density variable: the button's own `inline-flex` would win
-            over a display set on the button itself. */}
-        <div className="self-start [display:var(--example-button,none)]">
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button variant="ghost" size="sm">
-                Example
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-80 p-1">
-              <ModeExample mode={s.mode} />
-            </PopoverContent>
-          </Popover>
-        </div>
+        <p className="shrink-0 text-xs text-fg-muted [display:var(--mode-input,block)]">
+          You typed{" "}
+          <span className="font-mono line-through decoration-1">{MODE_EXAMPLE.input}</span>
+        </p>
+        <ModeComparison mode={s.mode} onPick={setMode} />
       </Section>
       </div>
 

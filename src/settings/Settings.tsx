@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { motion, MotionConfig, useReducedMotion } from "motion/react";
 import { toast } from "sonner";
 import { listen } from "@tauri-apps/api/event";
@@ -32,6 +32,16 @@ function applyTheme(theme: Theme) {
   document.documentElement.dataset.theme = theme;
 }
 
+/** Says which mode was chosen, once the walk through the list settles. */
+function useSettledToast(delayMs: number) {
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  return (message: string) => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => toast.success(message), delayMs);
+  };
+}
+
 /**
  * The settings shell: state, IPC callbacks, title bar and the tab strip. Each tab body lives
  * in `./tabs/*` and lays itself out from the container the shell gives it (see
@@ -44,6 +54,8 @@ export function Settings({ initialTab = "providers" }: { initialTab?: string } =
   // `openKey` (remount do conteudo). O fecho esconde a janela no lado nativo (ver useEffect),
   // sem fade-out (fragil numa janela nativa), por isso nao ha estado de "invisivel" no JS.
   const still = useReducedMotion();
+  const settledToast = useSettledToast(400);
+  const announceMode = (mode: RefineMode) => settledToast(`Refine mode: ${MODE_COPY[mode].title}.`);
   const [openKey, setOpenKey] = useState(0);
   const [s, setS] = useState<EmberSettings>(DEFAULT_SETTINGS);
   const [hotkey, setHotkey] = useState(DEFAULT_SETTINGS.hotkey);
@@ -158,7 +170,10 @@ export function Settings({ initialTab = "providers" }: { initialTab?: string } =
     setS({ ...s, mode });
     ipc
       .setMode(mode)
-      .then(() => toast.success(`Refine mode: ${MODE_COPY[mode].title}.`))
+      // Only the toast waits. Arrow keys walk the comparison and fire one write per keypress;
+      // the write is a cheap local one where the last caller wins, but three toasts stacking up
+      // for one deliberate move through the list is noise.
+      .then(() => announceMode(mode))
       .catch(() => {
         setS((cur) => ({ ...cur, mode: prev })); // reverte o otimismo se o backend falhou
         toast.error("Couldn't update the mode.");

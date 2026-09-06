@@ -247,8 +247,8 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--border-accent);
   --card-gap: 1rem;
   --row-gap: 1rem;
   --hint: block;
-  --example: block;
-  --example-button: none;
+  --mode-hint: block;
+  --mode-input: block;
 }
 /* Tall windows breathe rather than stretch: more padding costs nothing and removes about 60px
    of leftover per tab without opening a void anywhere. */
@@ -261,8 +261,7 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--border-accent);
     --card-gap: 0.75rem;
     --row-gap: 0.5rem;
     --hint: none;
-    --example: none;
-    --example-button: block;
+    --example-lines: 2;
   }
 }
 @container settings (max-width: 52rem) { [role="tab"] > svg { display: none; } }
@@ -290,9 +289,14 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--border-accent);
    there is no free space and this is a no-op. */
 .settings-two-col { display: flex; flex-direction: var(--col-dir); gap: var(--card-gap, 1rem);
                     justify-content: safe center; min-height: 0; }
-.settings-two-col > * { flex: var(--col-grow) 1 var(--col-basis); min-width: 0; min-height: 0; }
-/* Stacked, this is the column that takes the leftover. Side by side it is full height anyway. */
-.settings-two-col > .settings-col-grow { flex-grow: 1; }
+/* No shrink by default: the growth column is also the SHRINK column, so a column of fixed cards
+   never gets asked to give up height it does not have. Without this, flex distributed a stacked
+   overflow across both columns by basis, the fixed one refused its share, and the tab overflowed
+   by exactly that amount (measured 56px on Refining at 720x856). */
+.settings-two-col > * { flex: var(--col-grow) 0 var(--col-basis); min-width: 0; min-height: 0; }
+/* Stacked, this is the column that takes the leftover, and gives it back first. Side by side it
+   is full height anyway. */
+.settings-two-col > .settings-col-grow { flex-grow: 1; flex-shrink: 1; }
 /* The column carrying the tab's evidence earns more width when there are two. */
 @container settings (min-width: 48rem) { .settings-two-col > .settings-col-wide { flex-grow: 1.6; } }
 
@@ -308,6 +312,25 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--border-accent);
    title is never what gets clipped, and the per-element scan catches the overflow instead. */
 .settings-fit { display: flex; flex-direction: column; justify-content: safe center; min-height: 0; }
 .settings-fit > .settings-two-col { align-items: start; }
+
+/* The three modes, compared. Capped rather than stretched: at 1400x900 three panels each
+   holding one line of text in 240px of air reads worse than three tidy ones centred. One column
+   when the container is narrow, because three 95px panels are not a comparison. */
+.mode-compare { display: grid; grid-template-columns: repeat(var(--mode-cols, 3), minmax(0, 1fr));
+                gap: 0.5rem; align-content: safe center; max-block-size: 22rem; overflow: auto; }
+/* Narrow, the three panels stack, and three cards do not fit above five switches: measured 56px
+   over at 720x856. They become rows instead, name on the left and the example beside it on one
+   line, which is a third of the height and still a comparison you read top to bottom. The
+   per-mode hint goes: with the example right there, it is the more redundant of the two. */
+@container settings (max-width: 48rem) {
+  .settings-density { --mode-cols: 1; --example-lines: 1; --mode-hint: none; --mode-input: none; }
+  .mode-option { flex-direction: row; align-items: baseline; gap: 0.5rem; }
+  .mode-option > .mode-example { margin-top: 0; flex: 1 1 auto; min-width: 0; }
+}
+/* The example clamps instead of scrolling: a comparison you have to scroll is not a comparison.
+   The full text stays in the title attribute. */
+.mode-example { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden;
+                -webkit-line-clamp: var(--example-lines, 6); }
 
 /* The four shortcut rows. Two-up when there is width for it, and also in short windows whatever
    the width, because four stacked capture rows do not fit a 520px-tall panel. */
