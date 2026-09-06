@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { toast } from "sonner";
-import { ArrowSquareOut, ArrowUp, Atom, CaretDown, Lightning } from "@phosphor-icons/react";
+import { ArrowRight, ArrowSquareOut, ArrowUp, Atom, CaretDown, Lightning } from "@phosphor-icons/react";
 import { Feedback } from "@/components/Feedback";
 import { BrandIcon } from "@/components/BrandIcon";
 import { Button } from "@/components/ui/button";
@@ -654,6 +654,82 @@ function ProviderSummary({
   );
 }
 
+/**
+ * The order Ember actually tries, with the real state of each step.
+ *
+ * `ProviderHealth` returns five fields and the tab used exactly one of them. The other four
+ * (overall health, how many are pre-validated, whether a pre-validated fallback exists, which
+ * need revalidation) were fetched on every key change and thrown away, while the tab's whole
+ * subject is which service answers first and what happens when it cannot. So this is not new
+ * information, it is information that was already paid for and never shown.
+ */
+function TryOrderStep({
+  index,
+  title,
+  model,
+  state,
+}: {
+  index: number;
+  title: string;
+  model: string;
+  state: "ready" | "stale" | "missing";
+}) {
+  const dot =
+    state === "ready"
+      ? "bg-[color:var(--color-success)]"
+      : state === "stale"
+        ? "bg-[color:var(--color-warning)]"
+        : "border border-[color:var(--border-strong)]";
+  const label = state === "ready" ? "ready" : state === "stale" ? "needs a check" : "not set up";
+  return (
+    <span className="flex min-w-0 items-center gap-1.5" title={`${index}. ${title}: ${label}, ${model}`}>
+      <span aria-hidden="true" className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} />
+      <span className="shrink-0 font-medium text-fg">{title}</span>
+      <span className="min-w-0 truncate font-mono text-[11px] text-fg-muted [display:var(--hint,inline)]">{model}</span>
+      <span className="sr-only">{label}</span>
+    </span>
+  );
+}
+
+function TryOrderStrip({
+  health,
+  steps,
+}: {
+  health: ProviderHealth | null;
+  steps: { title: string; model: string; state: "ready" | "stale" | "missing" }[];
+}) {
+  // No verdict before the first health probe answers: an invented one would be worse than none.
+  const verdict = !health
+    ? null
+    : health.health === "healthy"
+      ? "Fallback ready"
+      : health.health === "degraded"
+        ? "No pre-validated fallback"
+        : "No provider ready";
+  return (
+    <div
+      data-try-order=""
+      className="flex h-9 shrink-0 items-center gap-2 overflow-hidden rounded-lg border border-[color:var(--border-subtle)] bg-surface-1 px-3 text-xs"
+    >
+      <span className="shrink-0 text-fg-muted">Tried in order</span>
+      {steps.map((step, i) => (
+        <span key={step.title} className="flex min-w-0 items-center gap-2">
+          {i > 0 && <ArrowRight size={12} aria-hidden="true" className="shrink-0 text-fg-muted" />}
+          <TryOrderStep index={i + 1} {...step} />
+        </span>
+      ))}
+      {verdict && (
+        <span
+          className="ml-auto shrink-0 text-fg-muted"
+          title={health ? `${health.prevalidatedCount} of ${health.configuredCount} validated` : undefined}
+        >
+          {verdict}
+        </span>
+      )}
+    </div>
+  );
+}
+
 /** Aviso honesto quando nao ha fallback pre-validado (regra de resiliencia). So aparece no caso
  *  estavel e nao-transitorio: exatamente um provider configurado (sem 2a familia). Dispensavel.
  *  Controlado por props: o parent (Settings) refaz o `health` sempre que uma chave muda, para o
@@ -740,11 +816,12 @@ export function ProvidersTab({
       ? endpoint.label.split(" (")[0]
       : "Custom endpoint";
 
-  const cards: Record<ProviderKind, { title: string; status: string; model: string; config: React.ReactNode }> = {
+  const cards: Record<ProviderKind, { title: string; status: string; model: string; configured: boolean; config: React.ReactNode }> = {
     gemini: {
       title: "Gemini",
       status: s.hasGeminiKey ? "Key saved" : "No key yet",
       model: s.geminiModel,
+      configured: s.hasGeminiKey,
       config: (
         <ProviderConfig
           kind="gemini"
@@ -781,6 +858,7 @@ export function ProvidersTab({
       title: openaiTitle,
       status: subscription ? (s.chatgptSignedIn ? "Signed in" : "Not signed in") : s.hasOpenAiKey ? "Key saved" : "No key yet",
       model: s.openaiModel,
+      configured: subscription ? s.chatgptSignedIn : s.hasOpenAiKey,
       config: (
         <ProviderConfig
           kind="openai"
@@ -832,12 +910,23 @@ export function ProvidersTab({
   // contar a história ao contrário no sítio onde ela se decide.
   const order: ProviderKind[] = primary === "gemini" ? ["gemini", "openai"] : ["openai", "gemini"];
 
+  const stepState = (kind: ProviderKind): "ready" | "stale" | "missing" =>
+    !cards[kind].configured ? "missing" : health?.needsRevalidation.includes(kind) ? "stale" : "ready";
+
   return (
-    <div data-tab-body="" className="flex min-h-0 flex-1 flex-col gap-[var(--card-gap,1rem)]">
+    // Two provider forms cannot grow: five labelled rows spread over 700px reads as a broken
+    // template, not as a spacious form. So this tab fills by centring its block, with the card
+    // tops level, rather than by stretching anything.
+    <div data-tab-body="" className="settings-fit min-h-0 flex-1">
+      <div data-settings-col="" className="settings-col">
       {s.keyStoreError && (
         <NoticeRow text="Ember couldn't read your saved keys (the credential vault may be locked). Reopen the app or unlock the vault, then re-enter your keys." />
       )}
       <ProviderHealthNotice health={health} dismissed={healthDismissed} onDismiss={onDismissHealth} />
+      <TryOrderStrip
+        health={health}
+        steps={order.map((kind) => ({ title: cards[kind].title, model: cards[kind].model, state: stepState(kind) }))}
+      />
       {/* Os dois cartões existem sempre; só a ORDEM muda. Cada um vai dentro de um `motion.div`
           com `layout`, e é isso que faz o cartão promovido subir de facto em vez de a lista
           trocar de conteúdo num piscar de olhos: a animação mostra o que aconteceu, que é
@@ -872,6 +961,7 @@ export function ProvidersTab({
             </motion.div>
           );
         })}
+      </div>
       </div>
     </div>
   );
