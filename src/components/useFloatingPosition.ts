@@ -36,7 +36,7 @@ export function useFloatingPosition(event: string, mode: "surface" | "card" | "o
       const size = { width: measured.width, height: measured.height };
       const placed = modeRef.current === "orb" ? placeOrb(latest, view, left, preserveSide)
         : modeRef.current === "labels" ? placeLabels(latest, view, size, left)
-        : placeFloating(latest, view, size, left, modeRef.current === "card" ? { gap: CURSOR_GAP, preserveSide } : undefined);
+        : placeFloating(latest, view, size, left, modeRef.current === "card" ? { gap: CURSOR_GAP, preserveSide, centreY: true } : undefined);
       painted = latest;
       paintedView = view;
       left = placed.left;

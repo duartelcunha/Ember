@@ -11,14 +11,20 @@ export interface Viewport { width: number; height: number; scale: number }
 // as one smudge rather than a mark set beside the pointer. 19 puts it at 6.8px,
 // which is air you can see without the ring drifting away from the cursor.
 //
+// `y` is where the content's CENTRE sits relative to the hotspot, not its top
+// edge. Aligning tops made every surface hang below the pointer, and worse, by
+// an amount that grew with its height: the 15px ring sat 7px low, a one-line
+// result surface 14px, a two-line one 23px. 2 puts the centre just inside the
+// arrow's head, so the pair reads as one object whatever the surface holds.
+//
 // The same offset anchors the result surface, because the morph grows it from
 // the ring's own 15px corner: a different gap there would make the surface jump
 // at the instant it takes over. Custom pointer artwork can differ.
-export const CURSOR_GAP = { x: 19, y: 0 };
-type PlacementOptions = { gap?: { x: number; y: number }; preserveSide?: boolean };
+export const CURSOR_GAP = { x: 19, y: 2 };
+type PlacementOptions = { gap?: { x: number; y: number }; preserveSide?: boolean; centreY?: boolean };
 
 /** Convert physical cursor coordinates once, then place measured logical content. */
-export function placeFloating(cursor: CursorPosition, view: Viewport, content: { width: number; height: number }, wasLeft: boolean, { gap = { x: 14, y: 18 }, preserveSide = false }: PlacementOptions = {}) {
+export function placeFloating(cursor: CursorPosition, view: Viewport, content: { width: number; height: number }, wasLeft: boolean, { gap = { x: 14, y: 18 }, preserveSide = false, centreY = false }: PlacementOptions = {}) {
   const scale = view.scale > 0 && Number.isFinite(view.scale) ? view.scale : 1;
   const cursorX = (cursor.x - cursor.originX) / scale;
   const cursorY = (cursor.y - cursor.originY) / scale;
@@ -29,7 +35,10 @@ export function placeFloating(cursor: CursorPosition, view: Viewport, content: {
   if (!left && cursorX + gap.x + width > view.width - margin) left = true;
   else if (left && !preserveSide && cursorX + gap.x + width < view.width - margin - 32) left = false;
   const x = Math.max(margin, Math.min(left ? cursorX - gap.x - width : cursorX + gap.x, view.width - width - margin));
-  const y = Math.max(margin, Math.min(cursorY + gap.y, view.height - height - margin));
+  // Menus open below the cursor and keep `gap.y` as a top offset. Surfaces pinned to the
+  // pointer centre on it instead, so their height cannot drag them downwards.
+  const top = centreY ? cursorY + gap.y - height / 2 : cursorY + gap.y;
+  const y = Math.max(margin, Math.min(top, view.height - height - margin));
   return { x, y, left };
 }
 
@@ -48,7 +57,7 @@ export function placeOrb(cursor: CursorPosition, view: Viewport, wasLeft: boolea
   if (!left && cx + CURSOR_GAP.x + ORB_INK.width > view.width - 4) left = true;
   else if (left && !preserveSide && cx + CURSOR_GAP.x + ORB_INK.width < view.width - 36) left = false;
   const inkX = Math.max(4, Math.min(left ? cx - CURSOR_GAP.x - ORB_INK.width : cx + CURSOR_GAP.x, view.width - ORB_INK.width - 4));
-  const inkY = Math.max(4, Math.min(cy + CURSOR_GAP.y, view.height - ORB_INK.height - 4));
+  const inkY = Math.max(4, Math.min(cy + CURSOR_GAP.y - ORB_INK.height / 2, view.height - ORB_INK.height - 4));
   return { x: inkX - ORB_INK.x, y: inkY - ORB_INK.y, left };
 }
 
