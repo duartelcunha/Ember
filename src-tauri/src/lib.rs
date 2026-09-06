@@ -52,19 +52,14 @@ fn window_state_flags() -> StateFlags {
     StateFlags::SIZE | StateFlags::POSITION
 }
 
-/// Whether the window-state file already has an entry for the settings window. Read once per
-/// open; the file is a few hundred bytes.
-fn has_saved_settings_state(app: &AppHandle) -> bool {
-    let Ok(dir) = app.path().app_config_dir() else {
-        return false;
-    };
-    let Ok(raw) = std::fs::read(dir.join(app.filename())) else {
-        return false;
-    };
-    serde_json::from_slice::<serde_json::Value>(&raw)
-        .ok()
-        .map(|v| v.get("settings").is_some())
-        .unwrap_or(false)
+/// The position saved for the settings window, when the window-state file has one. Read once
+/// per open; the file is a few hundred bytes.
+fn saved_settings_position(app: &AppHandle) -> Option<(i32, i32)> {
+    let dir = app.path().app_config_dir().ok()?;
+    let raw = std::fs::read(dir.join(app.filename())).ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&raw).ok()?;
+    let s = v.get("settings")?;
+    Some((s.get("x")?.as_i64()? as i32, s.get("y")?.as_i64()? as i32))
 }
 
 /// The plugin restores the saved geometry when the window is created. Centre only when there
@@ -73,12 +68,20 @@ fn has_saved_settings_state(app: &AppHandle) -> bool {
 /// be dragged back. When the spot is fine but the saved size no longer fits the monitor, the
 /// window is shrunk in place instead of being moved.
 fn needs_centering(app: &AppHandle, w: &WebviewWindow) -> bool {
-    if !has_saved_settings_state(app) {
+    let Some((saved_x, saved_y)) = saved_settings_position(app) else {
         return true;
-    }
+    };
     let (Ok(pos), Ok(size)) = (w.outer_position(), w.outer_size()) else {
         return true;
     };
+    if (pos.x, pos.y) != (saved_x, saved_y) {
+        // The plugin skips a saved position that touches no monitor and leaves the window
+        // where the OS created it (Windows cascades it at 208,208). Measured: with x=-9000 the
+        // strip check below saw a perfectly grabbable window and left it in that arbitrary
+        // corner. Not applied means not trusted, so centre.
+        log::info!("settings: saved position ({saved_x}, {saved_y}) was not applied, centring");
+        return true;
+    }
     let win = geom::Rect::new(pos.x, pos.y, size.width as i32, size.height as i32);
     let areas: Vec<geom::Rect> = monitors_of(w).into_iter().map(|m| m.work).collect();
     let scale = w.scale_factor().unwrap_or(1.0);

@@ -25,7 +25,7 @@ export function ShortcutTab({
   commitHotkey: (which: HotkeySlot, accel: string) => Promise<string | null>;
 }) {
   return (
-    <div data-tab-body="" className="grid min-h-0 flex-1 grid-cols-1 items-start gap-[var(--card-gap,1rem)] @xl/settings:grid-cols-2">
+    <div data-tab-body="" className="settings-two-col min-h-0 flex-1 items-start gap-[var(--card-gap,1rem)]">
       <div className="flex min-w-0 flex-col gap-[var(--card-gap,1rem)]">
         <Section
           title="Global shortcut"

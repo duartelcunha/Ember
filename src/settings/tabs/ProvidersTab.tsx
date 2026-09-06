@@ -853,11 +853,14 @@ export function ProvidersTab({
               layout
               layoutDependency={primary}
               transition={still ? { duration: 0 } : SWAP_SPRING}
-              className="min-w-0"
+              className="provider-card min-w-0"
+              // The collapse only applies when the container is short AND narrow (globals.css):
+              // a tall narrow window has room for both cards, a wide one shows them side by side.
+              data-collapsed={isExpanded ? undefined : ""}
             >
-              <div className={cn(!isExpanded && "hidden @4xl/settings:block")}>{card.config}</div>
+              <div className="provider-config">{card.config}</div>
               <ProviderSummary
-                className={cn("@4xl/settings:hidden", isExpanded && "hidden")}
+                className="provider-summary"
                 title={card.title}
                 status={card.status}
                 model={card.model}

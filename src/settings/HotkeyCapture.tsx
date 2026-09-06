@@ -211,7 +211,9 @@ export function HotkeyCapture({
 
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="flex items-center gap-2">
+      {/* `flex-wrap` + a minimum box width: in a narrow column the buttons drop under the box
+          rather than overflowing the card (seen at ~300px per column). */}
+      <div className="flex flex-wrap items-center gap-2">
         <div
           role="button"
           tabIndex={0}
@@ -226,7 +228,7 @@ export function HotkeyCapture({
               startCapture();
             }
           }}
-          className={`flex h-9 flex-1 cursor-pointer items-center gap-2 rounded-sm border px-3 font-mono text-sm ${boxClass}`}
+          className={`flex h-9 min-w-[160px] flex-1 cursor-pointer items-center gap-2 rounded-sm border px-3 font-mono text-sm ${boxClass}`}
         >
           {capturing ? (
             <>

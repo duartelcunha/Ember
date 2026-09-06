@@ -262,6 +262,22 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--border-accent);
 }
 @container settings (max-width: 52rem) { [role="tab"] > svg { display: none; } }
 
+/* Two-column tab bodies. Wide containers get two columns because the cards have the width for
+   it; short containers get them even when narrow, because stacked cards would not fit the
+   height (the settings never scroll). A tall narrow window stacks: two 300px columns looked
+   cramped and left the bottom half empty. */
+.settings-two-col { display: grid; align-content: start; grid-template-columns: minmax(0, 1fr); }
+@container settings (min-width: 48rem) { .settings-two-col { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+@container settings (min-width: 36rem) and (max-height: 560px) { .settings-two-col { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+
+/* Provider cards fold into a summary row only when there is neither the width for two columns
+   nor the height for two stacked cards. Elsewhere both stay expanded. */
+.provider-summary { display: none; }
+@container settings (max-height: 560px) and (max-width: 56rem) {
+  .provider-card[data-collapsed] .provider-config { display: none; }
+  .provider-card[data-collapsed] .provider-summary { display: flex; }
+}
+
 /* Dialogs and popovers enter with the shell's own ease, on opacity and the individual `scale`
    property so the centring `translate` utilities keep their value. Compositor-only. */
 @keyframes ember-layer-in {
