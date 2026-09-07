@@ -241,19 +241,31 @@
   to { clip-path: inset(-6px -6px -6px -6px round 8px); opacity: 1; }
 }
 
-/* The incoming solid surface grows from the visible 15px ring, without scaling
-   text or animating the translation owned by the cursor geometry controller.
+/* The incoming solid surface grows out of the visible 15px ring, without scaling text or
+   animating the translation owned by the cursor geometry controller.
    Opacity stays at 1 throughout: the ring is already lit, so fading the surface in over it
-   would read as a second object rather than the same one changing shape. */
+   would read as a second object rather than the same one changing shape.
+
+   The start is CENTRED on the cursor-facing edge, not tucked into its top corner. Surfaces are
+   anchored by their centre on the hotspot and so is the ring, which puts the ring halfway down
+   the surface; growing from the corner started the motion 7.5px above where the ring actually
+   was, and that mismatch is what made a real morph read as a corner wipe.
+
+   Two beats rather than one diagonal stretch: the ring swells to the surface's full height while
+   staying its own width, then unrolls sideways. A dot becoming a bar is a shape changing; a
+   rectangle growing diagonally out of a corner is a reveal. */
 [data-morph-from-orb] {
-  --ember-morph-start: inset(0 calc(100% - 15px) calc(100% - 15px) 0 round 7.5px);
-  animation: ember-surface-morph 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  --ember-morph-start: inset(calc(50% - 7.5px) calc(100% - 15px) calc(50% - 7.5px) 0 round 7.5px);
+  --ember-morph-swell: inset(-6px calc(100% - 30px) -6px 0 round 12px);
+  animation: ember-surface-morph 260ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 .ember-floating[data-side="left"] [data-morph-from-orb] {
-  --ember-morph-start: inset(0 0 calc(100% - 15px) calc(100% - 15px) round 7.5px);
+  --ember-morph-start: inset(calc(50% - 7.5px) 0 calc(50% - 7.5px) calc(100% - 15px) round 7.5px);
+  --ember-morph-swell: inset(-6px 0 -6px calc(100% - 30px) round 12px);
 }
 @keyframes ember-surface-morph {
   from { clip-path: var(--ember-morph-start); }
+  38% { clip-path: var(--ember-morph-swell); }
   to { clip-path: inset(-6px -6px -6px -6px round 8px); }
 }
 

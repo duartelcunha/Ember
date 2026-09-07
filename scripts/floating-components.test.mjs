@@ -167,12 +167,22 @@ test("UI components preserve geometry and asynchronous ownership", (t) => withBr
         assert.equal(await page.$$eval('.ember-orb-row', nodes => nodes.length), 0);
         const morph = await page.$eval('[data-morph-from-orb]', e => {
           const style = getComputedStyle(e);
-          return { clip: style.clipPath, opacity: style.opacity, transform: style.transform, side: e.parentElement.dataset.side };
+          const r = e.getBoundingClientRect();
+          return { clip: style.clipPath, opacity: style.opacity, transform: style.transform, side: e.parentElement.dataset.side, width: r.width, height: r.height };
         });
         assert.equal(morph.opacity, '1');
         assert.equal(morph.transform, 'none');
         assert.equal(morph.side, x === 300 ? 'right' : 'left');
+        // The morph must begin where the ring is: a 15px band centred on the cursor-facing
+        // edge. Chromium leaves calc() unresolved in the computed value, so this pins the two
+        // properties that were wrong rather than parsing arithmetic. Substring-matching only
+        // '15px' passed happily while the start was pinned to the top corner, 7.5px above the
+        // ring, which is exactly the bug this now catches.
         assert.ok(morph.clip.includes('15px'), morph.clip);
+        assert.ok(morph.clip.startsWith('inset(calc(50%'), morph.clip);
+        // Flush to the edge the cursor is on: the last inset is zero on the right, the second
+        // is zero on the left.
+        assert.ok((x === 300 ? / 0px round / : /px\) 0px calc/).test(morph.clip), morph.clip);
         await page.evaluate(() => { window.__morphAnimation.currentTime = 90; });
         await presented();
         assert.deepEqual(await bounds(), start);
