@@ -49,6 +49,15 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
 
+      # release-please bumps the workspace version in Cargo.toml and leaves Cargo.lock alone, so
+      # the lock still names the previous version of `ember` and `ember-core`. Every cargo step
+      # below passes --locked, which exists to prove no DEPENDENCY moved, and it refused: the one
+      # thing that had to move was the workspace's own version. This updates exactly that, the two
+      # workspace members and nothing else, and then --locked means what it was meant to mean.
+      # Without it the release build fails after the tag and the draft release already exist.
+      - name: Carry the version bump into Cargo.lock
+        run: cargo update --workspace
+
       - name: Install frontend dependencies
         run: npm ci
 
