@@ -23,7 +23,7 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
-    version: "1.2.0-rc.2",
+    version: "1.2.0-rc.3",
     lines: [
       "Every settings tab fits the window now, and the window remembers where you left it.",
       "A Reply mode that answers the message you selected, on a shortcut of its own.",
