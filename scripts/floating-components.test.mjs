@@ -130,6 +130,23 @@ test("UI components preserve geometry and asynchronous ownership", (t) => withBr
         near(ring.y, 180 + CURSOR_GAP.y - ORB_INK.height / 2);
       }
     });
+    // Does this runner run CSS animations at all? The headless macOS one does not: no
+    // `animationstart` ever fires, on any element, however correct the CSS is. Asked once, with
+    // a throwaway keyframe, so the two runtime proofs below can say "the animation did not run
+    // here" instead of waiting thirty seconds and reporting a broken app. The wiring itself is
+    // still asserted everywhere; only the moving picture is conditional.
+    const animates = await page.evaluate(() => new Promise((resolve) => {
+      const sheet = document.createElement('style');
+      sheet.textContent = '@keyframes ember-probe{from{opacity:.2}to{opacity:1}}';
+      const probe = document.createElement('div');
+      probe.style.cssText = 'position:fixed;left:-9999px;top:0;width:8px;height:8px;animation:ember-probe 300ms linear';
+      const done = (answer) => { probe.remove(); sheet.remove(); resolve(answer); };
+      probe.addEventListener('animationstart', () => done(true));
+      document.head.append(sheet);
+      document.body.append(probe);
+      setTimeout(() => done(false), 2000);
+    }));
+    if (!animates) console.log('# this runner does not run CSS animations; asserting the wiring only');
     await t.test('signature motion and surface morph preserve the anchor without retaining the orb', async () => {
       await page.setViewport({ width: 800, height: 600, deviceScaleFactor: 1 });
       await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'no-preference' }]);
@@ -151,55 +168,56 @@ test("UI components preserve geometry and asynchronous ownership", (t) => withBr
         await presented();
         assert.equal(await page.$$eval('.ember-orb-row circle', nodes => nodes.filter(e => getComputedStyle(e).animationName === 'ember-chase').length), 8);
         assert.equal(await page.$$eval('.ember-orb-row animate', nodes => nodes.length), 1);
-        await page.evaluate(() => {
-          window.__morphAnimation = null;
+        // Read from the animation's own start event, and again two frames in. Pausing the
+        // Animation object was the older way and it needed `getAnimations()`, which one runner
+        // never populated; both things this asserts (the shape the surface starts from, and that
+        // the measured box does not move while it changes) are in computed style.
+        const morphing = page.evaluate(() => new Promise((resolve) => {
           document.getElementById('root').addEventListener('animationstart', function started(event) {
             if (event.animationName !== 'ember-surface-morph') return;
             this.removeEventListener('animationstart', started);
-            // `getAnimations()` can still be empty on the frame `animationstart` fires: the event
-            // says the animation began, not that the engine has published its object yet, and on
-            // one runner it did not. Retried for a few frames, then rewound, so the scrub below
-            // reads the same first frame either way. Without this the find returned undefined and
-            // the page threw on `.pause()`, which the harness reported as a broken morph.
-            const target = event.target;
-            const grab = (tries) => {
-              const found = target.getAnimations().find(a => a.animationName === event.animationName);
-              if (found) {
-                found.pause();
-                found.currentTime = 0;
-                window.__morphAnimation = found;
-              } else if (tries > 0) {
-                requestAnimationFrame(() => grab(tries - 1));
-              }
+            const surface = event.target;
+            const floating = surface.closest('.ember-floating');
+            const at = () => {
+              const r = floating.getBoundingClientRect();
+              return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, centre: (r.top + r.bottom) / 2 };
             };
-            grab(20);
+            const style = getComputedStyle(surface);
+            const first = {
+              // The shape it starts FROM, which is the variable the keyframe's `from` reads.
+              // `clipPath` here is already a frame or two in and interpolated, so it can say the
+              // surface is being clipped but not where the gesture began.
+              start: style.getPropertyValue('--ember-morph-start').trim(),
+              clip: style.clipPath, opacity: style.opacity, transform: style.transform,
+              side: floating.dataset.side, bounds: at(),
+            };
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve({ ...first, later: at() })));
           });
-        });
+          setTimeout(() => resolve(null), 4000);
+        }));
         await send('ember://state', { sequence: sequence++, runId: 6, phase: 'preview', confirmationScope: 'selection' });
-        await page.waitForFunction(() => window.__morphAnimation);
-        const start = await bounds();
+        const morph = await morphing;
         assert.equal(await page.$$eval('.ember-orb-row', nodes => nodes.length), 0);
-        const morph = await page.$eval('[data-morph-from-orb]', e => {
-          const style = getComputedStyle(e);
-          const r = e.getBoundingClientRect();
-          return { clip: style.clipPath, opacity: style.opacity, transform: style.transform, side: e.parentElement.dataset.side, width: r.width, height: r.height };
-        });
-        assert.equal(morph.opacity, '1');
-        assert.equal(morph.transform, 'none');
-        assert.equal(morph.side, x === 300 ? 'right' : 'left');
-        // The morph must begin where the ring is: a 15px band centred on the cursor-facing
-        // edge. Chromium leaves calc() unresolved in the computed value, so this pins the two
-        // properties that were wrong rather than parsing arithmetic. Substring-matching only
-        // '15px' passed happily while the start was pinned to the top corner, 7.5px above the
-        // ring, which is exactly the bug this now catches.
-        assert.ok(morph.clip.includes('15px'), morph.clip);
-        assert.ok(morph.clip.startsWith('inset(calc(50%'), morph.clip);
-        // Flush to the edge the cursor is on: the last inset is zero on the right, the second
-        // is zero on the left.
-        assert.ok((x === 300 ? / 0px round / : /px\) 0px calc/).test(morph.clip), morph.clip);
-        await page.evaluate(() => { window.__morphAnimation.currentTime = 90; });
-        await presented();
-        assert.deepEqual(await bounds(), start);
+        if (morph) {
+          assert.equal(morph.opacity, '1');
+          assert.equal(morph.transform, 'none');
+          assert.equal(morph.side, x === 300 ? 'right' : 'left');
+          // The morph must begin where the ring is: a 15px band centred on the cursor-facing
+          // edge. Read off the variable rather than parsed out of arithmetic, and pinning the
+          // two properties that were wrong: substring-matching only '15px' passed happily while
+          // the start was the top corner, 7.5px above the ring, which is the bug this catches.
+          assert.ok(morph.start.includes('15px'), morph.start);
+          assert.ok(/^inset\(\s*calc\(50%/.test(morph.start), morph.start);
+          // Flush to the edge the cursor is on: the last inset is zero on the right, the second
+          // is zero on the left.
+          assert.ok((x === 300 ? / 0 round / : /px\) 0 calc/).test(morph.start), morph.start);
+          // And it is really clipping, not merely declared.
+          assert.ok(morph.clip.startsWith('inset('), morph.clip);
+          assert.deepEqual(morph.later, morph.bounds, 'the anchor must not move while the surface changes shape');
+        } else {
+          assert.ok(!animates, 'the morph never started on a runner that does run animations');
+          assert.equal(await page.$eval('[data-morph-from-orb]', e => getComputedStyle(e).animationName), 'ember-surface-morph');
+        }
         await capture(x === 300 ? 'morph-right' : 'morph-left');
         // A new state interrupts the morph without an old layer or a late callback.
         await send('ember://state', { sequence: sequence++, runId: 6, phase: 'success', message: 'Sent' });
@@ -290,7 +308,8 @@ test("UI components preserve geometry and asynchronous ownership", (t) => withBr
         setTimeout(() => resolve('never started'), 2000);
       }));
       await send('ember://tray', { open: false });
-      assert.equal(await folding, true);
+      if (animates) assert.equal(await folding, true);
+      else assert.equal(await page.$eval('[data-leave]', e => getComputedStyle(e).animationName), 'ember-surface-close');
       await page.keyboard.press('Enter');
       await page.waitForFunction(() => !document.querySelector('[role=menu]'));
       assert.equal(await page.evaluate(() => window.__trayActions.at(-1)), 'close');
