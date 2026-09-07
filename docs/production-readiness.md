@@ -31,7 +31,7 @@ or remaining implementation is listed in the last column.
 
 | Audit IDs | Implemented change | Remaining work |
 | --- | --- | --- |
-| A01 | Reject unknown/different HWND/PID; Windows UIA editable element and selection-range lease before capture, after capture and before paste; reapply uses same path | Native browser/editor selection qualification; AX/AT-SPI adapters; input generation spanning every transition |
+| A01 | Reject unknown/different HWND/PID; Windows UIA editable element and selection-range lease before capture, after capture and before paste | Native browser/editor selection qualification; AX/AT-SPI adapters; input generation spanning every transition |
 | A02 | Hook install failure and unsupported platforms reject; actual original/result comparison with keyboard paging | Native focus and screen reader qualification |
 | A03 | Remove stale terminal clipboard fallback and generic line clearing; preserve bounded HGLOBAL formats; ownership-aware restore before network wait | Close ownership gaps around capture; delayed rendering tests; safe terminal adapters. Generic terminal replacement is disabled |
 | A04 | Mask original bytes before normalization; check token count/order/unknown markers; restore after cleanup; preserve joiners; protect fences, inline code, paths and explicit shell prompts | Broader linguistic/provider evaluation and ambiguous command fragments |

@@ -567,14 +567,8 @@ fn register_one(app: &AppHandle, hotkey: &str, action: HotkeyAction) -> Result<(
 
 fn build_tray(app: &tauri::App) -> tauri::Result<()> {
     let open = MenuItemBuilder::with_id("open_settings", "Settings").build(app)?;
-    // A saida para tudo o que interrompeu um refine: dispensado, recusado no preview, clipboard
-    // ocupado, janela trocada. Guardar o resultado so serve para alguma coisa se houver uma
-    // maneira de o aplicar depois.
-    let reapply = MenuItemBuilder::with_id("reapply_last", "Reapply last refine").build(app)?;
     let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
-    let menu = MenuBuilder::new(app)
-        .items(&[&open, &reapply, &quit])
-        .build()?;
+    let menu = MenuBuilder::new(app).items(&[&open, &quit]).build()?;
     let Some(icon) = app.default_window_icon().cloned() else {
         // Sem icone nao construimos a tray (em vez de rebentar). A app continua viva; o log
         // deixa rasto. Na pratica o icone vem sempre da config, por isso isto e defensivo.
@@ -588,10 +582,6 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open_settings" => {
                 show_settings(app);
-            }
-            "reapply_last" => {
-                let app = app.clone();
-                tauri::async_runtime::spawn(async move { flow::reapply_last(app).await });
             }
             "quit" => {
                 if let Some(quit_anim) = get_or_create_window(app, "quit_anim") {

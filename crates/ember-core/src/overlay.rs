@@ -46,10 +46,8 @@ pub enum FlowOutcome {
     /// dinheiro gasto, a chamada segue ate ao fim em segundo plano e o resultado fica guardado.
     Dismissed,
     /// A janela em foco mudou entre a captura e o paste. Nao se cola as cegas noutra app; o
-    /// resultado fica guardado para ser reaplicado.
+    /// resultado fica guardado e o atalho seguinte sobre o mesmo texto reutiliza-o sem pagar.
     ForegroundChanged,
-    /// Pediu-se para reaplicar e nao ha nada guardado.
-    NothingToReapply,
     /// O refinado veio da cache: mesma seleccao ja refinada antes, sem nova chamada ao modelo.
     ReusedFromCache,
 }
@@ -171,15 +169,12 @@ pub fn feedback_for(outcome: FlowOutcome) -> OverlayFeedback {
         },
         FlowOutcome::ForegroundChanged => OverlayFeedback {
             phase: "hint",
-            message: Some("Window changed \u{00b7} result saved, reapply from the tray".into()),
+            // "run the shortcut again" and not "reapply from the tray": there is no tray entry
+            // any more. The saved result is served by the cache on the next shortcut over the
+            // same text, which is the only way back that does not need a second surface.
+            message: Some("Window changed \u{00b7} result saved, run the shortcut again".into()),
             provider: None,
             hide_after_ms: 2200,
-        },
-        FlowOutcome::NothingToReapply => OverlayFeedback {
-            phase: "hint",
-            message: Some("Nothing to reapply".into()),
-            provider: None,
-            hide_after_ms: 1200,
         },
         FlowOutcome::ReusedFromCache => OverlayFeedback {
             phase: "success",
@@ -303,7 +298,9 @@ mod tests {
         let f = feedback_for(FlowOutcome::ForegroundChanged);
         assert_eq!(f.phase, "hint");
         let msg = f.message.unwrap().to_lowercase();
-        assert!(msg.contains("saved") && msg.contains("reapply"));
+        // The way back is the shortcut itself, and the message has to say so: a saved result
+        // nobody knows how to reach is money spent for nothing.
+        assert!(msg.contains("saved") && msg.contains("shortcut"));
     }
 
     #[test]
