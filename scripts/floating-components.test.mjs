@@ -248,6 +248,45 @@ test("UI components preserve geometry and asynchronous ownership", (t) => withBr
     await page.evaluate(() => new Promise(requestAnimationFrame));
     assert.equal(await page.$$eval('[role=option][aria-selected=true]', e => e.length), 1);
     await capture("picker");
+    await t.test('the tray menu opens out of the icon, answers the keyboard and folds back', async () => {
+      // The first click can beat the page: the mount-time `ready` handshake has to open it.
+      await page.goto(`${origin}/__ember-test/tray?trayOpen`);
+      await page.waitForSelector('[role=menu]');
+      assert.equal(await page.$$eval('[role=menuitem]', nodes => nodes.length), 2);
+      await page.waitForFunction(() => document.querySelector('[role=menu]').textContent.includes('v1.2.3'));
+      // Born from the icon below it: the house entrance, aimed at the bottom edge, and the menu
+      // node itself holds focus so the keyboard and a screen reader have a composite to follow.
+      assert.equal(await page.$eval('.ember-bubble[data-enter]', e => getComputedStyle(e).animationName), 'ember-surface-open');
+      assert.equal(await page.$eval('.ember-tray', e => e.dataset.side), 'above');
+      assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('role')), 'menu');
+      const active = () => page.$eval('[role=menu]', e => document.getElementById(e.getAttribute('aria-activedescendant'))?.querySelector('span')?.textContent.trim());
+      assert.equal(await active(), 'Settings');
+      await page.keyboard.press('ArrowDown');
+      await page.waitForFunction(() => document.querySelector('[role=menuitem][data-active]')?.textContent.startsWith('Quit'));
+      assert.equal(await active(), 'Quit Ember');
+      await page.keyboard.press('Escape');
+      await page.waitForFunction(() => window.__trayActions.at(-1) === 'close');
+      // Rust answers a close by flipping `open`; the surface folds before the window hides, and
+      // nothing chosen during the fold reaches Rust.
+      await send('ember://tray', { open: false });
+      await presented();
+      assert.equal(await page.$eval('[data-leave]', e => getComputedStyle(e).animationName), 'ember-surface-close');
+      await page.keyboard.press('Enter');
+      await page.waitForFunction(() => !document.querySelector('[role=menu]'));
+      assert.equal(await page.evaluate(() => window.__trayActions.at(-1)), 'close');
+      // A taskbar at the top puts the menu below the icon: it opens out of its top edge instead.
+      // And Enter chooses once, however long it is held.
+      await send('ember://tray', { open: true, below: true });
+      await page.waitForSelector('[role=menu]');
+      assert.equal(await page.$eval('.ember-tray', e => e.dataset.side), 'below');
+      assert.ok((await page.$eval('.ember-bubble[data-enter]', e => getComputedStyle(e).getPropertyValue('--ember-open-start'))).includes('0 0 60%'));
+      await page.keyboard.press('ArrowDown');
+      await page.keyboard.press('Enter');
+      await page.keyboard.press('Enter');
+      await page.waitForFunction(() => window.__trayActions.at(-1) === 'quit');
+      assert.equal(await page.evaluate(() => window.__trayActions.filter(a => a === 'quit').length), 1);
+      await capture('tray');
+    });
     await t.test('static startup branding still completes its native lifecycle', async () => {
       // Declared here rather than inherited from whatever ran before: this asserts the REDUCED
       // branding, and it read as an intermittent failure whenever an earlier block left the

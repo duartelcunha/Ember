@@ -21,6 +21,7 @@ fn main() {
         "floating_position",
         "overlay_snapshot",
         "picker_snapshot",
+        "tray_action",
         "set_model",
         "set_openai_base_url",
         "set_hotkey",

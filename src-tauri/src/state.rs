@@ -108,6 +108,12 @@ pub struct AppState {
     pub picker_opened_at: Mutex<Option<std::time::Instant>>,
     /// Pedido de fecho do picker (segunda pressao do atalho dele, ou um refine a arrancar).
     pub picker_cancel: AtomicBool,
+    /// The tray menu is on screen. Also the reentrancy guard of its close: blur and Esc can both
+    /// ask for the same close, and only the first one that flips this does the work.
+    pub tray_open: AtomicBool,
+    /// When the tray menu last started closing. A click on the icon within a quarter second of
+    /// that is the click that caused the blur, not a request to open it again.
+    pub tray_hidden_at: Mutex<Option<std::time::Instant>>,
     /// O ultimo payload emitido para o overlay, para o poder re-emitir sem inventar estado.
     ///
     /// Existe para a travessia entre monitores com DPI diferente: ao redimensionar a janela, o
@@ -275,6 +281,8 @@ impl AppState {
             picker_open: AtomicBool::new(false),
             picker_opened_at: Mutex::new(None),
             picker_cancel: AtomicBool::new(false),
+            tray_open: AtomicBool::new(false),
+            tray_hidden_at: Mutex::new(None),
             last_state: Mutex::new(None),
             picker_state: Mutex::new(None),
             floating_positions: Mutex::new(HashMap::new()),

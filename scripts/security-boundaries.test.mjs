@@ -19,6 +19,7 @@ test("floating surfaces cannot receive settings, credential or filesystem comman
   for (const [label, allowed] of Object.entries({
     overlay: ["allow-floating-position", "allow-overlay-snapshot"],
     picker: ["allow-floating-position", "allow-picker-snapshot"],
+    tray: ["allow-tray-action"],
     animations: ["allow-close-splash", "allow-finalize-quit"],
   })) {
     const capability = JSON.parse(await readFile(`src-tauri/capabilities/${label}.json`, "utf8"));

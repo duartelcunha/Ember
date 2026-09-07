@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- Without this the WebView2 asks for /favicon.ico on every window it opens and Tauri
+         logs "asset not found" at ERROR level. The log is the first stop when debugging;
+         false ERRORs there cost more than an icon nobody looks at. -->
+    <link rel="icon" href="data:," />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ember</title>
+    <!-- The window is exactly the size of the menu: nothing here may scroll. -->
+    <style>
+      html,
+      body {
+        height: 100%;
+        overflow: hidden;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/tray/main.tsx"></script>
+  </body>
+</html>

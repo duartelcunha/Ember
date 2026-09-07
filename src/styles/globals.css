@@ -368,6 +368,22 @@
   to { clip-path: var(--ember-leave-end); opacity: 0; }
 }
 
+/* The tray menu is born from the icon below it, so its edge is the bottom one: the same two
+   gestures, re-aimed through the variables alone. It folds in 140ms, mirrored by `CLOSE_MS` in
+   `src-tauri/src/tray.rs`; change one, change the other. */
+.ember-tray [data-enter] { --ember-open-start: inset(60% 0 0 0 round 12px); }
+.ember-tray [data-leave] {
+  --ember-leave-swell: inset(60% 0 0 0 round 12px);
+  --ember-leave-end: inset(100% 0 0 0 round 12px);
+  animation-duration: 140ms;
+}
+/* Taskbar at the top: the popup sits below the icon, so the icon-facing edge is the top one. */
+.ember-tray[data-side="below"] [data-enter] { --ember-open-start: inset(0 0 60% 0 round 12px); }
+.ember-tray[data-side="below"] [data-leave] {
+  --ember-leave-swell: inset(0 0 60% 0 round 12px);
+  --ember-leave-end: inset(0 0 100% 0 round 12px);
+}
+
 /* The surface opening is the box; this is what happens inside it. Without it the clip reveals
    text that is already finished, which reads as a cut-out rather than a surface filling up.
    Transform on a CHILD never changes the chip's own box, so the measured geometry the cursor

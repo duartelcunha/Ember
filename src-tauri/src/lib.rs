@@ -26,12 +26,11 @@ mod secrets;
 mod selection;
 mod selection_guard;
 mod state;
+mod tray;
 
 use std::sync::atomic::Ordering;
 
 use ember_core::model::RefineMode;
-use tauri::menu::{MenuBuilder, MenuItemBuilder};
-use tauri::tray::TrayIconBuilder;
 use tauri::window::Color;
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_autostart::MacosLauncher;
@@ -112,13 +111,13 @@ fn needs_centering(app: &AppHandle, w: &WebviewWindow) -> bool {
 /// A escala e por monitor e nao da janela de proposito. Perguntar `w.scale_factor()` era o bug:
 /// isso descreve o ecra onde a janela ESTA, e o Windows so a corrige no WM_DPICHANGED seguinte.
 /// Durante a travessia, os offsets sairiam a escala do ecra anterior.
-struct MonitorInfo {
-    full: geom::Rect,
-    work: geom::Rect,
-    scale: f64,
+pub(crate) struct MonitorInfo {
+    pub(crate) full: geom::Rect,
+    pub(crate) work: geom::Rect,
+    pub(crate) scale: f64,
 }
 
-fn monitors_of(w: &WebviewWindow) -> Vec<MonitorInfo> {
+pub(crate) fn monitors_of(w: &WebviewWindow) -> Vec<MonitorInfo> {
     let Ok(list) = w.available_monitors() else {
         return Vec::new();
     };
@@ -185,6 +184,17 @@ pub(crate) fn get_or_create_window(app: &AppHandle, label: &str) -> Option<Webvi
                     log::warn!("settings: window state not saved: {e}");
                 }
                 let _ = win.hide();
+            }
+        });
+    }
+    if label == "tray" {
+        // Losing focus IS the close: a click anywhere else, or on the icon again, folds the menu.
+        // Hooked here, where the window is born, so a menu created by the warm-up and one
+        // created on the first click get the same treatment.
+        let a = app.clone();
+        w.on_window_event(move |event| {
+            if let tauri::WindowEvent::Focused(false) = event {
+                tray::close_menu(&a, tray::ClosedBy::Blur);
             }
         });
     }
@@ -565,43 +575,21 @@ fn register_one(app: &AppHandle, hotkey: &str, action: HotkeyAction) -> Result<(
     .map_err(|e| e.to_string())
 }
 
-fn build_tray(app: &tauri::App) -> tauri::Result<()> {
-    let open = MenuItemBuilder::with_id("open_settings", "Settings").build(app)?;
-    let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
-    let menu = MenuBuilder::new(app).items(&[&open, &quit]).build()?;
-    let Some(icon) = app.default_window_icon().cloned() else {
-        // Sem icone nao construimos a tray (em vez de rebentar). A app continua viva; o log
-        // deixa rasto. Na pratica o icone vem sempre da config, por isso isto e defensivo.
-        log::error!("tray: no default window icon, skipping tray build");
-        return Ok(());
-    };
-    TrayIconBuilder::new()
-        .icon(icon)
-        .tooltip("Ember")
-        .menu(&menu)
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            "open_settings" => {
-                show_settings(app);
-            }
-            "quit" => {
-                if let Some(quit_anim) = get_or_create_window(app, "quit_anim") {
-                    let _ = quit_anim.set_ignore_cursor_events(true);
-                    let _ = quit_anim.show();
-                }
-                // A animacao de quit chama `finalize_quit` quando termina: a saida acopla ao
-                // fim REAL da animacao, nao a um numero magico que podia divergir do duration.
-                // Fallback: se a webview nao completar (falhou a carregar), forca a saida ao
-                // fim de um tempo curto, para nunca ficar preso na tray sem sair.
-                let app = app.clone();
-                tauri::async_runtime::spawn(async move {
-                    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
-                    finalize_quit_now(&app);
-                });
-            }
-            _ => {}
-        })
-        .build(app)?;
-    Ok(())
+/// The way out, shared by everything that quits (today: the tray menu).
+pub(crate) fn begin_quit(app: &AppHandle) {
+    if let Some(quit_anim) = get_or_create_window(app, "quit_anim") {
+        let _ = quit_anim.set_ignore_cursor_events(true);
+        let _ = quit_anim.show();
+    }
+    // A animacao de quit chama `finalize_quit` quando termina: a saida acopla ao
+    // fim REAL da animacao, nao a um numero magico que podia divergir do duration.
+    // Fallback: se a webview nao completar (falhou a carregar), forca a saida ao
+    // fim de um tempo curto, para nunca ficar preso na tray sem sair.
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+        finalize_quit_now(&app);
+    });
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -633,7 +621,7 @@ pub fn run() {
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_state_flags(window_state_flags())
-                .with_denylist(&["overlay", "picker", "splash", "startup_anim", "quit_anim"])
+                .with_denylist(&["overlay", "picker", "tray", "splash", "startup_anim", "quit_anim"])
                 .build(),
         )
         .manage(state::AppState::new())
@@ -645,6 +633,7 @@ pub fn run() {
             floating::floating_position,
             flow::overlay_snapshot,
             picker::picker_snapshot,
+            tray::tray_action,
             commands::set_model,
             commands::set_openai_base_url,
             commands::set_hotkey,
@@ -696,7 +685,7 @@ pub fn run() {
             if secrets::migrate_legacy_openai(&initial.openai_base_url).is_err() {
                 log::warn!("credentials: existing connection key could not be migrated");
             }
-            build_tray(app)?;
+            tray::build_tray(app)?;
             let handle = app.handle().clone();
             context::start(handle.clone());
 
@@ -777,6 +766,12 @@ pub fn run() {
                     if h.get_webview_window("settings").is_none() {
                         let _ = get_or_create_window(&h, "settings");
                         log::info!("settings: janela pre-aquecida");
+                    }
+                    // The tray menu too, in the same breath: a third webview at t=0 was one too
+                    // many for the startup. A click inside these two seconds creates it on the
+                    // spot, and the `ready` handshake covers the listener arriving late.
+                    if h.get_webview_window("tray").is_none() {
+                        let _ = get_or_create_window(&h, "tray");
                     }
                 });
             }

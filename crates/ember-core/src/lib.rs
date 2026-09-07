@@ -28,6 +28,7 @@ pub mod providers;
 pub mod refine_cache;
 pub mod retry;
 pub mod selection;
+pub mod tray;
 pub mod window_geom;
 
 pub use cycle::{hotkey_action, may_hide, may_release_guard, owns_overlay, HotkeyAction};

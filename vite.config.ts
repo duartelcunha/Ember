@@ -30,6 +30,7 @@ export default defineConfig({
         settings: r("./settings.html"),
         splash: r("./splash.html"),
         picker: r("./picker.html"),
+        tray: r("./tray.html"),
       },
       output: {
         manualChunks: {

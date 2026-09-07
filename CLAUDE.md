@@ -12,8 +12,8 @@ AGENTS.md resume o mesmo para outras ferramentas.
 - `src-tauri/`: o shell. Todo o I/O vive aqui: janelas, hooks de teclado/rato, clipboard, HTTP,
   config, segredos, OAuth. Regra dura: lógica decidível sem I/O desce para o ember-core e ganha
   testes; o shell orquestra.
-- `src/`: frontend React 19 + Tailwind + motion. Quatro entradas: `settings.html`,
-  `overlay.html`, `picker.html`, `splash.html` (ver `vite.config.ts`).
+- `src/`: frontend React 19 + Tailwind + motion. Cinco entradas: `settings.html`,
+  `overlay.html`, `picker.html`, `tray.html`, `splash.html` (ver `vite.config.ts`).
 
 ## Regras invioláveis (cada uma existe por causa de um bug real)
 

@@ -44,7 +44,7 @@ if ($emberProcess.Count -ne 1) { throw 'Expected one installed Ember instance' }
 $observedVersion = (Get-Item -LiteralPath $emberProcess[0].Path).VersionInfo.ProductVersion
 if ($observedVersion -ne $ExpectedVersion) { throw "Expected Ember $ExpectedVersion, found $observedVersion" }
 if (@([EmberNativeProbe]::VisibleRects($emberProcess[0].Id) | Where-Object { ($_.Right - $_.Left) -gt 32 -and ($_.Bottom - $_.Top) -gt 32 }).Count -ne 0) {
-    throw 'Close Ember settings and finish any active interaction before running this harness'
+    throw 'Close Ember settings and the tray menu, and finish any active interaction before running this harness'
 }
 $configuration = Get-Content -LiteralPath (Join-Path $env:APPDATA 'com.deleg8lab.ember/config.json') -Raw | ConvertFrom-Json
 if ($configuration.hotkey_picker -ne 'CmdOrCtrl+Shift+P') { throw 'Picker shortcut differs from the qualified harness shortcut' }
