@@ -10,6 +10,11 @@
  * as `getVersion()` reports it, and three lines at most: About shows the entry for the running
  * version and NOTHING when there is no match, so a stale list can never describe a build it was
  * not written for.
+ *
+ * That cuts both ways, and it caught one out already: this list carried the settings release
+ * under 1.1.0-rc.2, a version that shipped months of work earlier and never had any of it, and
+ * the release that did have it would have shown an empty About. The version here is the one
+ * release-please is about to publish, not the one you happen to be running while you write it.
  */
 export interface Release {
   version: string;
@@ -18,11 +23,11 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
-    version: "1.1.0-rc.2",
+    version: "1.2.0-rc.2",
     lines: [
       "Every settings tab fits the window now, and the window remembers where you left it.",
       "A Reply mode that answers the message you selected, on a shortcut of its own.",
-      "Shorter, Same or Longer, applied on top of whichever mode is running.",
+      "Three marks for the ember beside your cursor, in three sizes.",
     ],
   },
   {
