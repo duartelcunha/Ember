@@ -6,8 +6,12 @@ const SPARK_SIZE = 40;
 
 const PX = 3;
 
-// Shared visible bounds anchor the original pixel artwork next to the cursor.
+// Shared visible bounds anchor the ring next to the cursor. The ring is eight dots on a
+// 5x5 grid of 3px cells; the cells are the geometry the tests and the cursor anchor measure,
+// so the dots can change shape without anything else moving.
 const GRID = ORB_INK;
+/** Dot radius. Slightly over half a cell, so neighbours read as a ring and not as beads. */
+const DOT_R = 1.6;
 
 const RING = [
   [2, 0], // top
@@ -53,7 +57,10 @@ function css(chase: number) {
       i
     ).toFixed(3)}s infinite}`,
   ).join("");
-  return `@keyframes ember-chase{0%{opacity:0}1%{opacity:1}100%{opacity:0}}${steps}
+  // A rounded pulse travelling around the ring, not a flash followed by a long fade. The old
+  // 0% -> 1% jump was what made the ring read as pixels blinking; with the dots round, the
+  // same jump reads as beads switching on. Ease-in-out on both flanks keeps it soft.
+  return `@keyframes ember-chase{0%{opacity:.18}14%{opacity:1}55%{opacity:.18}100%{opacity:.18}}${steps}
 @media (prefers-reduced-motion: reduce){[class^="ember-px-"]{animation:none}}`;
 }
 
@@ -113,15 +120,14 @@ export function Orb({ variant = "work" }: { variant?: keyof typeof VARIANT }) {
         </circle>
 
         {RING.map(([col, row], i) => (
-          <rect
+          <circle
             key={i}
             className={`ember-px-${i}`}
-            x={GRID.x + col * PX}
-            y={GRID.y + row * PX}
-            width={PX}
-            height={PX}
+            cx={GRID.x + col * PX + PX / 2}
+            cy={GRID.y + row * PX + PX / 2}
+            r={DOT_R}
             fill="var(--color-accent)"
-            shapeRendering="crispEdges"
+            shapeRendering="geometricPrecision"
             opacity={1 - i * 0.11}
           />
         ))}

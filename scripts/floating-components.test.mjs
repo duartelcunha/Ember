@@ -149,7 +149,7 @@ test("UI components preserve geometry and asynchronous ownership", (t) => withBr
         await send('ember://overlay-at', { sequence: 5000 + sequence, generation: sequence, ready: true, scale: 1, width: 800, height: 600, x, y: 180, originX: 0, originY: 0 });
         await send('ember://state', { sequence: sequence++, runId: 6, phase: 'refining' });
         await presented();
-        assert.equal(await page.$$eval('.ember-orb-row rect', nodes => nodes.filter(e => getComputedStyle(e).animationName === 'ember-chase').length), 8);
+        assert.equal(await page.$$eval('.ember-orb-row circle', nodes => nodes.filter(e => getComputedStyle(e).animationName === 'ember-chase').length), 8);
         assert.equal(await page.$$eval('.ember-orb-row animate', nodes => nodes.length), 1);
         await page.evaluate(() => {
           window.__morphAnimation = null;
@@ -213,7 +213,7 @@ test("UI components preserve geometry and asynchronous ownership", (t) => withBr
       await send('ember://state', { sequence: sequence++, runId: 6, phase: 'refining' });
       await presented();
       assert.equal(await page.$$eval('.ember-orb-row animate', nodes => nodes.length), 0);
-      assert.equal(await page.$$eval('.ember-orb-row rect', nodes => nodes.every(e => getComputedStyle(e).animationName === 'none')), true);
+      assert.equal(await page.$$eval('.ember-orb-row circle', nodes => nodes.every(e => getComputedStyle(e).animationName === 'none')), true);
       await send('ember://state', { sequence: sequence++, runId: 6, phase: 'preview', confirmationScope: 'selection' });
       await presented();
       assert.equal(await page.$eval('[data-morph-from-orb]', e => getComputedStyle(e).animationName), 'none');
