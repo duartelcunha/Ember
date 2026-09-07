@@ -29,7 +29,7 @@ function WhatsNew() {
   if (!release) return null;
 
   return (
-    <div className="min-h-0 flex-1">
+    <div className="shrink-0">
       <h3 className="text-xs font-semibold text-fg">New in this version</h3>
       <ul className="mt-2 space-y-1.5">
         {release.lines.map(line => (
@@ -71,19 +71,20 @@ export function AboutTab({
     <div data-tab-body="" className="settings-col min-h-0 flex-1">
       <Section title="Ember" elastic hint="Refines the text you select in any app: prompts, emails, messages, docs.">
         <div className="flex min-h-0 flex-1 flex-col gap-4">
-          {/* The mark reads as a mark here, not as a dot in a void: a band it shares with the
-              name, over a warm wash that fades out before the text starts. */}
-          <div className="relative flex shrink-0 items-center gap-4 overflow-hidden rounded-md border border-[color:var(--border-subtle)] bg-surface-2 p-4">
+          {/* The band takes the slack, which is the whole point: the mark centred in a tall
+              warm field reads as composition, while the same emptiness sitting between the notes
+              and the version line reads as a page that ran out of things to say. */}
+          <div className="relative flex min-h-[9rem] flex-1 flex-col items-center justify-center gap-3 overflow-hidden rounded-md border border-[color:var(--border-subtle)] bg-surface-2 p-5 text-center">
             <span
               aria-hidden="true"
               className="pointer-events-none absolute inset-0"
               style={{
                 background:
-                  "radial-gradient(120px 120px at 3rem 50%, color-mix(in oklab, var(--color-accent) 22%, transparent), transparent 70%)",
+                  "radial-gradient(60% 70% at 50% 42%, color-mix(in oklab, var(--color-accent) 20%, transparent), transparent 72%)",
               }}
             />
             <span className="relative shrink-0">
-              <Logo size={72} />
+              <Logo size={88} />
             </span>
             <span className="relative min-w-0">
               <span className="block text-xl font-semibold text-fg">Ember</span>
@@ -95,7 +96,7 @@ export function AboutTab({
 
           <WhatsNew />
 
-          <div className="mt-auto flex shrink-0 flex-col gap-2 border-t border-[color:var(--border-subtle)] pt-3">
+          <div className="flex shrink-0 flex-col gap-2 border-t border-[color:var(--border-subtle)] pt-3">
             <UpdateChecker />
             <button
               onClick={() => ipc.openRepo().catch(() => toast.error("Couldn't open the repository."))}

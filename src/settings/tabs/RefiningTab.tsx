@@ -228,43 +228,54 @@ function LengthSegment({ value, onChange }: { value: Length; onChange: (length: 
 }
 
 /**
- * O Reply, no seu proprio cartao.
+ * O Reply, uma linha por baixo da comparacao e dentro do mesmo grupo de radios.
  *
- * Diz a condicao antes de alguem a descobrir a mal: o Ember so escreve sobre campos que se
- * possam editar (o `SelectionGuard` recusa os outros antes de haver chamada ao modelo), por isso
- * selecionar o email no painel de leitura nunca funciona. A frase esta aqui, e nao escondida
- * numa mensagem de erro depois do facto.
+ * Nao entra na grelha porque parte de outro input e nao ha nada para comparar lado a lado, mas e
+ * um modo que o atalho principal pode correr, por isso vive no cartao que pergunta qual e o modo
+ * do atalho principal. Uma linha e nao um cartao: medido, o cartao proprio custava 150px que a
+ * comparacao nao tinha para dar, e a 720x856 os tres paineis ficavam com dez pixeis.
  */
-function ReplyCard() {
+function ReplyRow({ mode, onPick }: { mode: RefineMode; onPick: (mode: RefineMode) => void }) {
+  const on = mode === "reply";
   const Icon = MODE_ICON.reply;
   return (
-    <Section
-      title="Reply"
-      hint="Answers the message you selected, instead of rewriting it."
-      detail={
-        <p>
-          Ember only writes into fields you can edit, so selecting a message in a reading pane
-          will not work: paste it into your reply box, select it there, then press the Reply
-          shortcut. It answers in the first person, in the message&apos;s language, and it never
-          accepts, declines or promises anything for you. Where the message did not give a
-          detail, it leaves a visible placeholder instead of inventing one.
-        </p>
-      }
-      action={
-        <Icon size={16} weight="fill" aria-hidden="true" className="shrink-0 text-accent" />
-      }
+    <label
+      className={cn(
+        "flex shrink-0 cursor-pointer flex-col rounded-sm border px-3 py-2 transition-[color,background-color,border-color,box-shadow]",
+        "focus-within:outline-none focus-within:ring-2 focus-within:ring-[color:var(--border-accent)]",
+        on
+          ? "border-[color:var(--border-accent)] bg-surface-3 shadow-[0_0_0_1px_var(--border-accent),0_8px_24px_-12px_var(--color-accent)]"
+          : "border-[color:var(--border-subtle)] bg-surface-2 hover:border-[color:var(--border-default)]",
+      )}
     >
-      <p className="text-xs text-fg-muted [display:var(--mode-input,block)]">
-        <span className="mr-1.5 font-medium text-fg">Message</span>
-        <span className="font-mono">{REPLY_EXAMPLE.input}</span>
-      </p>
-      <span className="block rounded-xs border-l-2 border-l-[color:var(--color-accent)] bg-bg/70 px-2.5 py-2">
-        <span className="mode-example font-mono text-xs text-fg">{REPLY_EXAMPLE.output}</span>
+      <input
+        type="radio"
+        name="refine-mode"
+        value="reply"
+        className="sr-only"
+        checked={on}
+        onChange={() => onPick("reply")}
+        aria-describedby="mode-reply-out"
+      />
+      <span className="flex items-center gap-1.5">
+        <Icon
+          size={14}
+          weight={on ? "fill" : "regular"}
+          aria-hidden="true"
+          className={cn("shrink-0", on ? "text-accent" : "text-fg-muted")}
+        />
+        <span className="text-sm font-semibold text-fg">{MODE_COPY.reply.title}</span>
+        {on && <Check size={12} weight="bold" aria-hidden="true" className="shrink-0 text-accent" />}
+        <span className="min-w-0 truncate text-xs text-fg-muted">{MODE_COPY.reply.hint}</span>
       </span>
-      <p className="text-xs text-fg-muted [display:var(--mode-hint,block)]">
-        Give it a shortcut under Shortcut to use it.
-      </p>
-    </Section>
+      <span
+        id="mode-reply-out"
+        className="mode-example mt-1 block truncate font-mono text-xs text-fg"
+        title={`${REPLY_EXAMPLE.input}  ->  ${REPLY_EXAMPLE.output}`}
+      >
+        {REPLY_EXAMPLE.output}
+      </span>
+    </label>
   );
 }
 
@@ -400,12 +411,22 @@ export function RefiningTab({
         elastic
         hint="What your main shortcut does. Pick one; the examples are written by hand."
         detail={
-          <p>
-            The three examples are the same sentence refined by each mode, written by hand to
-            show the difference, not live refines. Length applies on top of whichever mode is
-            running, Reply included. Bind a shortcut to Fix or Rebuild under Shortcut to switch
-            as you press.
-          </p>
+          <div className="space-y-2">
+            <p>
+              The three examples are the same sentence refined by each mode, written by hand to
+              show the difference, not live refines. Length applies on top of whichever mode is
+              running, Reply included. Bind a shortcut to a mode under Shortcut to switch as you
+              press.
+            </p>
+            <p>
+              Reply answers the message instead of rewriting it, in the first person and in the
+              message&apos;s language, and it never accepts, declines or promises anything for
+              you: where the message gave no detail it leaves a visible placeholder. Ember only
+              writes into fields you can edit, so selecting a message in a reading pane will not
+              reach the model. Paste it into your reply box, select it there, then fire the
+              shortcut.
+            </p>
+          </div>
         }
         action={<LengthSegment value={s.length} onChange={setLength} />}
       >
@@ -415,9 +436,9 @@ export function RefiningTab({
             <span className="font-mono line-through decoration-1">{MODE_EXAMPLE.input}</span>
           </p>
           <ModeComparison mode={s.mode} onPick={setMode} />
+          <ReplyRow mode={s.mode} onPick={setMode} />
         </div>
       </Section>
-      <ReplyCard />
       </div>
 
       <div data-settings-col="" className="settings-col">

@@ -151,6 +151,7 @@ function DiagnosticsSection({ savePrompts, keepResults }: { savePrompts: boolean
         <Button variant="ghost" size="sm" onClick={openLogDir}>
           Open log folder
         </Button>
+        <VersionHistoryDialog />
       </div>
     </Section>
   );
@@ -213,31 +214,46 @@ function DiagnosticsReport() {
 /**
  * Every release Ember can describe, not just the one running.
  *
- * About shows the current entry and stops there, because that is the question someone actually
- * has after an update. The rest is history, and history is a developer's question.
+ * About shows the entry for the build in front of you and stops there, because that is the
+ * question someone actually has after an update. The rest is history, and history is a
+ * developer's question. In a dialog rather than a card: as a third card in this column it left
+ * the report showing two lines and clipped its own list mid-sentence at 720x856, and the report
+ * is the thing anyone opens this tab to read.
  */
-function VersionHistory() {
+function VersionHistoryDialog() {
   return (
-    <Section
-      title="Version history"
-      elastic
-      hint="Written by hand at each release, so it says what changed rather than which commits landed."
-    >
-      <ol data-scroll-pane="" className="min-h-0 flex-1 space-y-3 overflow-auto pr-1">
-        {RELEASES.map((release) => (
-          <li key={release.version}>
-            <span className="font-mono text-xs font-semibold text-fg">{release.version}</span>
-            <ul className="mt-1 space-y-0.5">
-              {release.lines.map((line) => (
-                <li key={line} className="text-xs leading-relaxed text-fg-muted">
-                  {line}
-                </li>
-              ))}
-            </ul>
-          </li>
-        ))}
-      </ol>
-    </Section>
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button variant="ghost" size="sm">
+          Version history…
+        </Button>
+      </DialogTrigger>
+      <DialogContent size="lg">
+        <DialogHeader>
+          <DialogTitle>Version history</DialogTitle>
+          <DialogDescription>
+            Written by hand at each release, so it says what changed rather than which commits landed.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogBody>
+          <ol className="space-y-4">
+            {RELEASES.map((release) => (
+              <li key={release.version}>
+                <span className="font-mono text-xs font-semibold text-fg">{release.version}</span>
+                <ul className="mt-1 space-y-1">
+                  {release.lines.map((line) => (
+                    <li key={line} className="flex gap-2 text-xs leading-relaxed text-fg-muted">
+                      <span aria-hidden="true" className="mt-1.5 size-1 shrink-0 rounded-full bg-accent" />
+                      <span>{line}</span>
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ol>
+        </DialogBody>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -250,14 +266,9 @@ function VersionHistory() {
  */
 export function DevTab({ s }: { s: EmberSettings }) {
   return (
-    <div data-tab-body="" className="settings-two-col min-h-0 flex-1">
-      <div data-settings-col="" className="settings-col settings-col-grow settings-col-wide">
-        <DiagnosticsSection savePrompts={s.savePrompts} keepResults={s.keepResults} />
-        <DiagnosticsReport />
-      </div>
-      <div data-settings-col="" className="settings-col">
-        <VersionHistory />
-      </div>
+    <div data-tab-body="" className="settings-col min-h-0 flex-1">
+      <DiagnosticsSection savePrompts={s.savePrompts} keepResults={s.keepResults} />
+      <DiagnosticsReport />
     </div>
   );
 }

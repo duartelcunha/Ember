@@ -160,11 +160,15 @@ export async function tabContentRegressions(page, origin) {
   await page.click('[data-provider-swap]');
   await page.waitForFunction(() => document.querySelector('.provider-pair [data-settings-col]:first-child h3').textContent.trim() === 'Gemini');
 
-  // Refining: three radios, all three outputs on screen, arrows move the selection.
+  // Refining: four modes in one radio group (three compared side by side, Reply as a row under
+  // them because it starts from another kind of input), every example on screen, arrows move the
+  // selection, and the length choice sits in the card header where it costs the grid no height.
   await open('Refining', 'input[name="refine-mode"]');
-  assert.equal(await page.$$eval('input[name="refine-mode"]', e => e.length), 3);
+  assert.equal(await page.$$eval('input[name="refine-mode"]', e => e.length), 4);
+  assert.ok(await page.$('input[name="refine-mode"][value="reply"]'), 'Reply must be pickable as the main mode');
+  assert.equal(await page.$$eval('input[name="refine-length"]', e => e.length), 3);
   const outputs = await page.$$eval('.mode-example', e => e.map(x => x.textContent).join(' | '));
-  for (const expected of ['Set up a meeting', 'Schedule a meeting', 'scheduling assistant']) {
+  for (const expected of ['Set up a meeting', 'Schedule a meeting', 'scheduling assistant', 'The meeting is at {time}']) {
     assert.ok(outputs.includes(expected), `every mode's example should be on screen: ${outputs}`);
   }
   await page.evaluate(() => window.__settingsFixture.modes.length = 0);
