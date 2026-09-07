@@ -29,7 +29,7 @@ function WhatsNew() {
   if (!release) return null;
 
   return (
-    <div className="shrink-0">
+    <div className="shrink-0 [display:var(--hint,block)]">
       <h3 className="text-xs font-semibold text-fg">New in this version</h3>
       <ul className="mt-2 space-y-1.5">
         {release.lines.map(line => (
@@ -70,13 +70,13 @@ export function AboutTab({
   return (
     <div data-tab-body="" className="settings-col min-h-0 flex-1">
       <Section title="Ember" elastic hint="Refines the text you select in any app: prompts, emails, messages, docs.">
-        <div className="flex min-h-0 flex-1 flex-col gap-4">
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
           {/* The mark takes the slack, which is the whole point: centred with room around it it
               reads as composition, while the same emptiness sitting between the notes and the
               version line reads as a page that ran out of things to say. */}
-          <div className="flex min-h-[9rem] flex-1 flex-col items-center justify-center gap-3 p-5 text-center">
-            <span className="shrink-0">
-              <Logo size={88} />
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-5 text-center">
+            <span className="flex max-h-[88px] min-h-0 flex-1 items-center justify-center">
+              <Logo size={88} className="h-full max-h-[88px] w-auto" />
             </span>
             <span className="min-w-0">
               <span className="block text-xl font-semibold text-fg">Ember</span>

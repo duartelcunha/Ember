@@ -159,6 +159,22 @@ test("settings surfaces fit the window and keep their behaviour", (t) => withBro
     await t.test("each tab shows the data it already had", () => tabContentRegressions(page, `${origin}`));
     await t.test("the overlay preview keeps its own palette and its orb is visible", () => appearanceRegressions(page, `${origin}`, capture));
     await t.test("every tab fits the window at three sizes in both themes", () => settingsLayoutRegressions(page, `${origin}`, capture));
+    // About grows by a line the moment an update check answers, and that line was enough to push
+    // the GitHub link out through the bottom of its own card. The matrix never saw it because
+    // the check only runs when you press the button.
+    await t.test("About still fits once an update check has answered", async () => {
+      await settingsLayoutRegressions(page, `${origin}`, async name => capture(`${name}-checked`), ['about'], async () => {
+        await openTab(page, 'About');
+        await page.waitForSelector('#debug-mode');
+        await page.evaluate(() => {
+          const button = Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === 'Check for updates');
+          if (!button) throw new Error('no Check for updates button');
+          button.click();
+        });
+        await page.waitForSelector('[role=alert], [role=status]');
+      });
+    });
+
     // The Developer tab is the one panel the matrix above cannot reach: it does not exist until
     // the switch in About is on, and it carries the tallest content in the app.
     await t.test("the Developer tab fits once its switch is on", async () => {

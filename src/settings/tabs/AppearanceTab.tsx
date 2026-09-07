@@ -151,14 +151,14 @@ const CURSOR_X = "38%";
  * point with the same constants the real overlay uses, so what the preview shows about the gap
  * is true.
  */
-function Pointer() {
+function Pointer({ x, y }: { x: string; y: string }) {
   return (
     <svg
       width={13}
       height={19}
       viewBox="0 0 13 19"
       className="absolute"
-      style={{ left: CURSOR_X, top: "50%", filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.45))" }}
+      style={{ left: x, top: y, filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.45))" }}
       aria-hidden="true"
     >
       <path
@@ -225,6 +225,10 @@ function OverlayStage({
   // thing the user just chose to look at.
   const [picked, setPicked] = useState(false);
   const [paused, setPaused] = useState(false);
+  /** Where the pointer is over the stage, in stage pixels. `null` while it is somewhere else. */
+  const [at, setAt] = useState<{ x: number; y: number } | null>(null);
+  const originX = at ? `${at.x}px` : CURSOR_X;
+  const originY = at ? `${at.y}px` : "50%";
   // The real offsets, imported rather than copied: the mark's ink lands `CURSOR_GAP.x` to the
   // right of the hotspot and its centre `CURSOR_GAP.y` below it, and a surface centres on that
   // same point because the morph grows it out of the ring.
@@ -262,18 +266,22 @@ function OverlayStage({
           data-overlay-preview=""
           className="ember-overlay-preview relative min-h-[7rem] flex-auto overflow-hidden rounded-md"
           onPointerEnter={() => setPaused(true)}
-          onPointerLeave={() => setPaused(false)}
+          onPointerMove={(event) => {
+            const box = event.currentTarget.getBoundingClientRect();
+            setAt({ x: event.clientX - box.left, y: event.clientY - box.top });
+          }}
+          onPointerLeave={() => { setPaused(false); setAt(null); }}
         >
           <StageBackdrop />
           {/* A picture of a UI, not the UI: the caption below carries the meaning. */}
-          <Pointer />
+          <Pointer x={originX} y={originY} />
           {state === "refining" ? (
             <div
               aria-hidden="true"
               className="absolute"
               style={{
-                left: `calc(${CURSOR_X} + ${CURSOR_GAP.x - ink.x}px)`,
-                top: `calc(50% + ${CURSOR_GAP.y - ink.y - ink.height / 2}px)`,
+                left: `calc(${originX} + ${CURSOR_GAP.x - ink.x}px)`,
+                top: `calc(${originY} + ${CURSOR_GAP.y - ink.y - ink.height / 2}px)`,
               }}
             >
               <Orb variant="work" skin={s.orbSkin} px={ORB_SIZE_PX[s.orbSize]} />
@@ -283,11 +291,11 @@ function OverlayStage({
               aria-hidden="true"
               className="absolute w-max"
               style={{
-                left: `calc(${CURSOR_X} + ${CURSOR_GAP.x}px)`,
-                top: `calc(50% + ${CURSOR_GAP.y}px)`,
+                left: `calc(${originX} + ${CURSOR_GAP.x}px)`,
+                top: `calc(${originY} + ${CURSOR_GAP.y}px)`,
                 transform: "translateY(-50%)",
                 // The overlay clamps to the screen; here the stage is the screen.
-                maxWidth: `calc(100% - ${CURSOR_X} - ${CURSOR_GAP.x + 12}px)`,
+                maxWidth: `calc(100% - ${originX} - ${CURSOR_GAP.x + 12}px)`,
               }}
             >
               {state === "confirm" && <Preview scope="selection" />}
