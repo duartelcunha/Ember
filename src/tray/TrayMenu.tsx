@@ -1,6 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { getVersion } from "@tauri-apps/api/app";
 import { LazyMotion, MotionConfig, domAnimation, m, useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { GearSix, Power } from "@phosphor-icons/react";
@@ -45,14 +44,9 @@ export function TrayMenu() {
   const [index, setIndex] = useState(0);
   // Which edge faces the icon (Rust decides: a taskbar at the top puts the menu below it).
   const [below, setBelow] = useState(false);
-  const [version, setVersion] = useState<string | null>(null);
   // One choice per opening. A held Enter repeats; the repeats find this set and do nothing.
   const acted = useRef(false);
   const menu = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    getVersion().then(setVersion).catch(() => {});
-  }, []);
 
   useEffect(() => {
     let disposed = false;
@@ -147,9 +141,6 @@ export function TrayMenu() {
               <div className="flex items-center gap-2 px-2 pb-1" style={{ height: HEADER_H }}>
                 <Logo size={18} />
                 <span className="text-sm font-semibold text-fg">Ember</span>
-                <span className="ml-auto text-[10px] tabular-nums text-fg-muted">
-                  {version ? `v${version}` : ""}
-                </span>
               </div>
               <div className="relative" style={{ height: ITEMS.length * ITEM_H }}>
                 <m.div
@@ -181,11 +172,6 @@ export function TrayMenu() {
                   >
                     <Icon size={14} weight="bold" className="shrink-0 text-fg-muted" />
                     <span className="truncate">{label}</span>
-                    {i === index && (
-                      <kbd className="ml-auto rounded border border-white/15 px-1 text-[10px] text-fg-muted">
-                        ↵
-                      </kbd>
-                    )}
                   </button>
                 ))}
               </div>

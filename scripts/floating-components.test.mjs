@@ -253,7 +253,7 @@ test("UI components preserve geometry and asynchronous ownership", (t) => withBr
       await page.goto(`${origin}/__ember-test/tray?trayOpen`);
       await page.waitForSelector('[role=menu]');
       assert.equal(await page.$$eval('[role=menuitem]', nodes => nodes.length), 2);
-      await page.waitForFunction(() => document.querySelector('[role=menu]').textContent.includes('v1.2.3'));
+      assert.equal(await page.$eval('[role=menu]', e => e.textContent.trim()), 'EmberSettingsQuit Ember');
       // Born from the icon below it: the house entrance, aimed at the bottom edge, and the menu
       // node itself holds focus so the keyboard and a screen reader have a composite to follow.
       assert.equal(await page.$eval('.ember-bubble[data-enter]', e => getComputedStyle(e).animationName), 'ember-surface-open');
