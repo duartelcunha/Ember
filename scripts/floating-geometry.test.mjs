@@ -4,7 +4,7 @@ import { test } from "node:test";
 import ts from "typescript";
 const source = await readFile(new URL("../src/components/floatingGeometry.ts", import.meta.url), "utf8");
 const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext } }).outputText;
-const { placeFloating, placeOrb, placeLabels, ORB_INK, CURSOR_GAP, geometryReady } = await import(`data:text/javascript;base64,${Buffer.from(output).toString("base64")}`);
+const { placeFloating, placeOrb, placeLabels, ORB_INK, ORB_PX, orbInk, CURSOR_GAP, geometryReady } = await import(`data:text/javascript;base64,${Buffer.from(output).toString("base64")}`);
 
 test("negative monitor origins and mixed DPI keep measured content inside the work area", () => {
   for (const scale of [1, 1.25, 1.5, 1.75, 2]) for (const [width, height] of [[1920, 1080], [1080, 1920], [640, 480]]) {
@@ -49,6 +49,36 @@ test("visible pixels keep their own cursor anchor regardless of label width", ()
     assert.equal(edge.left, true);
   }
 });
+test("every orb size keeps the same clearance from the cursor", () => {
+  // The size changes how much ink there is, never where the ink starts. The clearance in
+  // CURSOR_GAP was measured against the Windows arrow (6.8px of visible air); it is a property
+  // of the pointer, not of the mark, so a bigger mark grows away from the cursor, not into it.
+  const view = { width: 800, height: 600, scale: 1 };
+  const cursor = { x: 200, y: 100, originX: 0, originY: 0 };
+  for (const px of [2, 3, 4]) {
+    const ink = orbInk(px);
+    assert.equal(ink.width, px * 5, `size ${px} must be five drawing pixels wide`);
+    assert.equal(ink.height, ink.width, `size ${px} must be square`);
+    assert.ok(ink.x >= 0 && ink.x + ink.width <= 40, `size ${px} must fit the 40px canvas`);
+
+    const pos = placeOrb(cursor, view, false, false, px);
+    assert.equal(pos.x + ink.x, 200 + CURSOR_GAP.x, `right of the cursor at size ${px}`);
+    assert.equal(pos.y + ink.y, 100 + CURSOR_GAP.y - ink.height / 2, `centred on the hotspot at size ${px}`);
+
+    // On the left the mark grows leftwards, so its RIGHT edge keeps the clearance.
+    const edge = placeOrb({ ...cursor, x: 798 }, view, false, false, px);
+    assert.equal(edge.left, true);
+    assert.equal(edge.x + ink.x + ink.width, 798 - CURSOR_GAP.x, `left of the cursor at size ${px}`);
+
+    // Labels clear whatever size the ring is, or they would sit on top of a large one.
+    const labels = placeLabels(cursor, view, { width: 120, height: 20 }, false, px);
+    assert.ok(labels.y >= pos.y + ink.y + ink.height, `labels clear the ring at size ${px}`);
+  }
+  // The default is the size everyone already has: the untouched call sites cannot move.
+  assert.equal(ORB_PX, 3);
+  assert.deepEqual(orbInk(ORB_PX), ORB_INK);
+});
+
 test("mixed generations stay hidden until viewport dimensions and DPI agree", () => {
   const cursor = { x: 0, y: 0, originX: 0, originY: 0, scale: 1.5, width: 1200, height: 900, ready: true };
   assert.equal(geometryReady(cursor, { width: 800, height: 600, scale: 1.5 }), true);

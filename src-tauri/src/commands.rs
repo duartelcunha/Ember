@@ -1,6 +1,8 @@
 //! Comandos Tauri das settings + o helper de refinamento usado pelo loop nativo.
 
-use ember_core::model::{Length, ProfileSource, Provider, RefineMode};
+use ember_core::model::{
+    Length, NoticeSpeed, OrbSize, OrbSkin, OverlayStyle, ProfileSource, Provider, RefineMode,
+};
 use ember_core::prompt::build_llm_request;
 use ember_core::retry::RetryConfig;
 use serde::Serialize;
@@ -24,6 +26,9 @@ pub struct SettingsDto {
     hotkey_polish: String,
     hotkey_turbo: String,
     hotkey_reply: String,
+    orb_skin: &'static str,
+    orb_size: &'static str,
+    notice_speed: &'static str,
     hotkey_picker: String,
     autostart: bool,
     has_gemini_key: bool,
@@ -166,6 +171,9 @@ fn build_dto(_app: &AppHandle, cfg: &config::Config) -> SettingsDto {
         hotkey_polish: cfg.hotkey_polish.clone(),
         hotkey_turbo: cfg.hotkey_turbo.clone(),
         hotkey_reply: cfg.hotkey_reply.clone(),
+        orb_skin: cfg.overlay_style.skin.as_str(),
+        orb_size: cfg.overlay_style.size.as_str(),
+        notice_speed: cfg.overlay_style.notice.as_str(),
         hotkey_picker: cfg.hotkey_picker.clone(),
         autostart: cfg.autostart,
         has_gemini_key: has_g,
@@ -514,6 +522,45 @@ pub fn set_mode(app: AppHandle, mode: String) -> Result<(), String> {
     let mut cfg = config::load(&app);
     cfg.mode = parse_mode(&mode)?;
     config::save(&app, &cfg).map_err(|e| e.to_string())
+}
+
+/// Pele, tamanho e ritmo num comando so, e nao tres.
+///
+/// Viajam juntos para o estado em memoria e para a janela do overlay, e a UI tem sempre os tres
+/// a mao. Tres comandos separados seriam tres entradas na lista de permissoes e tres caminhos
+/// por onde a cache do `refresh_orb_state` podia ficar desatualizada.
+#[tauri::command]
+pub fn set_overlay_style(
+    app: AppHandle,
+    skin: String,
+    size: String,
+    notice: String,
+) -> Result<(), String> {
+    let style = OverlayStyle {
+        skin: match skin.as_str() {
+            "ember" => OrbSkin::Ember,
+            "pulse" => OrbSkin::Pulse,
+            "ring" => OrbSkin::Ring,
+            other => return Err(format!("invalid orb skin: {other}")),
+        },
+        size: match size.as_str() {
+            "small" => OrbSize::Small,
+            "normal" => OrbSize::Normal,
+            "large" => OrbSize::Large,
+            other => return Err(format!("invalid orb size: {other}")),
+        },
+        notice: match notice.as_str() {
+            "quick" => NoticeSpeed::Quick,
+            "normal" => NoticeSpeed::Normal,
+            "relaxed" => NoticeSpeed::Relaxed,
+            other => return Err(format!("invalid notice speed: {other}")),
+        },
+    };
+    let mut cfg = config::load(&app);
+    cfg.overlay_style = style;
+    config::save(&app, &cfg).map_err(|e| e.to_string())?;
+    refresh_orb_state(&app.state::<AppState>(), &cfg);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1102,12 +1149,13 @@ pub async fn distill_project(
         .map_err(|e| e.message())
 }
 
-/// Recalcula a cor do orb a partir do projeto ativo e guarda-a no estado.
+/// Recalcula tudo o que a brasa precisa de saber e guarda-o no estado: a cor e o nome do projeto
+/// ativo, e a pele, o tamanho e o ritmo escolhidos.
 ///
-/// Chamada no arranque e sempre que a lista ou o projeto ativo mudam. Um sitio so a decidir isto:
-/// se cada comando calculasse a sua, um deles acabaria por esquecer e o orb ficava com a cor do
-/// projeto anterior sem ninguem perceber porque.
-pub(crate) fn refresh_orb_accent(state: &AppState, cfg: &config::Config) {
+/// Chamada no arranque e sempre que a config muda. Um sitio so a decidir isto: se cada comando
+/// calculasse o seu, um deles acabaria por esquecer e a brasa ficava com a cor do projeto
+/// anterior, ou com a pele antiga ate ao reinicio, sem ninguem perceber porque.
+pub(crate) fn refresh_orb_state(state: &AppState, cfg: &config::Config) {
     let ativo = ember_core::projects::active(&cfg.projects, cfg.active_project.as_deref());
     let cor = ativo.map(|p| {
         // `resolve_accent` decides between the project's custom colour and its palette index; it
@@ -1121,6 +1169,9 @@ pub(crate) fn refresh_orb_accent(state: &AppState, cfg: &config::Config) {
     if let Ok(mut slot) = state.orb_project.lock() {
         *slot = ativo.map(|p| p.name.clone());
     }
+    if let Ok(mut slot) = state.overlay_style.lock() {
+        *slot = cfg.overlay_style;
+    }
 }
 
 /// Grava e volta a LER do disco antes de devolver o estado.
@@ -1131,7 +1182,7 @@ pub(crate) fn refresh_orb_accent(state: &AppState, cfg: &config::Config) {
 fn save_and_reload(app: &AppHandle, cfg: config::Config) -> Result<SettingsDto, String> {
     config::save(app, &cfg).map_err(|e| e.to_string())?;
     let fresca = config::load(app);
-    refresh_orb_accent(&app.state::<AppState>(), &fresca);
+    refresh_orb_state(&app.state::<AppState>(), &fresca);
     Ok(build_dto(app, &fresca))
 }
 
@@ -1337,13 +1388,16 @@ pub fn get_diagnostics(app: AppHandle) -> String {
         }
     };
     format!(
-        "Ember {version}\nLast feedback: {feedback}\nOS: {} ({})\nGemini key: {}\nFallback key: {}\nMode: {} ({})  Thinking: {} ({})  Debug: {}\nFallback endpoint: {}\nHotkeys: main={} polish={} turbo={} reply={} picker={}\nProcess: {elevation}\nSelect-all fallback: {}{legacy}\nLog: {log_path}",
+        "Ember {version}\nLast feedback: {feedback}\nOS: {} ({})\nGemini key: {}\nFallback key: {}\nMode: {} ({})  Orb: {} {} notices {}\nThinking: {} ({})  Debug: {}\nFallback endpoint: {}\nHotkeys: main={} polish={} turbo={} reply={} picker={}\nProcess: {elevation}\nSelect-all fallback: {}{legacy}\nLog: {log_path}",
         std::env::consts::OS,
         std::env::consts::ARCH,
         key_state(Provider::Gemini, &cfg.openai_base_url),
         key_state(Provider::OpenAi, &cfg.openai_base_url),
         mode_str(cfg.mode),
         length_str(cfg.length),
+        cfg.overlay_style.skin.as_str(),
+        cfg.overlay_style.size.as_str(),
+        cfg.overlay_style.notice.as_str(),
         cfg.thinking_enabled,
         cfg.thinking_level,
         cfg.debug_mode,

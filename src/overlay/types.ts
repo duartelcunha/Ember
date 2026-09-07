@@ -35,7 +35,20 @@ export interface OverlayState {
    * volta a ser adivinhar, que era exatamente o problema que a cor veio resolver.
    */
   project?: string | null;
+  /**
+   * A pele e o pixel de desenho da marca, escolhidos nas definicoes.
+   *
+   * Viajam no estado, ao lado da cor do projeto, porque sao a mesma especie de coisa: algo que a
+   * janela precisa de saber para se desenhar e que nao consegue descobrir sozinha. Ausentes, a
+   * marca desenha-se como sempre se desenhou, o que e o que acontece a um evento antigo que
+   * ficou em cache antes de esta opcao existir.
+   */
+  orbSkin?: OrbSkin | null;
+  orbPx?: number | null;
 }
+
+/** As tres peles da marca. Todas desenham dentro da mesma caixa de tinta. */
+export type OrbSkin = "ember" | "pulse" | "ring";
 
 /** Evento emitido pelo nucleo Rust com o novo estado do overlay. */
 export const STATE_EVENT = "ember://state";

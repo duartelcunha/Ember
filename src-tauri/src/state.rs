@@ -100,6 +100,10 @@ pub struct AppState {
     /// O nome do projeto ativo. A cor diz que ha um projeto; o nome diz QUAL. Sem ele, quem tem
     /// varios projetos de cores parecidas fica a adivinhar, e adivinhar era o problema.
     pub orb_project: Mutex<Option<String>>,
+    /// Pele, tamanho e ritmo das notas, em cache pela mesma razao que a cor logo acima: o
+    /// `flow::emit` corre varias vezes por refine e ler o ficheiro de config nesse caminho era
+    /// pagar disco por algo que so muda quando alguem mexe nas definicoes.
+    pub overlay_style: Mutex<ember_core::model::OverlayStyle>,
     /// O picker de projetos esta aberto? Guarda de reentrancia + sinal para o atalho de refine.
     pub picker_open: AtomicBool,
     /// Quando o picker abriu. Serve para distinguir a SEGUNDA pressao do atalho (que fecha) do
@@ -278,6 +282,7 @@ impl AppState {
             oauth_commit: Mutex::new(()),
             orb_accent: Mutex::new(None),
             orb_project: Mutex::new(None),
+            overlay_style: Mutex::new(ember_core::model::OverlayStyle::default()),
             picker_open: AtomicBool::new(false),
             picker_opened_at: Mutex::new(None),
             picker_cancel: AtomicBool::new(false),

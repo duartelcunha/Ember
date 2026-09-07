@@ -91,6 +91,27 @@ export async function appearanceRegressions(page, origin, capture) {
   await capture('appearance-preview-cream');
   await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
 
+  // The three choices drive the real component: the preview is the mark you will get, not a
+  // drawing of it, so a skin that does not reach the artwork fails here.
+  await pick('refining');
+  await page.waitForSelector('[data-overlay-preview] [data-orb-skin]');
+  const skinOf = () => page.$eval('[data-overlay-preview] [data-orb-skin]', e => e.getAttribute('data-orb-skin'));
+  assert.equal(await skinOf(), 'ember');
+  const inkWidth = () => page.$eval('[data-overlay-preview] [data-orb-skin]', e => {
+    const box = e.querySelector('circle[stroke], circle[fill="var(--color-accent)"]');
+    return box ? Number(e.getBoundingClientRect().width) : 0;
+  });
+  assert.ok(await inkWidth() > 0, 'the mark must actually render');
+  await page.evaluate(() => document.querySelector('input[name="orb-skin"][value="ring"]').click());
+  await page.waitForFunction(() => document.querySelector('[data-overlay-preview] [data-orb-skin]')?.getAttribute('data-orb-skin') === 'ring');
+  await page.evaluate(() => document.querySelector('input[name="orb-size"][value="large"]').click());
+  await page.waitForFunction(() => window.__settingsFixture.overlayStyles.length >= 2);
+  assert.deepEqual(await page.evaluate(() => window.__settingsFixture.overlayStyles.at(-1)),
+    { skin: 'ring', size: 'large', notice: 'normal' },
+    'the three choices travel together, so an untouched one is sent as it was');
+  await page.evaluate(() => document.querySelector('input[name="orb-skin"][value="ember"]').click());
+  await page.waitForFunction(() => document.querySelector('[data-overlay-preview] [data-orb-skin]')?.getAttribute('data-orb-skin') === 'ember');
+
   // The orb, under the media state that would expose a missing LazyMotion.
   await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'no-preference' }]);
   await page.reload();

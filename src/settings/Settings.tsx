@@ -22,6 +22,9 @@ import {
   type ProviderKind,
   type RefineMode,
   type Length,
+  type OrbSkin,
+  type OrbSize,
+  type NoticeSpeed,
   type Theme,
   type ThinkingLevel,
   type ModelCatalog,
@@ -167,6 +170,18 @@ export function Settings({ initialTab = "providers" }: { initialTab?: string } =
   useEffect(() => {
     loadSettings();
   }, [loadSettings]);
+
+  /** Os tres numa chamada so, porque viajam juntos para a janela do overlay. Otimista com
+   *  reversao, como todos os outros: a mudanca vale a pena ver na pre-visualizacao antes de o
+   *  disco confirmar. */
+  const setOverlayStyle = (orbSkin: OrbSkin, orbSize: OrbSize, noticeSpeed: NoticeSpeed) => {
+    const prev = { orbSkin: s.orbSkin, orbSize: s.orbSize, noticeSpeed: s.noticeSpeed };
+    setS({ ...s, orbSkin, orbSize, noticeSpeed });
+    ipc.setOverlayStyle(orbSkin, orbSize, noticeSpeed).catch(() => {
+      setS((cur) => ({ ...cur, ...prev }));
+      toast.error("Couldn't change the overlay style.");
+    });
+  };
 
   /** O tamanho nao tem toast: e uma preferencia silenciosa, ao contrario do modo, que muda o
    *  que o atalho principal faz e por isso se anuncia. */
@@ -327,7 +342,7 @@ export function Settings({ initialTab = "providers" }: { initialTab?: string } =
                 </TabsContent>
 
                 <TabsContent value="appearance">
-                  <AppearanceTab s={s} setTheme={setTheme} />
+                  <AppearanceTab s={s} setTheme={setTheme} setOverlayStyle={setOverlayStyle} />
                 </TabsContent>
 
                 <TabsContent value="about">

@@ -170,10 +170,12 @@ fn emit_payload(
     // semana com o contexto errado sem dar por nada.
     let accent = state.orb_accent.lock().ok().and_then(|a| a.clone());
     let project = state.orb_project.lock().ok().and_then(|a| a.clone());
+    let style = state.overlay_style.lock().ok().map(|s| *s).unwrap_or_default();
     let payload = serde_json::json!({
         "runId": run_id, "sequence": state.event_seq.fetch_add(1, Ordering::SeqCst) + 1,
         "confirmationScope": confirmation_scope, "phase": phase, "message": message, "provider": provider,
-        "accent": accent, "project": project, "closing": closing
+        "accent": accent, "project": project, "closing": closing,
+        "orbSkin": style.skin.as_str(), "orbPx": style.size.px()
     });
     if let Ok(mut slot) = state.last_state.lock() {
         *slot = Some(payload.clone());
@@ -997,7 +999,18 @@ impl Drop for InFlightGuard {
 const CLOSE_MS: u64 = 220;
 
 async fn hide_after(app: &AppHandle, run_id: u64, fb: OverlayFeedback) {
-    tokio::time::sleep(std::time::Duration::from_millis(fb.hide_after_ms)).await;
+    // A duracao medida por tipo de mensagem, esticada ou encolhida pela preferencia, com um chao
+    // que nenhuma escolha atravessa (`ember_core::overlay::notice_ms`): preferir depressa nao
+    // pode tornar ilegivel a frase que explica porque e que o refine falhou.
+    let speed = app
+        .state::<AppState>()
+        .overlay_style
+        .lock()
+        .ok()
+        .map(|s| s.notice)
+        .unwrap_or_default();
+    let visible_ms = ember_core::overlay::notice_ms(fb.hide_after_ms, speed);
+    tokio::time::sleep(std::time::Duration::from_millis(visible_ms)).await;
     // Um ciclo novo comecou entretanto: a orb que esta no ecra e dele, nao a nossa pilula.
     // Esconde-la aqui apagava o feedback do ciclo em curso a meio.
     let current = app.state::<AppState>().hide_gen.load(Ordering::SeqCst);

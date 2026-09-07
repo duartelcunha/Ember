@@ -31,6 +31,8 @@ const fixture = {
   keyPending: false,
   /** Every mode the UI committed, so the arrow-key walk through the comparison is checkable. */
   modes: [] as string[],
+  /** Every overlay style the UI committed, so the three-in-one command is checkable. */
+  overlayStyles: [] as { skin: string; size: string; notice: string }[],
   diagnosticsReads: 0,
 };
 (window as unknown as { __settingsFixture: typeof fixture }).__settingsFixture = fixture;
@@ -63,6 +65,10 @@ mockIPC((command, args) => {
   }
   if (command === "set_primary_provider")
     return { ...DEFAULT_SETTINGS, primaryProvider: (args as { provider: string }).provider };
+  if (command === "set_overlay_style") {
+    fixture.overlayStyles.push(args as { skin: string; size: string; notice: string });
+    return null;
+  }
   if (command === "set_mode") {
     fixture.modes.push(String((args as { mode?: unknown }).mode));
     return null;

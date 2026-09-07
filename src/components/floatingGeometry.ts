@@ -42,32 +42,51 @@ export function placeFloating(cursor: CursorPosition, view: Viewport, content: {
   return { x, y, left };
 }
 
-// The visible pixel ring in Orb.tsx occupies (22, 2, 15, 15), not its 40px SVG.
-export const ORB_INK = { x: 22, y: 2, width: 15, height: 15 };
+/** The drawing pixel of the mark. 3 is the size everyone has unless they change it. */
+export const ORB_PX = 3;
+
+/**
+ * The visible ink of the mark inside its 40px SVG, for a given drawing pixel.
+ *
+ * Not the SVG box: the artwork is a 5x5 grid of `px` cells sitting in one corner of a canvas
+ * three times its size, and it is the ink that has to land beside the cursor. The right edge and
+ * the top stay put across sizes, so the clearance from the arrow measured into `CURSOR_GAP` does
+ * not depend on how big the mark is. Every size fits the same 40px canvas: 20px of ink at the
+ * largest step still ends at 37.
+ */
+export function orbInk(px: number = ORB_PX) {
+  const side = px * 5;
+  return { x: 37 - side, y: 2, width: side, height: side };
+}
+
+/** The default ink box, for callers that never offered a size. */
+export const ORB_INK = orbInk(ORB_PX);
 export function geometryReady(cursor: CursorPosition, view: Viewport) {
   return cursor.ready !== false && (cursor.scale === undefined ||
     (Math.abs(cursor.scale - view.scale) < 0.01 &&
      Math.abs((cursor.width ?? 0) / view.scale - view.width) <= 2 &&
      Math.abs((cursor.height ?? 0) / view.scale - view.height) <= 2));
 }
-export function placeOrb(cursor: CursorPosition, view: Viewport, wasLeft: boolean, preserveSide = false) {
+export function placeOrb(cursor: CursorPosition, view: Viewport, wasLeft: boolean, preserveSide = false, px: number = ORB_PX) {
+  const ink = orbInk(px);
   const cx = (cursor.x - cursor.originX) / view.scale;
   const cy = (cursor.y - cursor.originY) / view.scale;
   let left = wasLeft;
-  if (!left && cx + CURSOR_GAP.x + ORB_INK.width > view.width - 4) left = true;
-  else if (left && !preserveSide && cx + CURSOR_GAP.x + ORB_INK.width < view.width - 36) left = false;
-  const inkX = Math.max(4, Math.min(left ? cx - CURSOR_GAP.x - ORB_INK.width : cx + CURSOR_GAP.x, view.width - ORB_INK.width - 4));
-  const inkY = Math.max(4, Math.min(cy + CURSOR_GAP.y - ORB_INK.height / 2, view.height - ORB_INK.height - 4));
-  return { x: inkX - ORB_INK.x, y: inkY - ORB_INK.y, left };
+  if (!left && cx + CURSOR_GAP.x + ink.width > view.width - 4) left = true;
+  else if (left && !preserveSide && cx + CURSOR_GAP.x + ink.width < view.width - 36) left = false;
+  const inkX = Math.max(4, Math.min(left ? cx - CURSOR_GAP.x - ink.width : cx + CURSOR_GAP.x, view.width - ink.width - 4));
+  const inkY = Math.max(4, Math.min(cy + CURSOR_GAP.y - ink.height / 2, view.height - ink.height - 4));
+  return { x: inkX - ink.x, y: inkY - ink.y, left };
 }
 
-export function placeLabels(cursor: CursorPosition, view: Viewport, content: { width: number; height: number }, wasLeft: boolean) {
+export function placeLabels(cursor: CursorPosition, view: Viewport, content: { width: number; height: number }, wasLeft: boolean, px: number = ORB_PX) {
+  const ink = orbInk(px);
   const cx = (cursor.x - cursor.originX) / view.scale;
   const cy = (cursor.y - cursor.originY) / view.scale;
   const positioned = placeFloating(cursor, view, content, wasLeft, { gap: CURSOR_GAP });
   // Labels clear both the cursor and the ring, including at the bottom edge.
-  const inkY = placeOrb(cursor, view, wasLeft).y + ORB_INK.y;
-  const below = Math.max(8, cy + 26, inkY + ORB_INK.height + 8);
+  const inkY = placeOrb(cursor, view, wasLeft, false, px).y + ink.y;
+  const below = Math.max(8, cy + ink.height + 11, inkY + ink.height + 8);
   const y = below + content.height <= view.height - 8 ? below : Math.max(8, Math.min(cy - 8, inkY - 8) - content.height);
   return { ...positioned, x: Math.max(8, Math.min(positioned.left ? cx - CURSOR_GAP.x - content.width : cx + CURSOR_GAP.x, view.width - content.width - 8)), y };
 }

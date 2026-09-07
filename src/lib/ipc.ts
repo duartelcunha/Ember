@@ -23,6 +23,18 @@ export type ComparedMode = Exclude<RefineMode, "reply">;
 export type Length = "shorter" | "same" | "longer";
 export type ThinkingLevel = "minimal" | "low" | "medium" | "high";
 export type Theme = "dark" | "cream";
+/** As tres peles da marca junto ao cursor. Todas desenham na mesma caixa de tinta. */
+export type OrbSkin = "ember" | "pulse" | "ring";
+/** Tres passos, nao um seletor livre: o tamanho e um multiplo INTEIRO do pixel do desenho. */
+export type OrbSize = "small" | "normal" | "large";
+/** Quanto tempo as notas ficam no ecra depois do refine. */
+export type NoticeSpeed = "quick" | "normal" | "relaxed";
+/**
+ * O pixel de desenho de cada tamanho. ESPELHADO em `OrbSize::px` (crates/ember-core/src/model.rs);
+ * muda um, muda o outro. Inteiro sempre: a marca e arte de pixeis e um multiplo fracionario poe
+ * as arestas entre dois pixeis do ecra.
+ */
+export const ORB_SIZE_PX: Record<OrbSize, number> = { small: 2, normal: 3, large: 4 };
 /** Resultado do probe de chave: distingue "chave recusada" de "sem rede agora". */
 export type KeyCheck = "valid" | "invalid" | "network_error";
 
@@ -184,6 +196,9 @@ export interface EmberSettings {
   projectContext: boolean;
   previewBeforePaste: boolean;
   theme: Theme;
+  orbSkin: OrbSkin;
+  orbSize: OrbSize;
+  noticeSpeed: NoticeSpeed;
   /** Sem seleccao, seleciona o campo em foco e refina-o todo. */
   selectAllFallback: boolean;
   selectAllMaxChars: number;
@@ -243,6 +258,9 @@ export const DEFAULT_SETTINGS: EmberSettings = {
   projectContext: false,
   previewBeforePaste: false,
   theme: "cream",
+  orbSkin: "ember",
+  orbSize: "normal",
+  noticeSpeed: "normal",
   selectAllFallback: true,
   selectAllMaxChars: 8000,
   projects: [],
@@ -301,6 +319,9 @@ export const ipc = {
   setMode: (mode: RefineMode) => invoke<void>("set_mode", { mode }),
   setLength: (length: Length) => invoke<void>("set_length", { length }),
   setTheme: (theme: Theme) => invoke<void>("set_theme", { theme }),
+  /** Os tres numa chamada so: viajam juntos para a janela do overlay e a UI tem sempre os tres. */
+  setOverlayStyle: (skin: OrbSkin, size: OrbSize, notice: NoticeSpeed) =>
+    invoke<void>("set_overlay_style", { skin, size, notice }),
   setThinking: (enabled: boolean, level: ThinkingLevel) =>
     invoke<void>("set_thinking", { enabled, level }),
   setTerminalHandling: (enabled: boolean) => invoke<void>("set_terminal_handling", { enabled }),

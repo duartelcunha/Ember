@@ -334,7 +334,7 @@ pub(crate) fn now_ms() -> u64 {
 /// casa: o fallback e validado a entrada, nao no momento da falha.
 async fn prevalidate_providers(app: AppHandle) {
     let cfg = config::load(&app);
-    commands::refresh_orb_accent(&app.state::<state::AppState>(), &cfg);
+    commands::refresh_orb_state(&app.state::<state::AppState>(), &cfg);
     for provider in ["gemini", "openai"] {
         let _ =
             commands::validate_key(app.clone(), app.state::<state::AppState>(), provider.into())
@@ -644,6 +644,7 @@ pub fn run() {
             commands::set_autostart,
             commands::set_mode,
             commands::set_length,
+            commands::set_overlay_style,
             commands::set_theme,
             commands::set_thinking,
             commands::set_terminal_handling,

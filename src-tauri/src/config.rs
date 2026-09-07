@@ -1,7 +1,7 @@
 //! Definicoes nao-secretas persistidas em disco (config.json no app config dir).
 //! As chaves de API NAO vivem aqui: ficam no Windows Credential Manager (ver secrets.rs).
 
-use ember_core::model::{Length, Provider, RefineMode};
+use ember_core::model::{Length, OverlayStyle, Provider, RefineMode};
 use ember_core::providers::{DEFAULT_GEMINI_MODEL, DEFAULT_OPENAI_BASE_URL, DEFAULT_OPENAI_MODEL};
 use serde::{Deserialize, Serialize};
 
@@ -114,6 +114,8 @@ pub struct Config {
     /// Tema visual da janela de Settings: "dark" (default) ou "cream". So afeta as Settings; a
     /// overlay/splash mantem a identidade dark de marca.
     pub theme: String,
+    /// Pele, tamanho e ritmo das notas da brasa junto ao cursor.
+    pub overlay_style: OverlayStyle,
     /// Se nao havia nada selecionado, seleciona o campo em foco (Ctrl+A) e refina-o todo.
     /// Default ON: e o caso dominante fora de terminais (escreveste o prompt na caixa e nunca o
     /// selecionaste). Uma captura por esta via passa SEMPRE pelo gate de preview, mesmo com o
@@ -157,6 +159,7 @@ impl Default for Config {
             autostart: false,
             mode: RefineMode::Adaptive,
             length: Length::Same,
+            overlay_style: OverlayStyle::default(),
             thinking_enabled: true,
             thinking_level: "high".to_string(),
             profile_override: None,

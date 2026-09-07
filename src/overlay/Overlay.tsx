@@ -2,6 +2,7 @@ import { domAnimation, LazyMotion, MotionConfig } from "motion/react";
 import { useLayoutEffect, useRef } from "react";
 import { useOverlayState } from "./useOverlayController";
 import { useFloatingPosition } from "../components/useFloatingPosition";
+import { ORB_PX } from "../components/floatingGeometry";
 import { Orb } from "./Orb";
 import { Pill } from "./Pill";
 import { Preview } from "./Preview";
@@ -30,8 +31,11 @@ function announcement(s: OverlayState): string | null {
 /** Raiz do overlay junto ao cursor: orb (refining) ou pilha (success/error/hint). */
 export function Overlay() {
   const s = useOverlayState();
-  const floating = useFloatingPosition("ember://overlay-at", s.phase === "refining" ? "orb" : "card");
-  const labels = useFloatingPosition("ember://overlay-at", "labels");
+  // The mark's drawing pixel decides the ink box the placement measures, so both surfaces get
+  // it: the labels sit under the ring and have to clear whatever size it is.
+  const px = s.orbPx ?? ORB_PX;
+  const floating = useFloatingPosition("ember://overlay-at", s.phase === "refining" ? "orb" : "card", px);
+  const labels = useFloatingPosition("ember://overlay-at", "labels", px);
   const previousPhase = useRef(s.phase);
   useLayoutEffect(() => {
     // Morph only the incoming surface. Keeping the departing artwork mounted
@@ -83,7 +87,7 @@ export function Overlay() {
             {s.phase === "refining" && (
               // Independent labels cannot change the visible ring's cursor anchor.
               <div key="orb" className="ember-orb-row flex items-start gap-2">
-                <Orb variant={s.message ? "retry" : "work"} />
+                <Orb variant={s.message ? "retry" : "work"} skin={s.orbSkin ?? "ember"} px={px} />
               </div>
             )}
             {s.phase === "success" && (

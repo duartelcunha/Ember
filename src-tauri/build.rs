@@ -28,6 +28,7 @@ fn main() {
         "set_autostart",
         "set_mode",
         "set_length",
+        "set_overlay_style",
         "set_theme",
         "set_thinking",
         "set_terminal_handling",

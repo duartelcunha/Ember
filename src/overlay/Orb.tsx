@@ -1,18 +1,16 @@
 import { m } from "motion/react";
 import { useSyncExternalStore } from "react";
-import { ORB_INK } from "../components/floatingGeometry";
+import { orbInk, ORB_PX } from "../components/floatingGeometry";
 
 const SPARK_SIZE = 40;
 
-const PX = 3;
-
-// Shared visible bounds anchor the ring next to the cursor. The ring is eight dots on a
-// 5x5 grid of 3px cells; the cells are the geometry the tests and the cursor anchor measure,
-// so the dots can change shape without anything else moving.
-const GRID = ORB_INK;
-/** Dot radius. Slightly over half a cell, so neighbours read as a ring and not as beads. */
-const DOT_R = 1.6;
-
+/**
+ * The eight cells of the ring, as coordinates on a 5x5 grid.
+ *
+ * The grid is the geometry: the cursor anchor, the morph and the floating tests all measure the
+ * ink box the grid fills, never the artwork inside it. That is what lets the skin and the size
+ * change without a single placement constant moving.
+ */
 const RING = [
   [2, 0], // top
   [3, 1], // top right
@@ -24,19 +22,12 @@ const RING = [
   [1, 1], // top left
 ] as const;
 
-const CENTER = { x: GRID.x + PX * 2.5, y: GRID.y + PX * 2.5 };
-
-const HEAT = {
-  values: "10;10.6;12.5;15",
-  times: "0;0.2;0.5;1",
-  splines: "0.4 0 0.6 1; 0.4 0 0.6 1; 0.4 0 0.6 1",
-  over: 30,
-};
-
 const VARIANT = {
   work: { chase: 0.8 },
   retry: { chase: 0.5 },
 } as const;
+
+export type OrbSkin = "ember" | "pulse" | "ring";
 
 function usePrefersReducedMotion() {
   return useSyncExternalStore(
@@ -64,9 +55,36 @@ function css(chase: number) {
 @media (prefers-reduced-motion: reduce){[class^="ember-px-"]{animation:none}}`;
 }
 
-export function Orb({ variant = "work" }: { variant?: keyof typeof VARIANT }) {
+/**
+ * What sits beside the cursor while the model answers.
+ *
+ * Three skins and three sizes, all drawing inside the same ink box: `orbInk(px)` is the single
+ * place a size exists, and every skin fills it. Sizes are whole multiples of the drawing pixel
+ * (2, 3 or 4, so 10, 15 or 20px of ink) because the mark is pixel art and a fractional multiple
+ * puts its edges between two screen pixels, where anti-aliasing turns it into a smudge.
+ *
+ * Motion is SMIL rather than CSS keyframes for the pulse and the ring. The heat glow already
+ * uses it here, and two orbs on screen at once (the settings preview draws real ones) would
+ * otherwise need generated class names to stop sharing a keyframe.
+ */
+export function Orb({
+  variant = "work",
+  skin = "ember",
+  px = ORB_PX,
+}: {
+  variant?: keyof typeof VARIANT;
+  skin?: OrbSkin;
+  px?: number;
+}) {
   const v = VARIANT[variant];
   const still = usePrefersReducedMotion();
+  const ink = orbInk(px);
+  const centre = { x: ink.x + ink.width / 2, y: ink.y + ink.height / 2 };
+  // Every measurement below is a ratio of the drawing pixel, so all three sizes are the same
+  // artwork rather than three drawings that happen to look alike.
+  const dotR = px * 0.533;
+  const heatR = px * (10 / 3);
+  const period = v.chase;
 
   return (
     <m.div
@@ -75,7 +93,7 @@ export function Orb({ variant = "work" }: { variant?: keyof typeof VARIANT }) {
         width: SPARK_SIZE,
         height: SPARK_SIZE,
         willChange: "opacity",
-        transformOrigin: `${(CENTER.x / SPARK_SIZE) * 100}% ${(CENTER.y / SPARK_SIZE) * 100}%`,
+        transformOrigin: `${(centre.x / SPARK_SIZE) * 100}% ${(centre.y / SPARK_SIZE) * 100}%`,
       }}
       initial={{ opacity: still ? 1 : 0 }}
       animate={{ opacity: 1 }}
@@ -87,14 +105,15 @@ export function Orb({ variant = "work" }: { variant?: keyof typeof VARIANT }) {
       <svg
         width={SPARK_SIZE}
         height={SPARK_SIZE}
-        viewBox="0 0 40 40"
+        viewBox={`0 0 ${SPARK_SIZE} ${SPARK_SIZE}`}
         fill="none"
         aria-hidden
+        data-orb-skin={skin}
         style={{
           filter: "drop-shadow(0 0 1.5px rgba(0,0,0,0.55))",
         }}
       >
-        <style>{css(v.chase)}</style>
+        {skin === "ember" && <style>{css(period)}</style>}
         <defs>
           <radialGradient id="ember-heat">
             <stop offset="0%" stopColor="var(--color-accent)" stopOpacity="0.26" />
@@ -103,14 +122,16 @@ export function Orb({ variant = "work" }: { variant?: keyof typeof VARIANT }) {
           </radialGradient>
         </defs>
 
-        <circle cx={CENTER.x} cy={CENTER.y} r={10} fill="url(#ember-heat)">
+        {/* The heat is the one thing all three share: it is what says "warm" before the shape
+            says anything at all, and it is what the accent colour of an active project rides on. */}
+        <circle cx={centre.x} cy={centre.y} r={heatR} fill="url(#ember-heat)">
           {!still && (
             <animate
               attributeName="r"
-              values={HEAT.values}
-              keyTimes={HEAT.times}
-              keySplines={HEAT.splines}
-              dur={`${HEAT.over}s`}
+              values={`${heatR};${heatR * 1.06};${heatR * 1.25};${heatR * 1.5}`}
+              keyTimes="0;0.2;0.5;1"
+              keySplines="0.4 0 0.6 1; 0.4 0 0.6 1; 0.4 0 0.6 1"
+              dur="30s"
               begin="0s"
               repeatCount="1"
               fill="freeze"
@@ -119,18 +140,87 @@ export function Orb({ variant = "work" }: { variant?: keyof typeof VARIANT }) {
           )}
         </circle>
 
-        {RING.map(([col, row], i) => (
-          <circle
-            key={i}
-            className={`ember-px-${i}`}
-            cx={GRID.x + col * PX + PX / 2}
-            cy={GRID.y + row * PX + PX / 2}
-            r={DOT_R}
-            fill="var(--color-accent)"
-            shapeRendering="geometricPrecision"
-            opacity={1 - i * 0.11}
-          />
-        ))}
+        {skin === "ember" &&
+          RING.map(([col, row], i) => (
+            <circle
+              key={i}
+              className={`ember-px-${i}`}
+              cx={ink.x + col * px + px / 2}
+              cy={ink.y + row * px + px / 2}
+              r={dotR}
+              fill="var(--color-accent)"
+              shapeRendering="geometricPrecision"
+              opacity={1 - i * 0.11}
+            />
+          ))}
+
+        {/* Pulse: one dot breathing. For anyone who wants to know a refine is running without
+            being invited to watch it. */}
+        {skin === "pulse" && (
+          <circle cx={centre.x} cy={centre.y} r={px} fill="var(--color-accent)">
+            {!still && (
+              <>
+                <animate
+                  attributeName="r"
+                  values={`${px * 0.72};${px * 1.15};${px * 0.72}`}
+                  dur={`${period * 1.6}s`}
+                  repeatCount="indefinite"
+                  calcMode="spline"
+                  keyTimes="0;0.5;1"
+                  keySplines="0.4 0 0.6 1; 0.4 0 0.6 1"
+                />
+                <animate
+                  attributeName="opacity"
+                  values="0.45;1;0.45"
+                  dur={`${period * 1.6}s`}
+                  repeatCount="indefinite"
+                  calcMode="spline"
+                  keyTimes="0;0.5;1"
+                  keySplines="0.4 0 0.6 1; 0.4 0 0.6 1"
+                />
+              </>
+            )}
+          </circle>
+        )}
+
+        {/* Ring: a faint track with one arc going round it. The most neutral of the three, and
+            the one that reads as a spinner in any application it lands on. */}
+        {skin === "ring" && (
+          <>
+            <circle
+              cx={centre.x}
+              cy={centre.y}
+              r={px * 2}
+              fill="none"
+              stroke="var(--color-accent)"
+              strokeOpacity="0.22"
+              strokeWidth={px * 0.5}
+            />
+            <circle
+              cx={centre.x}
+              cy={centre.y}
+              r={px * 2}
+              fill="none"
+              stroke="var(--color-accent)"
+              strokeWidth={px * 0.5}
+              strokeLinecap="round"
+              // A quarter of the circumference lit, the rest open.
+              strokeDasharray={`${Math.PI * px * 2 * 0.5} ${Math.PI * px * 4}`}
+              transform={still ? undefined : `rotate(-90 ${centre.x} ${centre.y})`}
+            >
+              {!still && (
+                <animateTransform
+                  attributeName="transform"
+                  type="rotate"
+                  from={`0 ${centre.x} ${centre.y}`}
+                  to={`360 ${centre.x} ${centre.y}`}
+                  dur={`${period * 1.4}s`}
+                  repeatCount="indefinite"
+                />
+              )}
+            </circle>
+          </>
+        )}
       </svg>
     </m.div>
   );

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-overlay-style"
+description = "Enables the set_overlay_style command without any pre-configured scope."
+commands.allow = ["set_overlay_style"]
+
+[[permission]]
+identifier = "deny-set-overlay-style"
+description = "Denies the set_overlay_style command without any pre-configured scope."
+commands.deny = ["set_overlay_style"]
