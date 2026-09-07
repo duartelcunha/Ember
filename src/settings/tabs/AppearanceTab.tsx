@@ -4,6 +4,7 @@ import { Section } from "../Section";
 import { Orb } from "../../overlay/Orb";
 import { Pill } from "../../overlay/Pill";
 import { Preview } from "../../overlay/Preview";
+import { CURSOR_GAP, orbInk } from "../../components/floatingGeometry";
 import {
   ORB_SIZE_PX,
   type EmberSettings,
@@ -130,6 +131,43 @@ function StageBackdrop() {
   );
 }
 
+/**
+ * Where the pointer stands in the stage. Left of the seam on purpose: the mark and the surface
+ * grow rightwards from it, so the pair crosses from the light half into the dark one and makes
+ * the card's own argument (the overlay does not follow your theme) without a word of prose.
+ */
+const CURSOR_X = "38%";
+
+/**
+ * The standard arrow, with its hotspot at the top-left of the box.
+ *
+ * The card is called "Next to your cursor" and there was no cursor: the mark floated in the
+ * middle of the stage with nothing to be next to, which made every choice about its size and its
+ * mark a choice about an object with no scale. Everything else on the stage is placed from this
+ * point with the same constants the real overlay uses, so what the preview shows about the gap
+ * is true.
+ */
+function Pointer() {
+  return (
+    <svg
+      width={13}
+      height={19}
+      viewBox="0 0 13 19"
+      className="absolute"
+      style={{ left: CURSOR_X, top: "50%", filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.45))" }}
+      aria-hidden="true"
+    >
+      <path
+        d="M0.5 0.9 L0.5 15.4 L4.3 11.9 L6.6 17.4 L8.9 16.4 L6.6 11 L11.3 10.7 Z"
+        fill="#ffffff"
+        stroke="#1c1a17"
+        strokeWidth={1}
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 const THEMES: { value: Theme; label: string }[] = [
   { value: "dark", label: "Dark" },
   { value: "cream", label: "Cream" },
@@ -183,6 +221,10 @@ function OverlayStage({
   // thing the user just chose to look at.
   const [picked, setPicked] = useState(false);
   const [paused, setPaused] = useState(false);
+  // The real offsets, imported rather than copied: the mark's ink lands `CURSOR_GAP.x` to the
+  // right of the hotspot and its centre `CURSOR_GAP.y` below it, and a surface centres on that
+  // same point because the morph grows it out of the ring.
+  const ink = orbInk(ORB_SIZE_PX[s.orbSize]);
 
   useEffect(() => {
     if (still || picked || paused) return;
@@ -220,12 +262,35 @@ function OverlayStage({
         >
           <StageBackdrop />
           {/* A picture of a UI, not the UI: the caption below carries the meaning. */}
-          <div aria-hidden="true" className="absolute inset-0 grid place-items-center">
-            {state === "refining" && <Orb variant="work" skin={s.orbSkin} px={ORB_SIZE_PX[s.orbSize]} />}
-            {state === "confirm" && <Preview scope="selection" />}
-            {state === "applied" && <Pill kind="success" text="Refined with Gemini" />}
-            {state === "problem" && <Pill kind="error" text="Gemini hit its quota. Ember used the fallback." />}
-          </div>
+          <Pointer />
+          {state === "refining" ? (
+            <div
+              aria-hidden="true"
+              className="absolute"
+              style={{
+                left: `calc(${CURSOR_X} + ${CURSOR_GAP.x - ink.x}px)`,
+                top: `calc(50% + ${CURSOR_GAP.y - ink.y - ink.height / 2}px)`,
+              }}
+            >
+              <Orb variant="work" skin={s.orbSkin} px={ORB_SIZE_PX[s.orbSize]} />
+            </div>
+          ) : (
+            <div
+              aria-hidden="true"
+              className="absolute w-max"
+              style={{
+                left: `calc(${CURSOR_X} + ${CURSOR_GAP.x}px)`,
+                top: `calc(50% + ${CURSOR_GAP.y}px)`,
+                transform: "translateY(-50%)",
+                // The overlay clamps to the screen; here the stage is the screen.
+                maxWidth: `calc(100% - ${CURSOR_X} - ${CURSOR_GAP.x + 12}px)`,
+              }}
+            >
+              {state === "confirm" && <Preview scope="selection" />}
+              {state === "applied" && <Pill kind="success" text="Refined with Gemini" />}
+              {state === "problem" && <Pill kind="error" text="Gemini hit its quota. Ember used the fallback." />}
+            </div>
+          )}
         </div>
       </LazyMotion>
       <div role="radiogroup" aria-label="Overlay state" className="flex shrink-0 flex-wrap gap-1">

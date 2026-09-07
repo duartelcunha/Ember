@@ -102,6 +102,26 @@ export async function appearanceRegressions(page, origin, capture) {
     return box ? Number(e.getBoundingClientRect().width) : 0;
   });
   assert.ok(await inkWidth() > 0, 'the mark must actually render');
+  // The mark sits beside the pointer at the real offset, so the preview cannot claim a gap the
+  // overlay does not give. The ink's left edge is CURSOR_GAP.x from the arrow's hotspot.
+  const beside = await page.evaluate(() => {
+    const stage = document.querySelector('[data-overlay-preview]').getBoundingClientRect();
+    const arrow = document.querySelector('[data-overlay-preview] svg:not([data-orb-skin])').getBoundingClientRect();
+    const svg = document.querySelector('[data-overlay-preview] [data-orb-skin]');
+    // The INK, measured off the drawn cells rather than computed from a copy of orbInk: the
+    // canvas is three times the artwork and it is the artwork that has to land beside the arrow.
+    const cells = [...svg.querySelectorAll('[class^="ember-px-"]')].map(e => e.getBoundingClientRect());
+    const ink = { left: Math.min(...cells.map(r => r.left)), right: Math.max(...cells.map(r => r.right)),
+                  top: Math.min(...cells.map(r => r.top)), bottom: Math.max(...cells.map(r => r.bottom)) };
+    return {
+      gap: Math.round(ink.left - arrow.left),
+      centred: Math.round((ink.top + ink.bottom) / 2 - arrow.top),
+      inside: ink.right < stage.right && ink.top > stage.top,
+    };
+  });
+  assert.equal(beside.gap, 19, 'the ink must sit CURSOR_GAP.x from the pointer hotspot');
+  assert.equal(beside.centred, 2, 'and its centre CURSOR_GAP.y below it, not its top edge');
+  assert.ok(beside.inside, 'the pair must fit inside the stage');
   await page.evaluate(() => document.querySelector('input[name="orb-skin"][value="ring"]').click());
   await page.waitForFunction(() => document.querySelector('[data-overlay-preview] [data-orb-skin]')?.getAttribute('data-orb-skin') === 'ring');
   await page.evaluate(() => document.querySelector('input[name="orb-size"][value="large"]').click());
@@ -118,9 +138,11 @@ export async function appearanceRegressions(page, origin, capture) {
   await page.waitForSelector('[role=tab]');
   await openAppearance();
   await pick('refining');
-  await page.waitForSelector('[data-overlay-preview] svg');
+  // Named, not "the first svg in the stage": the pointer is drawn before it now, and this
+  // assertion is about the MARK fading in under its LazyMotion ancestor.
+  await page.waitForSelector('[data-overlay-preview] [data-orb-skin]');
   await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 500)));
-  const orb = await page.$eval('[data-overlay-preview] svg', e => {
+  const orb = await page.$eval('[data-overlay-preview] [data-orb-skin]', e => {
     const box = e.getBoundingClientRect();
     return { opacity: getComputedStyle(e.parentElement).opacity, width: box.width, height: box.height };
   });
