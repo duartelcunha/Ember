@@ -140,12 +140,13 @@ export async function tabContentRegressions(page, origin) {
   await page.focus('input[name="refine-mode"]:checked');
   await page.keyboard.press('ArrowRight');
   await page.waitForFunction(() => window.__settingsFixture.modes.length >= 1);
-  const [on, off] = await page.evaluate(() => {
+  // The border transitions over 150ms; wait for it to settle instead of reading mid-fade.
+  await page.waitForFunction(() => {
     const labels = [...document.querySelectorAll('.mode-option')];
     const picked = labels.find(l => l.querySelector('input').checked);
-    return [getComputedStyle(picked).borderTopColor, getComputedStyle(labels.find(l => l !== picked)).borderTopColor];
-  });
-  assert.notEqual(on, off, 'the chosen mode needs a visible difference, not only a checked input');
+    const other = labels.find(l => l !== picked);
+    return picked && other && getComputedStyle(picked).borderTopColor !== getComputedStyle(other).borderTopColor;
+  }, { timeout: 3000 }).catch(() => { throw new Error('the chosen mode needs a visible difference, not only a checked input'); });
 
   // Shortcut: all four in one list, each saying what it does.
   await open(2, '[aria-label="Global shortcut shortcut"]');

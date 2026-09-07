@@ -51,68 +51,67 @@ export function ShortcutTab({
 }) {
   const valueOf = (key: SlotKey) => (key === "hotkey" ? hotkey : s[key]);
   return (
-    // One column, not two: the Startup card is a single switch, and an empty column beside it is
-    // exactly the emptiness this layout work exists to remove.
-    <div data-tab-body="" className="settings-fit min-h-0 flex-1">
-      <div className="settings-two-col">
-        <div data-settings-col="" className="settings-col">
-          <Section
-            title="Shortcuts"
-            titleId="hotkey-heading"
-            hint="Press the combo you want in a field. One key to four, modifiers optional."
-            detail={
-              <>
-                <p>
-                  Each one is saved the moment you press it. A combo already taken by another app
-                  is refused on the spot and nothing is saved, so you can try another right away.
-                  Leave one of the mode shortcuts empty and Ember does not claim that combo at all.
-                </p>
-                {IS_MAC && (
-                  <p className="mt-2">
-                    On macOS some system shortcuts win over any app without reporting a conflict.
-                    Ember knows the common ones and refuses them, but if a shortcut saves and then
-                    never fires, that is what happened: pick another.
-                  </p>
-                )}
-              </>
-            }
-          >
-            <div className="shortcut-rows">
-              {SHORTCUTS.map(({ slot, key, label, description, clearable }) => (
-                <div key={slot} className="flex min-w-0 flex-col gap-1.5">
-                  <div className="flex min-w-0 items-baseline gap-2">
-                    <Label className="shrink-0">{label}</Label>
-                    <span
-                      className="min-w-0 truncate text-xs text-fg-muted [display:var(--hint,block)]"
-                      title={description}
-                    >
-                      {description}
-                    </span>
-                  </div>
-                  <HotkeyCapture
-                    value={valueOf(key)}
-                    slot={slot}
-                    clearable={clearable}
-                    ariaLabel={`${label} shortcut`}
-                    onCommit={(accel) => commitHotkey(slot, accel)}
-                  />
-                </div>
-              ))}
+    // One column, top to bottom: the shortcuts card takes the height, Startup sits under it. No
+    // centring. A centred block left a gap above it that read as broken, not as roomy.
+    <div data-tab-body="" className="settings-col min-h-0 flex-1">
+      <Section
+        title="Shortcuts"
+        titleId="hotkey-heading"
+        elastic
+        hint="Click a box, press the combination. Esc cancels."
+        detail={
+          <>
+            <p>
+              Each one is saved the moment you press it. A combination already taken by another
+              app is refused on the spot and nothing is saved, so you can try another right away.
+              Leave one of the mode shortcuts empty and Ember does not claim that combination at
+              all.
+            </p>
+            {IS_MAC && (
+              <p className="mt-2">
+                On macOS some system shortcuts win over any app without reporting a conflict.
+                Ember knows the common ones and refuses them, but if a shortcut saves and then
+                never fires, that is what happened: pick another.
+              </p>
+            )}
+          </>
+        }
+      >
+        <div className="shortcut-rows shrink-0">
+          {SHORTCUTS.map(({ slot, key, label, description, clearable }) => (
+            <div key={slot} className="flex min-w-0 flex-col gap-1.5">
+              <div className="flex min-w-0 items-baseline gap-2">
+                <Label className="shrink-0">{label}</Label>
+                <span
+                  className="min-w-0 truncate text-xs text-fg-muted [display:var(--hint,block)]"
+                  title={description}
+                >
+                  {description}
+                </span>
+              </div>
+              <HotkeyCapture
+                value={valueOf(key)}
+                slot={slot}
+                label={label}
+                clearable={clearable}
+                ariaLabel={`${label} shortcut`}
+                onCommit={(accel) => commitHotkey(slot, accel)}
+              />
             </div>
-          </Section>
-          <Section title="Startup" hint="Launch Ember automatically with Windows.">
-            <SwitchRow
-              id="autostart"
-              label="Start with Windows"
-              checked={s.autostart}
-              onCheckedChange={(v) => {
-                setS({ ...s, autostart: v });
-                ipc.setAutostart(v).catch(() => setS((prev) => ({ ...prev, autostart: !v })));
-              }}
-            />
-          </Section>
+          ))}
         </div>
-      </div>
+      </Section>
+      <Section title="Startup" hint="Launch Ember automatically with Windows.">
+        <SwitchRow
+          id="autostart"
+          label="Start with Windows"
+          checked={s.autostart}
+          onCheckedChange={(v) => {
+            setS({ ...s, autostart: v });
+            ipc.setAutostart(v).catch(() => setS((prev) => ({ ...prev, autostart: !v })));
+          }}
+        />
+      </Section>
     </div>
   );
 }

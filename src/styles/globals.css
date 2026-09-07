@@ -67,6 +67,19 @@
   /* Sombra de popovers/dropdowns (dark): duas camadas, contacto curto + difusa, suave. */
   --shadow-pop: 0 2px 8px rgba(0, 0, 0, 0.22), 0 12px 28px rgba(0, 0, 0, 0.3);
 
+  /* Material for controls. The accent triplet is ordered by ROLE (base, hover, active) and the
+     two themes disagree on luminance: in dark the hover is the lightest of the three, in cream
+     it is darker than the base. A top-lit gradient must run light to dark, so the recipe reads
+     through three luminance-ordered aliases instead of the role names. */
+  --accent-lit: var(--color-accent-hover);
+  --accent-base: var(--color-accent);
+  --accent-deep: var(--color-accent-active);
+  /* The .ember-bubble highlight, promoted to a token so every control shares one sheen. */
+  --sheen: rgba(255, 246, 235, 0.06);
+  --sheen-strong: rgba(255, 246, 235, 0.22);
+  --shade: rgba(0, 0, 0, 0.22);
+  --shadow-control: 0 1px 2px rgba(0, 0, 0, 0.28);
+
   /* Dialog scrim (dark): warm near-black, strong enough to park the tab behind it. */
   --overlay-scrim: rgba(8, 6, 4, 0.55);
 
@@ -119,6 +132,16 @@
      dura sobre o fundo claro. */
   --shadow-pop: 0 2px 8px rgba(80, 55, 30, 0.1), 0 12px 28px rgba(80, 55, 30, 0.14);
 
+  /* Cream: the base accent is the light edge; hover and active darken. White sheen reads as a
+     paper highlight over the warm surfaces, not as glass. */
+  --accent-lit: var(--color-accent);
+  --accent-base: var(--color-accent-hover);
+  --accent-deep: var(--color-accent-active);
+  --sheen: rgba(255, 255, 255, 0.45);
+  --sheen-strong: rgba(255, 255, 255, 0.28);
+  --shade: rgba(46, 37, 25, 0.16);
+  --shadow-control: 0 1px 2px rgba(80, 55, 30, 0.16);
+
   /* Dialog scrim on cream: the same brown as the text, translucent, never grey. */
   --overlay-scrim: rgba(46, 37, 25, 0.35);
 
@@ -167,6 +190,60 @@
   min-height: 28px;
 }
 :root[data-theme="cream"] { --ember-bubble-bg: #f7f2e9; }
+
+/* ----------------------------------------------------------------------------------
+   Material for controls: the bubble's recipe (a layered shadow and a 1px inset highlight)
+   applied to the things you press. Restrained on purpose, this is a settings window.
+
+   The primary button keeps `background-color` as the flat accent UNDER the gradient: the
+   contrast test reads background-color, and an image-only gradient computes to transparent;
+   it is also what paints while the image decodes. Hover lifts the drop shadow and brightens,
+   active flattens both and darkens, so a press reads as the surface going in, not as a colour
+   change. `background-image` does not transition in Chromium (it is discrete), which is why
+   hover and active never touch the gradient itself.
+---------------------------------------------------------------------------------- */
+.ember-btn-primary {
+  background-image: linear-gradient(180deg, var(--accent-lit) 0%, var(--accent-base) 52%, var(--accent-deep) 100%);
+  box-shadow: inset 0 1px 0 var(--sheen-strong), inset 0 -1px 0 var(--shade), var(--shadow-control);
+}
+.ember-btn-primary:hover:not(:disabled) {
+  box-shadow: inset 0 1px 0 var(--sheen-strong), inset 0 -1px 0 var(--shade), 0 2px 6px rgba(0, 0, 0, 0.3);
+  filter: brightness(1.05);
+}
+:root[data-theme="cream"] .ember-btn-primary:hover:not(:disabled) {
+  box-shadow: inset 0 1px 0 var(--sheen-strong), inset 0 -1px 0 var(--shade), 0 2px 6px rgba(80, 55, 30, 0.2);
+}
+.ember-btn-primary:active:not(:disabled) {
+  box-shadow: inset 0 1px 2px var(--shade);
+  filter: brightness(0.94);
+}
+
+/* The bubble's material on a neutral surface: a sheen fading from the top and the 1px inset
+   highlight, no drop shadow. Hover changes the background-color under it, which transitions. */
+.ember-btn-ghost {
+  background-image: linear-gradient(180deg, var(--sheen) 0%, transparent 60%);
+  box-shadow: inset 0 1px 0 var(--sheen);
+}
+.ember-btn-ghost:hover:not(:disabled) { box-shadow: inset 0 1px 0 var(--sheen-strong); }
+.ember-btn-ghost:active:not(:disabled) { box-shadow: inset 0 1px 1px var(--shade); }
+
+/* A groove, not a pill: inset shade at the top edge, sheen at the bottom. Checked fills the
+   groove with the accent gradient INVERTED (deep at top, lit at bottom), so the track reads as
+   recessed and lit from the same side as the raised button: on/off and the action that commits
+   it are visibly one material. The thumb is warm white, top-lit, with a contact shadow so it
+   sits ON the groove. */
+.ember-switch {
+  box-shadow: inset 0 1px 2px var(--shade), inset 0 -1px 0 var(--sheen);
+  transition: background-color 150ms, box-shadow 150ms;
+}
+.ember-switch[data-state="checked"] {
+  background-image: linear-gradient(180deg, var(--accent-deep) 0%, var(--accent-base) 45%, var(--accent-lit) 100%);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.18), inset 0 -1px 0 var(--sheen-strong);
+}
+.ember-switch-thumb {
+  background-image: linear-gradient(180deg, #fffaf3 0%, #efe6da 100%);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 0 0 0.5px rgba(0, 0, 0, 0.12);
+}
 
 /* The overlay preview in the settings opts out of the theme.
    The overlay window never gets a `data-theme` attribute, so it is always dark: it appears over
@@ -303,7 +380,7 @@
 /* Shared keyboard affordances for buttons and links (the settings have no native <details>). */
 button:focus-visible, a:focus-visible { outline: 2px solid var(--border-accent); outline-offset: 3px; }
 @media (prefers-reduced-motion: reduce) {
-  button { transition: none !important; transform: none !important; }
+  button, .ember-switch { transition: none !important; transform: none !important; }
   .animate-pulse { animation: none !important; }
 }
 

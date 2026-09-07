@@ -5,14 +5,16 @@ import { cn } from "@/lib/utils";
 import { Spinner } from "./spinner";
 
 const buttonVariants = cva(
-  "relative inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-sm text-sm font-medium transition-[color,background-color,border-color,transform] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--border-accent)] active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50 disabled:active:scale-100",
+  "relative inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-sm text-sm font-medium transition-[color,background-color,border-color,box-shadow,filter,transform] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--border-accent)] active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50 disabled:active:scale-100",
   {
     variants: {
       variant: {
-        primary:
-          "bg-accent text-[color:var(--color-accent-fg)] hover:bg-[color:var(--color-accent-hover)]",
+        // The material classes live in globals.css. Primary keeps `bg-accent` as the flat
+        // colour under its gradient (the contrast test reads background-color); hover is the
+        // gradient's own, so no hover colour here or it would flash through the image edges.
+        primary: "ember-btn-primary bg-accent text-[color:var(--color-accent-fg)]",
         ghost:
-          "border border-[color:var(--border-subtle)] bg-surface-2 text-fg hover:bg-surface-3",
+          "ember-btn-ghost border border-[color:var(--border-subtle)] bg-surface-2 text-fg hover:bg-surface-3",
         outline: "border border-[color:var(--border-default)] text-fg hover:bg-surface-2",
       },
       size: { md: "h-9 px-4", sm: "h-8 px-3", icon: "h-9 w-9" },
