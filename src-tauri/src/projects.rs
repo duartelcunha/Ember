@@ -194,12 +194,6 @@ fn fingerprint(sources: &[(Found, String)]) -> String {
     format!("{:x}", hash.finalize())
 }
 
-pub fn source_changed(project: &core::Project) -> Option<bool> {
-    let folder = Path::new(project.folder.as_deref()?);
-    let saved = project.source_fingerprint.as_deref()?;
-    Some(fingerprint(&collect(folder).0) != saved)
-}
-
 fn short_name(p: &Path) -> String {
     p.file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -377,6 +371,7 @@ pub async fn distill(
         ..Default::default()
     };
     let pctx = crate::providers::ProviderCtx {
+        on_response: None,
         openai_base_url: &cfg.openai_base_url,
     };
     let resp = crate::providers::refine(

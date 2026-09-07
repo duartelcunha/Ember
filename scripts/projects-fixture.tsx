@@ -4,10 +4,11 @@ import { MotionConfig } from "motion/react";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { DEFAULT_SETTINGS, type AccentPreview, type Project } from "../src/lib/ipc";
 import { ProjectsTab } from "../src/settings/ProjectsTab";
+import { SettingsViewport } from "../src/settings/SettingsViewport";
 import "../src/styles/globals.css";
 
 const project = (id: string, name: string): Project => ({ id, name, brief: `Brief for ${name}`,
-  accent: 0, accentCustom: "#fd8c3c", icon: "sparkle", folder: `/fixture/${name}`, sourcePath: null });
+  accent: 0, accentCustom: "#fd8c3c", icon: "sparkle", folder: `/fixture/${name}`, sourcePath: null, context: { version: 1, applications: [], sources: [{ path: `/fixture/${name}/AGENTS.md`, text: "", fingerprint: "", excludedLines: 0 }] } });
 let stored = { ...DEFAULT_SETTINGS, projects: [project("a", "Alpha"), project("b", "Beta")],
   accents: [{ label: "Ember", raw: "#aa4411", mid: "#fd8c3c", glow: "#ffcc88" }], icons: ["sparkle"] };
 const fixture = { wheel: [] as ((value: AccentPreview) => void)[], saved: [] as Project[], distillations: 0,
@@ -29,6 +30,6 @@ mockIPC((command, args) => {
 });
 function Fixture() {
   const [settings, setSettings] = useState(stored);
-  return <MotionConfig reducedMotion="user"><ProjectsTab s={settings} setS={setSettings} /></MotionConfig>;
+  return <MotionConfig reducedMotion="user"><main className="flex h-screen flex-col overflow-hidden bg-panel text-fg"><SettingsViewport><ProjectsTab s={settings} setS={setSettings} /></SettingsViewport></main></MotionConfig>;
 }
 createRoot(document.getElementById("root")!).render(<React.StrictMode><Fixture /></React.StrictMode>);

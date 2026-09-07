@@ -51,7 +51,7 @@ fn category(heading: &str) -> Option<Section> {
     }
 }
 
-fn operational(text: &str) -> bool {
+pub fn operational(text: &str) -> bool {
     let lower = text.to_lowercase();
     let words: Vec<_> = lower
         .split(|c: char| !c.is_alphanumeric())
@@ -66,7 +66,6 @@ fn operational(text: &str) -> bool {
                 | "run"
                 | "running"
                 | "deploy"
-                | "deployment"
                 | "publish"
                 | "publicar"
                 | "commit"
@@ -91,6 +90,9 @@ fn operational(text: &str) -> bool {
                 | "secrets"
                 | "segredo"
                 | "segredos"
+                | "memory"
+                | "memória"
+                | "playbook"
         )
     }) || [
         "ignore previous",
@@ -122,6 +124,7 @@ pub fn extract(text: &str) -> Extracted {
         ..Extracted::default()
     };
     let mut section = None;
+    let mut section_depth = 0;
     let mut fence: Option<(char, usize)> = None;
     let mut comment = false;
     for line in redacted.lines() {
@@ -160,6 +163,30 @@ pub fn extract(text: &str) -> Extracted {
         }
         let depth = trimmed.chars().take_while(|c| *c == '#').count();
         if depth > 0 && trimmed.as_bytes().get(depth) == Some(&b' ') {
+            if let Some(category) = category(trimmed) {
+                section = Some(category);
+                section_depth = depth;
+            } else if !matches!(section, Some(Section::Technical))
+                || depth <= section_depth
+                || operational(trimmed)
+                || [
+                    "operation",
+                    "workflow",
+                    "command",
+                    "instruction",
+                    "playbook",
+                    "comando",
+                    "instruç",
+                ]
+                .iter()
+                .any(|word| trimmed.to_lowercase().contains(word))
+            {
+                section = None;
+                section_depth = depth;
+            }
+            continue;
+        }
+        if trimmed.ends_with(':') && category(trimmed).is_some() {
             section = category(trimmed);
             continue;
         }
@@ -318,5 +345,12 @@ mod tests {
     fn shorter_fences_cannot_expose_executable_examples() {
         let extracted = extract("# Writing style\n````md\n```\n# Writing style\nHidden example\n````\nVisible preference.");
         assert_eq!(extracted.writing, ["Visible preference."]);
+    }
+    #[test]
+    fn nested_technical_sections_keep_facts_but_drop_operational_subsections() {
+        let extracted = extract("# Technical context\n## Rendering\nFramework: React\nDeployment target: Vercel\n## Commands\nUse npm to build\n# Other\nUnrelated sentence");
+        let text = compose(&[extracted]);
+        assert!(text.contains("React") && text.contains("Vercel"));
+        assert!(!text.contains("npm") && !text.contains("Unrelated"));
     }
 }

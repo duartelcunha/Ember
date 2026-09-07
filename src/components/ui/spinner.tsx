@@ -31,7 +31,7 @@ export function Spinner({ variant = "arc", size = 16, className }: SpinnerProps)
   if (variant === "embers") {
     return (
       <span
-        className={className}
+        className={`ember-spinner ${className ?? ""}`}
         role="status"
         aria-label="Loading"
         style={{ display: "inline-flex", alignItems: "center", gap: size / 5, height: size }}
@@ -54,7 +54,7 @@ export function Spinner({ variant = "arc", size = 16, className }: SpinnerProps)
   }
   return (
     <span
-      className={className}
+      className={`ember-spinner ${className ?? ""}`}
       role="status"
       aria-label="Loading"
       style={{ display: "inline-flex", width: size, height: size }}

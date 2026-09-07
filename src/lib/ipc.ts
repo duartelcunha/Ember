@@ -15,9 +15,26 @@ export type OpenAiAuth = "api_key" | "chat_gpt";
  *  OpenAI-COMPATIBLE: a consola depende do endpoint escolhido, nao do provider. */
 export type KeyConsole = "gemini" | "groq" | "openai" | "openrouter" | "anthropic";
 export type ProfileSource = "claude_md" | "user_edited" | "default";
-export type RefineMode = "adaptive" | "polish" | "turbo";
+export type RefineMode = "adaptive" | "polish" | "turbo" | "reply";
+/** Os tres modos que a comparacao poe lado a lado. O Reply produz outra coisa a partir de outro
+ *  tipo de input, por isso nao entra numa grelha que existe para comparar o MESMO texto. */
+export type ComparedMode = Exclude<RefineMode, "reply">;
+/** Quanto o refine pode mexer no tamanho. Ortogonal ao modo: aplica-se aos quatro. */
+export type Length = "shorter" | "same" | "longer";
 export type ThinkingLevel = "minimal" | "low" | "medium" | "high";
 export type Theme = "dark" | "cream";
+/** As tres peles da marca junto ao cursor. Todas desenham na mesma caixa de tinta. */
+export type OrbSkin = "ember" | "pulse" | "ring";
+/** Tres passos, nao um seletor livre: o tamanho e um multiplo INTEIRO do pixel do desenho. */
+export type OrbSize = "small" | "normal" | "large";
+/** Quanto tempo as notas ficam no ecra depois do refine. */
+export type NoticeSpeed = "quick" | "normal" | "relaxed";
+/**
+ * O pixel de desenho de cada tamanho. ESPELHADO em `OrbSize::px` (crates/ember-core/src/model.rs);
+ * muda um, muda o outro. Inteiro sempre: a marca e arte de pixeis e um multiplo fracionario poe
+ * as arestas entre dois pixeis do ecra.
+ */
+export const ORB_SIZE_PX: Record<OrbSize, number> = { small: 2, normal: 3, large: 4 };
 /** Resultado do probe de chave: distingue "chave recusada" de "sem rede agora". */
 export type KeyCheck = "valid" | "invalid" | "network_error";
 
@@ -32,7 +49,7 @@ export interface ProviderHealth {
 }
 
 /** Qual dos tres atalhos. O "main" usa o modo escolhido nas settings; os outros fixam o seu. */
-export type HotkeySlot = "main" | "polish" | "turbo" | "picker";
+export type HotkeySlot = "main" | "polish" | "turbo" | "reply" | "picker";
 
 /** Veredicto sobre uma combinacao ANTES de a gravar. Espelha `ember_core::hotkey`. */
 export type HotkeyVerdict =
@@ -80,7 +97,10 @@ export interface AccentPreview {
 }
 
 /** Um projeto registado. O `brief` e o que entra no prompt; o ficheiro e so a semente. */
+export interface ContextSource { path: string; fingerprint: string; text: string; excludedLines: number }
+export interface ProjectContext { version: number; applications: string[]; sources: ContextSource[] }
 export interface Project {
+  context?: ProjectContext;
   id: string;
   name: string;
   /** Indice na paleta que vem em `EmberSettings.accents`. */
@@ -144,6 +164,8 @@ export interface EmberSettings {
   /** Atalhos que fixam um modo. String vazia = nao registado. */
   hotkeyPolish: string;
   hotkeyTurbo: string;
+  /** Atalho do modo Reply. String vazia = nao registado. */
+  hotkeyReply: string;
   /** Atalho do picker de projetos. String vazia = nao registado. */
   hotkeyPicker: string;
   autostart: boolean;
@@ -152,12 +174,15 @@ export interface EmberSettings {
   /** `null` em condições normais; mensagem quando o cofre de credenciais está ilegível. */
   keyStoreError: string | null;
   profileText: string;
+  profileReview?: string | null;
+  profileArchive?: string | null;
   profileLimitBytes: number;
   profileSource: ProfileSource;
   profilePath: string | null;
   profileSources: ProfileProvenance[];
   legacyAutoProfileDisabled: boolean;
   mode: RefineMode;
+  length: Length;
   thinkingEnabled: boolean;
   thinkingLevel: ThinkingLevel;
   terminalHandling: boolean;
@@ -171,6 +196,9 @@ export interface EmberSettings {
   projectContext: boolean;
   previewBeforePaste: boolean;
   theme: Theme;
+  orbSkin: OrbSkin;
+  orbSize: OrbSize;
+  noticeSpeed: NoticeSpeed;
   /** Sem seleccao, seleciona o campo em foco e refina-o todo. */
   selectAllFallback: boolean;
   selectAllMaxChars: number;
@@ -204,6 +232,7 @@ export const DEFAULT_SETTINGS: EmberSettings = {
   hotkey: "CmdOrCtrl+Shift+E",
   hotkeyPolish: "",
   hotkeyTurbo: "",
+  hotkeyReply: "",
   hotkeyPicker: "",
   autostart: false,
   hasGeminiKey: false,
@@ -216,6 +245,7 @@ export const DEFAULT_SETTINGS: EmberSettings = {
   profileSources: [],
   legacyAutoProfileDisabled: false,
   mode: "adaptive",
+  length: "same",
   thinkingEnabled: true,
   thinkingLevel: "high",
   terminalHandling: true,
@@ -228,6 +258,9 @@ export const DEFAULT_SETTINGS: EmberSettings = {
   projectContext: false,
   previewBeforePaste: false,
   theme: "cream",
+  orbSkin: "ember",
+  orbSize: "normal",
+  noticeSpeed: "normal",
   selectAllFallback: true,
   selectAllMaxChars: 8000,
   projects: [],
@@ -284,7 +317,11 @@ export const ipc = {
   listModels: (provider: ProviderKind) => invoke<ModelCatalog>("list_models", { provider }),
   setAutostart: (enabled: boolean) => invoke<void>("set_autostart", { enabled }),
   setMode: (mode: RefineMode) => invoke<void>("set_mode", { mode }),
+  setLength: (length: Length) => invoke<void>("set_length", { length }),
   setTheme: (theme: Theme) => invoke<void>("set_theme", { theme }),
+  /** Os tres numa chamada so: viajam juntos para a janela do overlay e a UI tem sempre os tres. */
+  setOverlayStyle: (skin: OrbSkin, size: OrbSize, notice: NoticeSpeed) =>
+    invoke<void>("set_overlay_style", { skin, size, notice }),
   setThinking: (enabled: boolean, level: ThinkingLevel) =>
     invoke<void>("set_thinking", { enabled, level }),
   setTerminalHandling: (enabled: boolean) => invoke<void>("set_terminal_handling", { enabled }),

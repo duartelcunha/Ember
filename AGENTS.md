@@ -11,7 +11,7 @@ captura via clipboard, LLM, paste de volta.
   retry/fallback, modelos, projetos, hotkeys.
 - `src-tauri/`: shell Tauri com todo o I/O (janelas, hooks de teclado, clipboard, HTTP, OAuth,
   segredos). Lógica decidível sem I/O desce para o core.
-- `src/`: React 19 + Tailwind + motion; entradas settings/overlay/picker/splash.
+- `src/`: React 19 + Tailwind + motion; entradas settings/overlay/picker/tray/splash.
 
 ## Regras que não se negoceiam
 

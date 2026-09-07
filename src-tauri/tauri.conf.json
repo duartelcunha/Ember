@@ -81,12 +81,26 @@
         "visible": false
       },
       {
+        "label": "tray",
+        "url": "tray.html",
+        "create": false,
+        "width": 208,
+        "height": 128,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "visible": false
+      },
+      {
         "label": "settings",
         "url": "settings.html",
         "create": false,
         "title": "Ember",
-        "width": 1000,
-        "height": 640,
+        "width": 720,
+        "height": 856,
         "minWidth": 720,
         "minHeight": 520,
         "resizable": true,

@@ -1,6 +1,6 @@
 import * as React from "react";
 import * as TabsPrimitive from "@radix-ui/react-tabs";
-import { motion } from "motion/react";
+import { motion, useReducedMotion } from "motion/react";
 import { cn } from "@/lib/utils";
 
 export const Tabs = TabsPrimitive.Root;
@@ -45,19 +45,25 @@ TabsTrigger.displayName = "TabsTrigger";
 export const TabsContent = React.forwardRef<
   React.ElementRef<typeof TabsPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof TabsPrimitive.Content>
->(({ className, children, ...props }, ref) => (
+>(({ className, children, ...props }, ref) => {
+  const still = useReducedMotion();
+  return (
   <TabsPrimitive.Content
     ref={ref}
-    className={cn("mt-6 focus-visible:outline-none", className)}
+    // `flex-1 min-h-0`: the panel takes the height left under the tab strip and hands it to
+    // the tab body, which lays itself out to fit. Nothing here scrolls.
+    className={cn("mt-4 flex min-h-0 flex-1 flex-col focus-visible:outline-none", className)}
     {...props}
   >
     <motion.div
-      initial={{ opacity: 0, y: 8 }}
+      className="flex min-h-0 flex-1 flex-col"
+      initial={still ? false : { opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+      transition={{ duration: still ? 0 : 0.18, ease: [0.22, 1, 0.36, 1] }}
     >
       {children}
     </motion.div>
   </TabsPrimitive.Content>
-));
+);
+});
 TabsContent.displayName = "TabsContent";

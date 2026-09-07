@@ -40,3 +40,4 @@ src-tauri/target/
 # Planos/specs internos de trabalho com agentes: nao pertencem ao repo publico.
 docs/superpowers/
 .agents/
+.ew/

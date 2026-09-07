@@ -1,29 +1,38 @@
+import { SourcePath } from "../components/SourcePath";
+import { Feedback } from "../components/Feedback";
 import { ContextInspector } from "./ContextInspector";
+import { InfoPopover } from "./Section";
 import { ICON_BY_NAME } from "../components/projectIcons";
 import { useEffect, useRef, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
+import { motion, useReducedMotion } from "motion/react";
 import { toast } from "sonner";
-import {
-  Sparkle,
-  CaretDown,
-  X,
-  type Icon,
-} from "@phosphor-icons/react";
+import { Sparkle, CaretLeft, CaretRight, X, type Icon } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Dialog,
+  DialogBody,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { open } from "@tauri-apps/plugin-dialog";
 import { ipc, type AccentPreview, type EmberSettings, type Project, type ProjectScan } from "@/lib/ipc";
+import { cn } from "@/lib/utils";
 
 /**
  * Os nomes dos ícones vêm do Rust (`ember_core::projects::ICONS`); aqui só se mapeia cada nome ao
  * componente. Um nome que o Rust passe a mandar e que não esteja aqui cai no primeiro, em vez de
  * rebentar a lista toda.
  */
-
-
 function iconOf(name: string): Icon {
   return ICON_BY_NAME[name] ?? Sparkle;
 }
@@ -191,10 +200,7 @@ function ColourWheel({
 /** Teto do brief, espelhado do Rust (`MAX_BRIEF_CHARS`) só para o contador. Quem corta é o Rust. */
 const MAX_BRIEF = 1200;
 
-/**
- * Grelha de escolha única (cores, ícones). É o único primitivo novo que esta funcionalidade
- * precisa: a app não tem Dialog, Popover nem color picker, e nada disto os pede.
- */
+/** Grelha de escolha única (cores, ícones). */
 function ChoiceGrid({
   label,
   children,
@@ -203,7 +209,7 @@ function ChoiceGrid({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-1.5">
       <Label>{label}</Label>
       <div role="radiogroup" aria-label={label} className="flex flex-wrap gap-1.5">
         {children}
@@ -212,27 +218,127 @@ function ChoiceGrid({
   );
 }
 
+const emptySource = (path: string) => ({ path, text: "", fingerprint: "", excludedLines: 0 });
+
+/** Applications and authorised files of a project, in a dialog. The editor shows one summary
+ *  line; the lists can be long and used to sit inside a native disclosure that grew the card. */
+function AutomaticContextDialog({
+  draft,
+  busy,
+  onChange,
+}: {
+  draft: Project;
+  busy: boolean;
+  onChange: React.Dispatch<React.SetStateAction<Project | null>>;
+}) {
+  const applications = draft.context?.applications ?? [];
+  const sources = draft.context?.sources ?? [];
+  const setContext = (next: { applications?: string[]; sources?: Project["context"] extends infer C ? (C extends { sources: infer S } ? S : never) : never }) =>
+    onChange((current) => current && current.id === draft.id
+      ? { ...current, context: { version: 1, applications: next.applications ?? current.context?.applications ?? [], sources: next.sources ?? current.context?.sources ?? [] } }
+      : current);
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button variant="ghost" size="sm" aria-label="Manage automatic context">Manage…</Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Automatic context</DialogTitle>
+          <DialogDescription>A project path is used first. Application associations apply only when one project matches.</DialogDescription>
+        </DialogHeader>
+        <DialogBody className="flex flex-col gap-4 text-xs">
+          <div>
+            <div className="flex items-center justify-between gap-2">
+              <p className="font-medium text-fg">Applications</p>
+              <Button variant="ghost" size="sm" disabled={busy} onClick={async () => {
+                const selected = await open({ multiple: false, directory: false, title: "Choose application" });
+                if (typeof selected === "string") setContext({ applications: [...new Set([...applications, selected])] });
+              }}>Associate application</Button>
+            </div>
+            {applications.length === 0
+              ? <p className="mt-2 text-fg-muted">No application associations. Project paths and manual selection still work.</p>
+              : <ul className="mt-2 flex flex-col gap-2">{applications.map(path => (
+                  <li key={path} className="flex items-center justify-between gap-2">
+                    <SourcePath path={path} />
+                    <Button size="sm" variant="outline" disabled={busy} onClick={() => setContext({ applications: applications.filter(p => p !== path) })}>Remove</Button>
+                  </li>
+                ))}</ul>}
+          </div>
+          <div>
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="font-medium text-fg">Authorized sources</p>
+                <p className="mt-0.5 text-fg-muted">Changes to these files update locally. New files and imports require your choice.</p>
+              </div>
+              <Button variant="ghost" size="sm" disabled={busy || !draft.folder} onClick={async () => {
+                const selected = await open({ multiple: true, directory: false, title: "Authorize context files inside this project", filters: [{ name: "Context", extensions: ["md", "markdown", "txt"] }] });
+                if (!selected) return;
+                const picked = (Array.isArray(selected) ? selected : [selected]).filter(path => !sources.some(s => s.path === path));
+                setContext({ sources: [...sources, ...picked.map(emptySource)] });
+              }}>Add sources</Button>
+            </div>
+            {sources.length === 0
+              ? <p className="mt-2 text-fg-muted">No authorized files. Your saved brief is still used.</p>
+              : <ul className="mt-2 flex flex-col gap-2">{sources.map(source => (
+                  <li key={source.path} className="flex items-center justify-between gap-2">
+                    <SourcePath path={source.path} />
+                    <Button size="sm" variant="outline" disabled={busy} onClick={() => setContext({ sources: sources.filter(s => s.path !== source.path) })}>Remove</Button>
+                  </li>
+                ))}</ul>}
+          </div>
+        </DialogBody>
+        <DialogFooter>
+          <DialogClose asChild><Button variant="ghost" size="sm">Done</Button></DialogClose>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function ProjectEditor({
   draft,
+  isNew,
   accents,
   wheel,
   icons,
+  scan,
+  savedBrief,
   onChange,
   onSave,
   onDelete,
+  onBack,
+  onDiscard,
+  onPickFolder,
+  onUseSubfolder,
+  onDistil,
+  onRescan,
   busy,
+  saving,
+  distilling,
 }: {
   draft: Project;
+  isNew: boolean;
   accents: EmberSettings["accents"];
   wheel: EmberSettings["accentWheel"];
   icons: string[];
+  scan: (ProjectScan & { folder: string }) | null;
+  /** The brief on disk, when it differs from the draft after a generated one. */
+  savedBrief: string | null;
   onChange: React.Dispatch<React.SetStateAction<Project | null>>;
   onSave: () => void;
   onDelete: () => void;
+  onBack: () => void;
+  onDiscard: () => void;
+  onPickFolder: () => void;
+  onUseSubfolder: (path: string) => void;
+  onDistil: () => void;
+  onRescan: () => void;
   busy: boolean;
+  saving: boolean;
+  distilling: boolean;
 }) {
-  // Apagar em dois passos, sem modal: a app não tem Dialog e não vale a pena construir um para
-  // uma confirmação. O botão vira "Really delete?" e volta atrás sozinho.
+  // Apagar em dois passos, sem modal: o botão vira "Really delete?" e volta atrás sozinho.
   const [confirming, setConfirming] = useState(false);
 
   // Uma cor a medida vale mais do que o indice: com ela preenchida, nenhuma das fixas esta ativa.
@@ -246,8 +352,6 @@ function ProjectEditor({
   // que sairam, e uma resposta atrasada a sobrescrever uma recente era metade do defeito que se
   // via a arrastar na roda. Quem nao e o ultimo pedido nao escreve.
   const askSeq = useRef(0);
-  const panelRef = useRef<HTMLDivElement>(null);
-  const swatchRef = useRef<HTMLDivElement>(null);
   const askStops = (chroma: number, hue: number, commit: boolean) => {
     const mine = ++askSeq.current;
     ipc
@@ -262,21 +366,6 @@ function ProjectEditor({
       })
       .catch(() => {});
   };
-  useEffect(() => {
-    // O painel cresce para baixo e a janela e pequena: aberto, metade dele ficava por baixo do
-    // que se ve. `nearest` desloca o minimo para o mostrar, em vez de saltar a pagina inteira.
-    panelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  }, []);
-
-  useEffect(() => {
-    if (!picking) return;
-    // O disco abre para baixo e para a direita da bolinha; junto ao fundo da janela abria fora do
-    // que se ve e parecia que nao tinha acontecido nada. Centra-se ao abrir.
-    swatchRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setPicking(false);
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [picking]);
 
   useEffect(() => {
     const mine = ++askSeq.current;
@@ -288,186 +377,30 @@ function ProjectEditor({
     return () => { askSeq.current++; };
   }, [custom]);
 
+  const id = draft.id || "novo";
+  const applications = draft.context?.applications.length ?? 0;
+  const sourceCount = draft.context?.sources.length ?? 0;
+
   return (
-    <div
-      ref={panelRef}
-      className="flex flex-col gap-5 border-t border-[color:var(--border-subtle)] px-5 py-5"
-    >
-      <div className="flex flex-col gap-2">
-        <Label htmlFor={`name-${draft.id || "novo"}`}>Name</Label>
+    <div className="flex min-h-0 flex-1 flex-col gap-3 p-[var(--card-pad,1.25rem)]">
+      <div className="flex items-center gap-2">
+        <Button variant="ghost" size="sm" className="@3xl/settings:hidden" onClick={onBack} aria-label="Back to projects" disabled={busy || distilling}>
+          <CaretLeft size={14} weight="bold" aria-hidden="true" />
+        </Button>
+        <Label htmlFor={`name-${id}`} className="sr-only">Name</Label>
         <Input
-          id={`name-${draft.id || "novo"}`}
+          id={`name-${id}`}
+          className="min-w-0 flex-1"
           value={draft.name}
           onChange={(e) => onChange({ ...draft, name: e.target.value })}
-          placeholder="e.g. Sintra"
+          placeholder={isNew ? "Project name, e.g. Sintra" : "Name"}
         />
-      </div>
-
-      {/* Cor e icone lado a lado: a fila de cores tem nove elementos e deixava meia linha vazia
-          a seguir, com o painel a crescer sem necessidade. Abaixo de `sm` voltam a empilhar, que
-          e onde nao ha largura para os dois. */}
-      <div className="grid gap-5 sm:grid-cols-[auto_1fr]">
-      <ChoiceGrid label="Colour">
-        {accents.map((a, i) => (
-          <button
-            key={a.label}
-            type="button"
-            role="radio"
-            aria-checked={!custom && draft.accent === i}
-            aria-label={a.label}
-            title={a.label}
-            // Escolher uma fixa apaga a cor a medida. O indice fica gravado por baixo enquanto a
-            // custom esta ligada, para desligar voltar a esta sem ter de a escolher outra vez.
-            onClick={() => onChange({ ...draft, accent: i, accentCustom: null })}
-            className={`h-7 w-7 rounded-full border-2 transition-transform hover:scale-110 ${
-              !custom && draft.accent === i
-                ? "border-[color:var(--border-accent)] scale-110"
-                : "border-transparent"
-            }`}
-            style={{ background: a.mid }}
-          />
-        ))}
-        <div className="relative" ref={swatchRef}>
-          <button
-            type="button"
-            aria-haspopup="dialog"
-            aria-expanded={picking}
-            aria-label="Custom colour"
-            title="A colour of your own"
-            onClick={() => {
-              if (!custom) {
-                onChange({
-                  ...draft,
-                  accentCustom: accents[draft.accent]?.mid ?? "#4a90d9",
-                });
-              }
-              setPicking((v) => !v);
-            }}
-            className={`grid h-7 w-7 place-items-center rounded-full border-2 transition-transform hover:scale-110 ${
-              custom ? "border-[color:var(--border-accent)] scale-110" : "border-transparent"
-            }`}
-          >
-            {/* O gradiente vive num elemento PROPRIO, e nao no fundo do botao.
-                Era essa a origem dos cantos estranhos: o fundo de um elemento pinta-se por baixo
-                da sua borda, e com uma borda de 2px o recorte redondo do fundo deixa de coincidir
-                com o circulo que se ve. Numa cor solida ninguem nota; num gradiente aparece nos
-                cantos. Aqui o gradiente tem o seu proprio `rounded-full` e nada por baixo. */}
-            <span
-              aria-hidden="true"
-              className="block h-full w-full rounded-full"
-              style={{ background: custom ? preview?.mid ?? custom : RAINBOW }}
-            />
-          </button>
-
-          <AnimatePresence>
-            {picking && (
-              <>
-                {/* Fechar ao clicar fora. Nao e um modal: escolher uma cor nao merece interromper
-                    a pagina nem proteger o foco, so precisa de sair do caminho quando se acaba. */}
-                <div
-                  className="fixed inset-0 z-40"
-                  onClick={() => setPicking(false)}
-                  aria-hidden="true"
-                />
-                <motion.div
-                  role="dialog"
-                  aria-label="Pick a colour"
-                  // O momento: o painel ABRE DA PROPRIA BOLINHA, por um circulo de clip que
-                  // cresce a partir dela. E a mesma forma do que se vai escolher, e diz de onde
-                  // veio sem precisar de uma seta desenhada.
-                  initial={{ clipPath: "circle(14px at 14px 14px)", opacity: 0, scale: 0.96 }}
-                  animate={{ clipPath: "circle(150% at 14px 14px)", opacity: 1, scale: 1 }}
-                  exit={{ clipPath: "circle(14px at 14px 14px)", opacity: 0, scale: 0.96 }}
-                  transition={{ duration: 0.34, ease: [0.22, 1, 0.36, 1] }}
-                  style={{ transformOrigin: "14px 14px" }}
-                  className="absolute left-0 top-0 z-50 flex flex-col items-center gap-3 rounded-xl border border-[color:var(--border-subtle)] bg-surface-1 p-4 shadow-[0_2px_4px_rgba(0,0,0,0.14),0_18px_48px_-16px_rgba(0,0,0,0.45)]"
-                >
-                  <ColourWheel
-                    wheel={wheel}
-                    chroma={preview?.chroma ?? 0}
-                    hue={preview?.hue ?? 0}
-                    onPreview={(chroma, hue) => askStops(chroma, hue, false)}
-                    onCommit={(chroma, hue) => askStops(chroma, hue, true)}
-                  />
-                  <div className="flex w-44 items-center gap-2">
-                    <div
-                      className="flex h-7 flex-1 overflow-hidden rounded-sm border border-[color:var(--border-subtle)]"
-                      aria-hidden="true"
-                    >
-                      <span className="flex-1" style={{ background: preview?.raw }} />
-                      <span className="flex-1" style={{ background: preview?.mid }} />
-                      <span className="flex-1" style={{ background: preview?.glow }} />
-                    </div>
-                    <Button variant="ghost" size="sm" onClick={() => setPicking(false)}>
-                      Done
-                    </Button>
-                  </div>
-                </motion.div>
-              </>
-            )}
-          </AnimatePresence>
-        </div>
-      </ChoiceGrid>
-
-      <ChoiceGrid label="Icon">
-        {icons.map((name) => {
-          const I = iconOf(name);
-          const on = draft.icon === name;
-          return (
-            <button
-              key={name}
-              type="button"
-              role="radio"
-              aria-checked={on}
-              aria-label={name}
-              title={name}
-              onClick={() => onChange({ ...draft, icon: name })}
-              className={`flex h-8 w-8 items-center justify-center rounded-md border transition-colors ${
-                on
-                  ? "border-[color:var(--border-accent)] text-fg"
-                  : "border-[color:var(--border-subtle)] text-fg-muted hover:text-fg"
-              }`}
-            >
-              <I size={15} />
-            </button>
-          );
-        })}
-      </ChoiceGrid>
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <div className="flex items-baseline justify-between gap-2">
-          <Label htmlFor={`brief-${draft.id || "novo"}`}>Brief</Label>
-          {/* O contador não é decoração: este texto vai no prompt em TODOS os refines, e é o
-              único sítio onde esse custo é visível enquanto se escreve. */}
-          <span
-            className={`font-mono text-[11px] ${
-              draft.brief.length > MAX_BRIEF ? "text-[color:var(--color-error)]" : "text-fg-muted"
-            }`}
-          >
-            {draft.brief.length}/{MAX_BRIEF}
-          </span>
-        </div>
-        <Textarea
-          id={`brief-${draft.id || "novo"}`}
-          value={draft.brief}
-          onChange={(e) => onChange({ ...draft, brief: e.target.value })}
-          className="h-40 resize-none font-mono text-xs"
-          placeholder={
-            "What changes how text about this project should be written. For example:\n" +
-            "Write in European Portuguese, informal.\n" +
-            "Never translate or 'fix': Sintra, e2o, deleg8lab.\n" +
-            "Avoid em dashes."
-          }
-        />
-        <p className="text-xs text-fg-muted">
-          Writing preferences and technical facts: language, terminology, architecture and constraints.
-          Exclude instructions to run commands, edit files or manage agents.
-        </p>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2 pt-1">
-        <Button variant="primary" onClick={onSave} disabled={busy || !draft.name.trim()}>
+        {isNew && (
+          <Button variant="ghost" onClick={onPickFolder} disabled={busy || distilling}>
+            Pick folder…
+          </Button>
+        )}
+        <Button variant="primary" onClick={onSave} loading={saving} disabled={busy || !draft.name.trim()}>
           Save
         </Button>
         {draft.id && (
@@ -494,11 +427,259 @@ function ProjectEditor({
             {confirming ? "Really delete?" : "Delete"}
           </Button>
         )}
+        {isNew && (
+          // Sair sem gravar. Sem isto, abrir "Add project" por engano era um beco.
+          <Button variant="ghost" size="icon" onClick={onDiscard} disabled={busy || distilling} aria-label="Discard this project" title="Discard">
+            <X size={14} weight="bold" aria-hidden="true" />
+          </Button>
+        )}
+      </div>
+
+      {isNew && scan && (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-[color:var(--border-subtle)] bg-surface-2 px-3 py-2 text-xs">
+          <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-fg-muted" title={scan.folder}>{scan.folder}</span>
+          {scan.fileName ? (
+            <>
+              <span className="text-fg" title={scan.candidates.length > 1 ? scan.candidates.map((c) => `${c.fileName} ${c.score}${c.chosen ? " (chosen)" : ""}`).join(", ") : undefined}>
+                Reads <span className="font-mono">{scan.fileName}</span> ({scan.lines} lines) once, to write the brief.
+              </span>
+              <Button variant="primary" size="sm" onClick={onDistil} disabled={distilling} className="disabled:opacity-100" aria-busy={distilling}>
+                <span className="inline-flex w-4 justify-center" aria-hidden>{distilling && <Spinner size={14} />}</span>
+                Read and write the brief
+              </Button>
+            </>
+          ) : scan.subfolders.length > 0 ? (
+            // Apontar à pasta-mãe em vez do repo é um erro natural e acontece. Oferecer as que
+            // têm conventions resolve-o num clique, sem obrigar a reabrir o seletor.
+            <Dialog>
+              <span className="text-fg">Nothing here, but {scan.subfolders.length} folders inside it have conventions.</span>
+              <DialogTrigger asChild><Button variant="ghost" size="sm">Choose one…</Button></DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Folders with conventions</DialogTitle>
+                  <DialogDescription>Inside {scan.folder}. Picking one scans it as if you had chosen it.</DialogDescription>
+                </DialogHeader>
+                <DialogBody className="flex flex-col gap-1">
+                  {scan.subfolders.map((sf) => (
+                    <DialogClose asChild key={sf.path}>
+                      <button
+                        type="button"
+                        onClick={() => onUseSubfolder(sf.path)}
+                        disabled={busy || distilling}
+                        className="flex items-baseline gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface-3"
+                      >
+                        <span className="text-xs text-fg">{sf.name}</span>
+                        <span className="font-mono text-[11px] text-fg-muted">{sf.fileName}</span>
+                      </button>
+                    </DialogClose>
+                  ))}
+                </DialogBody>
+              </DialogContent>
+            </Dialog>
+          ) : (
+            <span className="text-fg-muted">No conventions file here (no AGENTS.md, CLAUDE.md or similar). Write the brief yourself.</span>
+          )}
+        </div>
+      )}
+
+      {/* Cor e icone lado a lado: a fila de cores tem nove elementos e deixava meia linha vazia
+          a seguir. Em contentores estreitos voltam a empilhar. */}
+      <div className="grid gap-3 @xl/settings:grid-cols-[auto_1fr]">
+        <ChoiceGrid label="Colour">
+          {accents.map((a, i) => (
+            <button
+              key={a.label}
+              type="button"
+              role="radio"
+              aria-checked={!custom && draft.accent === i}
+              aria-label={a.label}
+              title={a.label}
+              // Escolher uma fixa apaga a cor a medida. O indice fica gravado por baixo enquanto a
+              // custom esta ligada, para desligar voltar a esta sem ter de a escolher outra vez.
+              onClick={() => onChange({ ...draft, accent: i, accentCustom: null })}
+              className={`h-7 w-7 rounded-full border-2 transition-transform hover:scale-110 ${
+                !custom && draft.accent === i
+                  ? "border-[color:var(--border-accent)] scale-110"
+                  : "border-transparent"
+              }`}
+              style={{ background: a.mid }}
+            />
+          ))}
+          {/* The wheel lives in a popover (portalled) so the editor pane can clip its own
+              content without clipping the disc. Non-modal: choosing a colour does not deserve
+              to interrupt the page, it only needs to get out of the way when done. */}
+          <Popover open={picking} onOpenChange={setPicking}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                aria-label="Custom colour"
+                title="A colour of your own"
+                onClick={() => {
+                  if (!custom) {
+                    onChange({
+                      ...draft,
+                      accentCustom: accents[draft.accent]?.mid ?? "#4a90d9",
+                    });
+                  }
+                }}
+                className={`grid h-7 w-7 place-items-center rounded-full border-2 transition-transform hover:scale-110 ${
+                  custom ? "border-[color:var(--border-accent)] scale-110" : "border-transparent"
+                }`}
+              >
+                {/* O gradiente vive num elemento PROPRIO, e nao no fundo do botao: o fundo de um
+                    elemento pinta-se por baixo da sua borda, e com uma borda de 2px o recorte
+                    redondo do fundo deixa de coincidir com o circulo que se ve. */}
+                <span
+                  aria-hidden="true"
+                  className="block h-full w-full rounded-full"
+                  style={{ background: custom ? preview?.mid ?? custom : RAINBOW }}
+                />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent aria-label="Pick a colour" align="start" className="flex w-auto flex-col items-center gap-3 rounded-xl bg-surface-1 p-4">
+              <ColourWheel
+                wheel={wheel}
+                chroma={preview?.chroma ?? 0}
+                hue={preview?.hue ?? 0}
+                onPreview={(chroma, hue) => askStops(chroma, hue, false)}
+                onCommit={(chroma, hue) => askStops(chroma, hue, true)}
+              />
+              <div className="flex w-44 items-center gap-2">
+                <div
+                  className="flex h-7 flex-1 overflow-hidden rounded-sm border border-[color:var(--border-subtle)]"
+                  aria-hidden="true"
+                >
+                  <span className="flex-1" style={{ background: preview?.raw }} />
+                  <span className="flex-1" style={{ background: preview?.mid }} />
+                  <span className="flex-1" style={{ background: preview?.glow }} />
+                </div>
+                <Button variant="ghost" size="sm" onClick={() => setPicking(false)}>
+                  Done
+                </Button>
+              </div>
+            </PopoverContent>
+          </Popover>
+        </ChoiceGrid>
+
+        <ChoiceGrid label="Icon">
+          {icons.map((name) => {
+            const I = iconOf(name);
+            const on = draft.icon === name;
+            return (
+              <button
+                key={name}
+                type="button"
+                role="radio"
+                aria-checked={on}
+                aria-label={name}
+                title={name}
+                onClick={() => onChange({ ...draft, icon: name })}
+                className={`flex h-7 w-7 items-center justify-center rounded-md border transition-colors ${
+                  on
+                    ? "border-[color:var(--border-accent)] text-fg"
+                    : "border-[color:var(--border-subtle)] text-fg-muted hover:text-fg"
+                }`}
+              >
+                <I size={15} />
+              </button>
+            );
+          })}
+        </ChoiceGrid>
+      </div>
+
+      <div className="flex min-h-[7.5rem] flex-1 flex-col gap-1.5">
+        <div className="flex items-baseline justify-between gap-2">
+          <div className="flex items-center gap-1.5">
+            <Label htmlFor={`brief-${id}`}>Brief</Label>
+            <InfoPopover title="Brief">
+              <p>
+                Writing preferences and technical facts: language, terminology, architecture and
+                constraints. Exclude instructions to run commands, edit files or manage agents.
+                This text rides along with every refine while the project is active.
+              </p>
+            </InfoPopover>
+          </div>
+          {/* O contador não é decoração: este texto vai no prompt em TODOS os refines, e é o
+              único sítio onde esse custo é visível enquanto se escreve. */}
+          <span
+            className={`font-mono text-[11px] ${
+              draft.brief.length > MAX_BRIEF ? "text-[color:var(--color-error)]" : "text-fg-muted"
+            }`}
+          >
+            {draft.brief.length}/{MAX_BRIEF}
+          </span>
+        </div>
+        <Textarea
+          id={`brief-${id}`}
+          data-scroll-pane=""
+          value={draft.brief}
+          onChange={(e) => onChange({ ...draft, brief: e.target.value })}
+          className="min-h-[72px] flex-1 font-mono text-xs"
+          placeholder={
+            "What changes how text about this project should be written. For example:\n" +
+            "Write in European Portuguese, informal.\n" +
+            "Never translate or 'fix': Sintra, e2o, deleg8lab.\n" +
+            "Avoid em dashes."
+          }
+        />
+      </div>
+
+      <div className="flex shrink-0 flex-wrap items-center gap-2 text-xs">
+        <span className="text-fg-muted">
+          Automatic context · {applications} {applications === 1 ? "app" : "apps"} · {sourceCount} {sourceCount === 1 ? "source" : "sources"}
+        </span>
+        <AutomaticContextDialog draft={draft} busy={busy} onChange={onChange} />
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {draft.folder && !isNew && (
+            <Button variant="ghost" size="sm" disabled={busy || distilling} onClick={onRescan}>Check project sources</Button>
+          )}
+          {scan && !isNew && (
+            <Button variant="ghost" size="sm" loading={distilling} disabled={busy || !scan.sourcePaths.length} onClick={onDistil}>Generate a reviewed draft</Button>
+          )}
+          {scan && !isNew && savedBrief !== null && (
+            <Dialog>
+              <DialogTrigger asChild><Button variant="ghost" size="sm">Saved brief…</Button></DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Previously saved brief</DialogTitle>
+                  <DialogDescription>What is on disk for this project right now.</DialogDescription>
+                </DialogHeader>
+                <DialogBody>
+                  <pre className="whitespace-pre-wrap break-words rounded-md border border-[color:var(--border-subtle)] bg-surface-2 p-3 font-mono text-[11px] leading-relaxed text-fg-muted">{savedBrief || "Empty."}</pre>
+                </DialogBody>
+                <DialogFooter>
+                  <DialogClose asChild><Button variant="ghost" size="sm">Close</Button></DialogClose>
+                  <DialogClose asChild>
+                    <Button variant="primary" size="sm" onClick={() => onChange({ ...draft, brief: savedBrief })}>Restore saved brief</Button>
+                  </DialogClose>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          )}
+          {scan && (
+            <Button variant="ghost" size="sm" disabled={busy || !scan.sourcePaths.length} onClick={() => onChange(current => current ? { ...current, context: { version: 1, applications: current.context?.applications ?? [], sources: scan.sourcePaths.map(emptySource) } } : current)}>Use scanned sources automatically</Button>
+          )}
+          {scan && (
+            <Popover>
+              <PopoverTrigger asChild><Button variant="ghost" size="sm">Scanned sources</Button></PopoverTrigger>
+              <PopoverContent className="w-96" role="status">
+                <p className="break-all">Sources: {scan.sourcePaths.join(", ") || "None"}</p>
+                {scan.warnings.map((warning) => <p key={warning} className="mt-1">{warning}</p>)}
+              </PopoverContent>
+            </Popover>
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
+/**
+ * Projects, master-detail: the list on the left scrolls inside its own pane, the editor on the
+ * right takes the remaining height and gives it to the brief. In narrow containers the editor
+ * replaces the list, with a Back button. It used to be a stack of cards where each project
+ * expanded in place to a 569px editor, which is why the tab scrolled.
+ */
 export function ProjectsTab({
   s,
   setS,
@@ -506,6 +687,8 @@ export function ProjectsTab({
   s: EmberSettings;
   setS: (next: EmberSettings) => void;
 }) {
+  const [error, setError] = useState<string | null>(null);
+  const still = useReducedMotion();
   const [openId, setOpenId] = useState<string | null>(null);
   const [draft, setDraftState] = useState<Project | null>(null);
   const draftEpoch = useRef(0);
@@ -514,6 +697,7 @@ export function ProjectsTab({
     draftEpoch.current += 1;
     setDraftState(next);
   };
+  const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState(false);
   const [distilling, setDistilling] = useState(false);
   const [scan, setScan] = useState<(ProjectScan & { folder: string }) | null>(null);
@@ -528,7 +712,7 @@ export function ProjectsTab({
     sourcePath: null,
   });
 
-  /** Fecha o cartao de projeto novo e deita fora o rascunho. Nada foi gravado ate aqui. */
+  /** Fecha o editor de projeto novo e deita fora o rascunho. Nada foi gravado ate aqui. */
   const discardNew = () => {
     setOpenId(null);
     setDraft(null);
@@ -536,6 +720,7 @@ export function ProjectsTab({
   };
 
   const startNew = () => {
+    setError(null);
     setScan(null);
     setDraft(blank());
     setOpenId("__novo__");
@@ -550,6 +735,7 @@ export function ProjectsTab({
     const epoch = draftEpoch.current;
     const chosen = await open({ directory: true, multiple: false });
     if (typeof chosen !== "string" || epoch !== draftEpoch.current) return;
+    setError(null);
     setBusy(true);
     try {
       const r = await ipc.scanProjectFolder(chosen);
@@ -559,7 +745,7 @@ export function ProjectsTab({
       const base = chosen.split(/[\\/]/).filter(Boolean).pop() ?? "";
       setDraft((d) => (d ? { ...d, name: d.name || base, folder: chosen } : d));
     } catch (e) {
-      toast.error(String(e));
+      if (epoch === draftEpoch.current) setError(String(e));
     } finally {
       setBusy(false);
     }
@@ -568,6 +754,7 @@ export function ProjectsTab({
   /** Escolher uma subpasta é o mesmo que a ter escolhido no seletor: volta a fazer o scan. */
   const useSubfolder = async (path: string) => {
     const epoch = draftEpoch.current;
+    setError(null);
     setBusy(true);
     try {
       const r = await ipc.scanProjectFolder(path);
@@ -576,7 +763,7 @@ export function ProjectsTab({
       const base = path.split(/[\\/]/).filter(Boolean).pop() ?? "";
       setDraft((d) => (d ? { ...d, name: base, folder: path } : d));
     } catch (e) {
-      toast.error(String(e));
+      if (epoch === draftEpoch.current) setError(String(e));
     } finally {
       setBusy(false);
     }
@@ -585,6 +772,7 @@ export function ProjectsTab({
   const distil = async () => {
     if (!scan?.folder) return;
     const epoch = draftEpoch.current;
+    setError(null);
     setDistilling(true);
     try {
       const brief = await ipc.distillProject(scan.folder, scan.sourceFingerprint);
@@ -593,12 +781,12 @@ export function ProjectsTab({
         return;
       }
       setDraft((d) => (d ? { ...d, brief, sourcePath: scan.sourcePath, sourceFingerprint: scan.sourceFingerprint } : d));
-      toast.success("Read it. Check the brief below before saving.");
+      toast.success("Read it. Check the brief before saving.");
     } catch (e) {
       // A mensagem vem do Rust já a dizer o que falhou de verdade (sem ficheiro, sem rede,
       // nada de útil no ficheiro, resposta rejeitada). O projeto continua a poder ser gravado
       // com um brief escrito à mão.
-      toast.error(String(e));
+      if (epoch === draftEpoch.current) setError(String(e));
     } finally {
       setDistilling(false);
     }
@@ -608,43 +796,49 @@ export function ProjectsTab({
     if (!draft?.folder || busy || distilling) return;
     const epoch = draftEpoch.current;
     const folder = draft.folder;
+    setError(null);
     setBusy(true);
     try {
       const result = await ipc.scanProjectFolder(folder);
       if (epoch === draftEpoch.current) setScan({ ...result, folder });
-    } catch { toast.error("Project sources could not be read."); }
+    } catch { if (epoch === draftEpoch.current) setError("Project sources could not be read."); }
     finally { setBusy(false); }
   };
 
-  const toggleEditor = (p: Project) => {
-    if (openId === p.id) {
-      // Fecha SEM limpar o rascunho: se o limpasse aqui, o conteúdo desmontava no mesmo frame e
-      // a caixa ficava a encolher vazia. O rascunho só é trocado quando se abre outro projeto.
-      setOpenId(null);
-      return;
-    }
+  const openEditor = (p: Project) => {
+    setError(null);
+    if (openId === p.id) return;
     setScan(null);
     setDraft({ ...p });
     setOpenId(p.id);
   };
 
+  const closeEditor = () => {
+    setOpenId(null);
+    setScan(null);
+  };
+
   const save = async () => {
     if (!draft || busy || distilling) return;
     const epoch = draftEpoch.current;
+    setError(null);
     setBusy(true);
+    setSaving(true);
     try {
       setS(await ipc.saveProject(draft));
-      if (epoch === draftEpoch.current) setOpenId(null);
+      if (epoch === draftEpoch.current) closeEditor();
       else toast.info("Your newer edits remain in the draft. Save them when ready.");
       toast.success("Project saved.");
     } catch (e) {
-      toast.error(String(e));
+      if (epoch === draftEpoch.current) setError(String(e));
     } finally {
       setBusy(false);
+      setSaving(false);
     }
   };
 
   const remove = async (id: string) => {
+    setError(null);
     setBusy(true);
     try {
       setS(await ipc.deleteProject(id));
@@ -652,273 +846,191 @@ export function ProjectsTab({
       setDraft(null);
       toast.success("Project deleted.");
     } catch {
-      toast.error("Couldn't delete the project.");
+      setError("Couldn't delete the project.");
     } finally {
       setBusy(false);
     }
   };
 
   const setActive = async (id: string | null) => {
+    setError(null);
     setBusy(true);
     try {
       setS(await ipc.setActiveProject(id));
       toast.success(id ? "Project is now active." : "No project active.");
     } catch {
-      toast.error("Couldn't change the active project.");
+      setError("Couldn't change the active project.");
     } finally {
       setBusy(false);
     }
   };
 
-  return (
-    <div className="flex flex-col gap-4">
-      <ContextInspector />
-      {openId && draft?.folder && <Button variant="ghost" disabled={busy || distilling} onClick={() => void rescanDraft()}>Check project sources</Button>}
-      {scan && openId !== "__novo__" && <div className="space-y-2">
-        <Button variant="ghost" disabled={busy || distilling || !scan.sourcePaths.length} onClick={() => void distil()}>Generate a reviewed draft</Button>
-        {draft?.id && <details className="text-xs"><summary>Previously saved brief</summary><pre className="whitespace-pre-wrap p-3">{s.projects.find(p => p.id === draft.id)?.brief}</pre></details>}
-      </div>}
-      {scan && <div className="text-xs text-fg-muted" role="status"><p>Sources: {scan.sourcePaths.join(", ") || "None"}</p>{scan.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div>}
-      <div className="rounded-lg border border-[color:var(--border-subtle)] bg-surface-1 p-5">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-fg">Projects</h3>
-            <p className="mt-1 text-xs text-fg-muted">
-              A project's brief rides along with every refine while it's active, so names and
-              wording specific to that work survive. Nothing here leaves your machine on its own.
-            </p>
-          </div>
-          <Button variant="ghost" onClick={startNew} disabled={busy} className="shrink-0">
-            Add project
-          </Button>
-        </div>
+  const editing = openId !== null && draft !== null;
+  const isNew = openId === "__novo__";
 
-        {s.activeProject && (
-          <p className="mt-3 text-xs text-fg-muted">
-            While a project is active it replaces the focused-window detection in the Providers
-            tab.
-          </p>
+  return (
+    <div data-tab-body="" className="flex min-h-0 flex-1 flex-col gap-[var(--card-gap,1rem)]">
+      <ContextInspector />
+      {error && <Feedback tone="error">{error}</Feedback>}
+      {/* No editor pane exists until a project is selected: an empty container waiting for
+          content is the thing this layout work is removing. The list spans the tab until then,
+          and the grid splits only when there is something to split for. */}
+      <div
+        className={cn(
+          "grid min-h-0 flex-1 gap-[var(--card-gap,1rem)]",
+          editing ? "grid-cols-1 @3xl/settings:grid-cols-[minmax(240px,2fr)_3fr]" : "grid-cols-1",
+        )}
+      >
+        <section
+          aria-label="Projects"
+          className={cn(
+            "flex min-h-0 flex-col rounded-lg border border-[color:var(--border-subtle)] bg-surface-1",
+            editing && "hidden @3xl/settings:flex",
+          )}
+        >
+          <div className="flex items-center justify-between gap-3 px-[var(--card-pad,1.25rem)] pb-2 pt-[var(--card-pad,1.25rem)]">
+            <div className="flex items-center gap-1.5">
+              <h3 className="text-sm font-semibold text-fg">Projects</h3>
+              <InfoPopover title="Projects">
+                <p>
+                  A project's brief rides along with every refine while it's active, so names and
+                  wording specific to that work survive. Nothing here leaves your machine on its own.
+                </p>
+                {s.activeProject && (
+                  <p className="mt-2">While a project is active it replaces the focused-window detection from Refining.</p>
+                )}
+              </InfoPopover>
+            </div>
+            <Button variant="ghost" size="sm" onClick={startNew} disabled={busy}>
+              Add project
+            </Button>
+          </div>
+          <ul data-scroll-pane="" className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+            {s.projects.length === 0 && !isNew && (
+              <li className="m-1 rounded-md border border-dashed border-[color:var(--border-subtle)] p-4 text-center text-xs text-fg-muted">
+                No projects yet. Add one and write a couple of lines about how text for it should read.
+              </li>
+            )}
+            {isNew && (
+              <li className="m-1 rounded-md border border-[color:var(--border-accent)] px-3 py-2 text-xs text-fg">
+                New project
+              </li>
+            )}
+            {s.projects.map((p) => {
+              const isActive = s.activeProject === p.id;
+              const isOpen = openId === p.id;
+              // Com o editor aberto, a fila mostra o RASCUNHO e nao o que esta gravado: escolher
+              // uma cor ou um icone e nao ver nada mudar ate carregar em Save nao diz se a
+              // escolha pegou. Continua a ser so pre-visualizacao; quem grava e o Save.
+              const shown = isOpen && draft?.id === p.id ? draft : p;
+              const I = iconOf(shown.icon);
+              // A cor a medida GANHA ao indice, como no Rust (`resolve_accent`).
+              const dot = shown.accentCustom?.trim() || (s.accents[shown.accent] ?? s.accents[0])?.mid;
+              return (
+                <li key={p.id}>
+                  <div
+                    className={cn(
+                      "flex items-center gap-3 rounded-md px-3 py-2 transition-colors",
+                      isOpen ? "bg-surface-2" : "hover:bg-surface-2/60",
+                    )}
+                  >
+                    <span
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
+                      style={{ background: dot ?? "var(--color-accent)", color: "#1a0e03" }}
+                    >
+                      <I size={16} weight="bold" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate text-sm font-semibold text-fg">{p.name}</span>
+                        {isActive && (
+                          // `leading-none` + padding simetrico: sem isso o `uppercase tracking-wide`
+                          // empurrava a etiqueta para fora da caixa e ela ficava colada ao nome.
+                          <span
+                            className="shrink-0 whitespace-nowrap rounded-full px-2 py-1 text-[10px] font-semibold uppercase leading-none tracking-wider"
+                            style={{
+                              color: dot ?? "var(--color-accent)",
+                              border: `1px solid ${dot ?? "var(--color-accent)"}`,
+                            }}
+                          >
+                            Active
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-0.5 truncate text-xs text-fg-muted">
+                        {p.brief.trim()
+                          ? p.brief.trim().split("\n")[0]
+                          : "No brief yet: this project changes nothing until you write one."}
+                      </p>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setActive(isActive ? null : p.id)}
+                      disabled={busy}
+                      className="shrink-0"
+                    >
+                      {isActive ? "Deactivate" : "Set active"}
+                    </Button>
+                    <button
+                      type="button"
+                      onClick={() => openEditor(p)}
+                      disabled={busy}
+                      aria-label="Edit"
+                      aria-pressed={isOpen}
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-fg-muted transition-colors hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--border-accent)]"
+                    >
+                      <CaretRight size={14} weight="bold" />
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+
+        {editing && (
+          <section
+            aria-label="Project editor"
+            data-scroll-pane=""
+            className={cn(
+              "flex min-h-0 flex-col overflow-y-auto rounded-lg border bg-surface-1",
+              isNew ? "border-[color:var(--border-accent)]" : "border-[color:var(--border-subtle)]",
+            )}
+          >
+            {/* Switching projects crossfades the editor; opacity only, so nothing else moves. */}
+            <motion.div
+              key={openId}
+              className="flex min-h-0 flex-1 flex-col"
+              initial={still ? false : { opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: still ? 0 : 0.18 }}
+            >
+              <ProjectEditor
+                draft={draft}
+                isNew={isNew}
+                accents={s.accents}
+                wheel={s.accentWheel}
+                icons={s.icons}
+                scan={scan}
+                savedBrief={draft.id ? (s.projects.find((p) => p.id === draft.id)?.brief ?? null) : null}
+                onChange={setDraft}
+                onSave={save}
+                onDelete={() => draft.id && remove(draft.id)}
+                onBack={isNew ? discardNew : closeEditor}
+                onDiscard={discardNew}
+                onPickFolder={pickFolder}
+                onUseSubfolder={useSubfolder}
+                onDistil={distil}
+                onRescan={rescanDraft}
+                busy={busy}
+                saving={saving}
+                distilling={distilling}
+              />
+            </motion.div>
+          </section>
         )}
       </div>
-
-      {openId === "__novo__" && draft && (
-        <div className="overflow-hidden rounded-lg border border-[color:var(--border-accent)] bg-surface-1">
-          {/* `pb-5` para igualar o `py-5` do editor logo abaixo: a linha divisória fica com o
-              mesmo ar dos dois lados. Sem ele, este bloco só tinha padding em cima e o botão
-              "Pick folder" ficava encostado ao traço. */}
-          <div className="flex flex-col gap-3 px-5 pb-5 pt-5">
-            <div className="flex items-center justify-between gap-3">
-              <h4 className="text-sm font-semibold text-fg">New project</h4>
-              <div className="flex items-center gap-2">
-                <Button variant="ghost" onClick={pickFolder} disabled={busy || distilling}>
-                  Pick folder…
-                </Button>
-                {/* Sair sem gravar. Sem isto, abrir "Add project" por engano era um beco: só se
-                    saía a gravar um projeto que não se queria, ou a trocar de separador. */}
-                <button
-                  type="button"
-                  onClick={discardNew}
-                  disabled={busy || distilling}
-                  aria-label="Discard this project"
-                  title="Discard"
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-[color:var(--border-subtle)] text-fg-muted transition-colors hover:border-[color:var(--border-accent)] hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--border-accent)]"
-                >
-                  <X size={14} weight="bold" />
-                </button>
-              </div>
-            </div>
-
-            {scan && (
-              <div className="rounded-md border border-[color:var(--border-subtle)] bg-surface-2 p-3">
-                <p className="truncate font-mono text-[11px] text-fg-muted">{scan.folder}</p>
-                {scan.fileName ? (
-                  <>
-                    <p className="mt-2 text-xs text-fg">
-                      Will read <span className="font-mono">{scan.fileName}</span> ({scan.lines}{" "}
-                      lines) and send it to your model once, to write the brief.
-                    </p>
-                    {scan.candidates.length > 1 && (
-                      // Mostrar os pesos torna a escolha explicável: dá para ver que um
-                      // CLAUDE.md de uma linha perdeu para o AGENTS.md, em vez de parecer magia.
-                      <p className="mt-1 font-mono text-[11px] text-fg-muted">
-                        {scan.candidates
-                          .map((c) => `${c.fileName} ${c.score}${c.chosen ? " ←" : ""}`)
-                          .join("   ")}
-                      </p>
-                    )}
-                    <Button
-                      variant="primary"
-                      onClick={distil}
-                      disabled={distilling}
-                      className="mt-3"
-                    >
-                      {distilling ? (
-                        <span className="flex items-center gap-1.5">
-                          <Spinner variant="embers" size={14} /> Reading…
-                        </span>
-                      ) : (
-                        "Read and write the brief"
-                      )}
-                    </Button>
-                  </>
-                ) : scan.subfolders.length > 0 ? (
-                  // Apontar à pasta-mãe em vez do repo é um erro natural e acontece. Dizer só
-                  // "não há nada aqui" é verdade e não ajuda; oferecer as que têm resolve-o num
-                  // clique, sem obrigar a reabrir o seletor.
-                  <>
-                    <p className="mt-2 text-xs text-fg">
-                      Nothing here, but these folders inside it have conventions:
-                    </p>
-                    <div className="mt-2 flex flex-col gap-1">
-                      {scan.subfolders.map((sf) => (
-                        <button
-                          key={sf.path}
-                          type="button"
-                          onClick={() => useSubfolder(sf.path)}
-                          disabled={busy || distilling}
-                          className="flex items-baseline gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface-3"
-                        >
-                          <span className="text-xs text-fg">{sf.name}</span>
-                          <span className="font-mono text-[11px] text-fg-muted">
-                            {sf.fileName}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  </>
-                ) : (
-                  <p className="mt-2 text-xs text-fg-muted">
-                    No conventions file here (no AGENTS.md, CLAUDE.md or similar with anything in
-                    it). Write the brief yourself below.
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-          <ProjectEditor
-            draft={draft}
-            accents={s.accents}
-            wheel={s.accentWheel}
-            icons={s.icons}
-            onChange={setDraft}
-            onSave={save}
-            onDelete={() => {}}
-            busy={busy}
-          />
-        </div>
-      )}
-
-      {s.projects.length === 0 && openId !== "__novo__" && (
-        <div className="rounded-lg border border-dashed border-[color:var(--border-subtle)] p-6 text-center text-xs text-fg-muted">
-          No projects yet. Add one and write a couple of lines about how text for it should read.
-        </div>
-      )}
-
-      {s.projects.map((p) => {
-        const isActive = s.activeProject === p.id;
-        const isOpen = openId === p.id;
-        // Com o painel aberto, o cabecalho mostra o RASCUNHO e nao o que esta gravado: escolher
-        // uma cor ou um icone e nao ver nada mudar ate carregar em Save nao diz se a escolha
-        // pegou. Continua a ser so pre-visualizacao; quem grava e o Save.
-        const shown = isOpen && draft?.id === p.id ? draft : p;
-        const I = iconOf(shown.icon);
-        // A cor a medida GANHA ao indice, como no Rust (`resolve_accent`). Sem esta linha,
-        // escolher uma cor, gravar, e ver o cartao com a cor antiga parecia que a gravacao nao
-        // tinha funcionado, quando o que estava errado era so o que se mostrava.
-        const dot = shown.accentCustom?.trim() || (s.accents[shown.accent] ?? s.accents[0])?.mid;
-        return (
-          <div
-            key={p.id}
-            className="overflow-hidden rounded-lg border border-[color:var(--border-subtle)] bg-surface-1"
-          >
-            <div className="flex items-center gap-3 px-5 py-4">
-              <span
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
-                style={{ background: dot ?? "var(--color-accent)", color: "#1a0e03" }}
-              >
-                <I size={17} weight="bold" />
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="truncate text-sm font-semibold text-fg">{p.name}</span>
-                  {isActive && (
-                    // `leading-none` + padding simetrico: sem isso o `uppercase tracking-wide`
-                    // empurrava a etiqueta para fora da caixa e ela ficava colada ao nome.
-                    <span
-                      className="shrink-0 whitespace-nowrap rounded-full px-2 py-1 text-[10px] font-semibold uppercase leading-none tracking-wider"
-                      style={{
-                        color: dot ?? "var(--color-accent)",
-                        border: `1px solid ${dot ?? "var(--color-accent)"}`,
-                      }}
-                    >
-                      Active
-                    </span>
-                  )}
-                </div>
-                <p className="mt-0.5 truncate text-xs text-fg-muted">
-                  {p.brief.trim()
-                    ? p.brief.trim().split("\n")[0]
-                    : "No brief yet: this project changes nothing until you write one."}
-                </p>
-              </div>
-              <Button
-                variant="ghost"
-                onClick={() => setActive(isActive ? null : p.id)}
-                disabled={busy}
-                className="shrink-0"
-              >
-                {isActive ? "Deactivate" : "Set active"}
-              </Button>
-              <button
-                type="button"
-                onClick={() => toggleEditor(p)}
-                disabled={busy}
-                aria-label={isOpen ? "Close" : "Edit"}
-                aria-expanded={isOpen}
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-fg-muted transition-colors hover:text-fg"
-              >
-                <CaretDown
-                  size={14}
-                  weight="bold"
-                  className={isOpen ? "rotate-180 transition-transform" : "transition-transform"}
-                />
-              </button>
-            </div>
-            {/* `height: auto` pelo motion, e nao uma transicao CSS de `grid-template-rows`.
-                O caminho do CSS foi tentado e MEDIDO: a linha ficava presa em 0px para sempre e a
-                caixa nunca chegava a abrir (sem a transicao resolvia para 569px, com ela ficava a
-                zero). O motion mede a altura real e anima ate ela, que e precisamente o problema
-                que ele existe para resolver.
-
-                O `AnimatePresence` trata do outro lado: mantem o conteudo montado durante o fecho.
-                Sem ele, o editor desaparecia no instante do clique e via-se uma caixa vazia a
-                encolher, que era a outra metade do que parecia mal. */}
-            <AnimatePresence initial={false}>
-              {isOpen && draft && draft.id === p.id && (
-                <motion.div
-                  key="editor"
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: "auto", opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
-                  style={{ overflow: "hidden" }}
-                >
-                  <ProjectEditor
-                    draft={draft}
-                    accents={s.accents}
-                    wheel={s.accentWheel}
-                    icons={s.icons}
-                    onChange={setDraft}
-                    onSave={save}
-                    onDelete={() => remove(p.id)}
-                    busy={busy}
-                  />
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-        );
-      })}
     </div>
   );
 }

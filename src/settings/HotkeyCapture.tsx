@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
+import { Keyboard, X } from "@phosphor-icons/react";
 import { Spinner } from "@/components/ui/spinner";
 import { ipc, type HotkeySlot, type HotkeyVerdict } from "@/lib/ipc";
 
@@ -96,15 +96,24 @@ function refusal(accel: string, v: HotkeyVerdict): string | null {
   }
 }
 
-/** Capturador de atalho: em vez de escrever o texto, clicas "Set shortcut", carregas a combinacao
- *  no teclado e ela fica gravada (como no VS Code). Mostra o atalho atual e um preview ao vivo.
+/**
+ * Capturador de atalho: clicas na caixa, carregas a combinacao no teclado e ela fica gravada
+ * (como no VS Code). Mostra o atalho atual e um preview ao vivo.
  *
- *  Uma combinacao ja ocupada e RECUSADA aqui, antes de ser gravada: a caixa fica vermelha, diz
- *  quem a esta a usar, e a captura continua a espera de outra. Antes gravava-se e so um toast
- *  dizia que tinha falhado, o que deixava a pessoa sem saber o que tentar a seguir. */
+ * The box is the only affordance. It used to sit beside a "Set shortcut" button that called the
+ * exact same handler as clicking the box, so four rows meant four orange buttons saying the
+ * same thing the boxes already said. Clearing is a small × inside the box, a SIBLING of the
+ * box's role=button rather than a child: interactive content inside a button is invalid ARIA,
+ * and Chromium would fire the parent's click anyway.
+ *
+ * Uma combinacao ja ocupada e RECUSADA aqui, antes de ser gravada: a caixa fica vermelha, diz
+ * quem a esta a usar, e a captura continua a espera de outra. Antes gravava-se e so um toast
+ * dizia que tinha falhado, o que deixava a pessoa sem saber o que tentar a seguir.
+ */
 export function HotkeyCapture({
   value,
   slot,
+  label,
   onCommit,
   clearable = false,
   ariaLabel,
@@ -112,6 +121,8 @@ export function HotkeyCapture({
   value: string;
   /** Qual dos tres atalhos, para o check saber com o que comparar. */
   slot: HotkeySlot;
+  /** Short human name of the slot ("Fix"), for the clear button's label. */
+  label: string;
   /** Grava e devolve `null` em sucesso ou a mensagem de erro. A mensagem volta para o MESMO
    *  alerta inline do pre-check: um canal de erro so, em vez de "inline para recusas, toast
    *  para falhas de registo", que deixava a caixa a mostrar o valor antigo como se nada fosse. */
@@ -195,23 +206,25 @@ export function HotkeyCapture({
     setCapturing(true);
   };
 
-  const boxClass = error
-    ? "border-[color:var(--color-error)] bg-surface-1 text-fg"
-    : capturing
-      ? "border-[color:var(--border-accent)] bg-surface-1 text-fg-muted"
-      : "border-[color:var(--border-subtle)] bg-surface-2 text-fg";
-
-  // Sair da captura sem gravar limpa TUDO: sem isto o Cancel deixava o erro vermelho da
-  // tentativa anterior preso na caixa, sem captura ativa que o explicasse.
+  // Sair da captura sem gravar limpa TUDO: sem isto o erro vermelho da tentativa anterior
+  // ficava preso na caixa, sem captura ativa que o explicasse.
   const cancelCapture = () => {
     setCapturing(false);
     setPreview(null);
     setError(null);
   };
 
+  const boxClass = error
+    ? "border-[color:var(--color-error)] bg-surface-1 text-fg"
+    : capturing
+      ? "border-[color:var(--border-accent)] bg-surface-1 text-fg-muted"
+      : "border-[color:var(--border-subtle)] bg-surface-2 text-fg hover:border-[color:var(--border-default)]";
+
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="flex items-center gap-2">
+      <div
+        className={`flex h-9 w-full items-stretch overflow-hidden rounded-sm border transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-[color:var(--border-accent)] ${boxClass}`}
+      >
         <div
           role="button"
           tabIndex={0}
@@ -226,7 +239,13 @@ export function HotkeyCapture({
               startCapture();
             }
           }}
-          className={`flex h-9 flex-1 cursor-pointer items-center gap-2 rounded-sm border px-3 font-mono text-sm ${boxClass}`}
+          // While capturing, the window listener swallows every key. A mouse user who clicks
+          // away used to need a Cancel button to get out; leaving the box now cancels, unless
+          // the verdict for a pressed combo is still in flight.
+          onBlur={() => {
+            if (capturing && !checking) cancelCapture();
+          }}
+          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 px-3 font-mono text-sm focus-visible:outline-none"
         >
           {capturing ? (
             <>
@@ -246,35 +265,33 @@ export function HotkeyCapture({
                 <span className="ml-auto font-sans text-xs text-fg-muted">Esc cancels</span>
               )}
             </>
+          ) : value ? (
+            <span className="truncate">{value}</span>
           ) : (
-            value || "Not set"
+            <>
+              <Keyboard size={14} aria-hidden="true" className="shrink-0 text-fg-muted" />
+              <span className="font-sans text-xs text-fg-muted">Click to set</span>
+            </>
           )}
         </div>
-        {capturing ? (
-          <Button variant="ghost" onClick={cancelCapture}>
-            Cancel
-          </Button>
-        ) : (
-          <>
-            <Button variant="primary" onClick={startCapture}>
-              Set shortcut
-            </Button>
-            {clearable && value && (
-              <Button
-                variant="ghost"
-                // Limpar tambem pode falhar (o registo do conjunto e tudo-ou-nada), e o erro
-                // segue para o MESMO alerta inline do resto. Descarta-lo deixava a pessoa a
-                // olhar para um atalho que ela julgava ter apagado.
-                onClick={() => {
-                  void onCommit("").then((msg) => {
-                    if (msg) setError(msg);
-                  });
-                }}
-              >
-                Clear
-              </Button>
-            )}
-          </>
+        {clearable && value && !capturing && (
+          <button
+            type="button"
+            // Not "... shortcut": a test counts exactly four boxes by that aria-label suffix.
+            aria-label={`Clear ${label}`}
+            title="Clear"
+            // Limpar tambem pode falhar (o registo do conjunto e tudo-ou-nada), e o erro segue
+            // para o MESMO alerta inline do resto. Descarta-lo deixava a pessoa a olhar para
+            // um atalho que ela julgava ter apagado.
+            onClick={() => {
+              void onCommit("").then((msg) => {
+                if (msg) setError(msg);
+              });
+            }}
+            className="flex w-8 shrink-0 items-center justify-center border-l border-[color:var(--border-subtle)] text-fg-muted transition-colors hover:bg-surface-3 hover:text-fg focus-visible:bg-surface-3 focus-visible:text-fg focus-visible:outline-none"
+          >
+            <X size={12} weight="bold" aria-hidden="true" />
+          </button>
         )}
       </div>
       {error && (

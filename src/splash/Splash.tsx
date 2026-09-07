@@ -1,4 +1,5 @@
-import { LazyMotion, domAnimation, m, MotionConfig } from "motion/react";
+import { LazyMotion, domAnimation, m, MotionConfig, useReducedMotion } from "motion/react";
+import { useEffect } from "react";
 import type { TargetAndTransition, Transition } from "motion/react";
 import { invoke } from "@tauri-apps/api/core";
 import iconUrl from "../../src-tauri/icons/128x128.png";
@@ -61,6 +62,13 @@ const GLOW: Record<Mode, { initial: TargetAndTransition; animate: TargetAndTrans
 
 export default function Splash() {
   const mode = currentMode();
+  const still = useReducedMotion();
+  useEffect(() => {
+    if (!still) return;
+    // Static branding still completes the native window lifecycle.
+    const timer = window.setTimeout(() => finish(mode), 300);
+    return () => window.clearTimeout(timer);
+  }, [mode, still]);
   const icon = ICON[mode];
   const glow = GLOW[mode];
   return (
@@ -76,8 +84,8 @@ export default function Splash() {
                   "radial-gradient(circle, rgba(253,140,60,0.45) 0%, rgba(253,140,60,0) 70%)",
                 willChange: "transform, opacity",
               }}
-              initial={glow.initial}
-              animate={glow.animate}
+              initial={still ? { opacity: 0 } : glow.initial}
+              animate={still ? { opacity: 0 } : glow.animate}
               transition={icon.transition}
             />
             <m.img
@@ -85,10 +93,10 @@ export default function Splash() {
               alt="Ember"
               className="h-32 w-32 select-none"
               style={{ willChange: "transform, opacity" }}
-              initial={icon.initial}
-              animate={icon.animate}
+              initial={still ? { opacity: 1 } : icon.initial}
+              animate={still ? { opacity: 1 } : icon.animate}
               transition={icon.transition}
-              onAnimationComplete={() => finish(mode)}
+              onAnimationComplete={() => { if (!still) finish(mode); }}
             />
           </div>
         </div>

@@ -42,6 +42,114 @@ pub enum RefineMode {
     Polish,
     /// Reescreve e estrutura ao maximo.
     Turbo,
+    /// Escreve a RESPOSTA a mensagem selecionada, em vez de a reescrever. Base de prompt
+    /// propria: a base dos outros modos proibe explicitamente responder ao input.
+    Reply,
+}
+
+/// Quanto o refine pode mexer no tamanho do texto. Ortogonal ao modo: um Fix mais curto e um
+/// Rebuild mais curto sao pedidos diferentes, e nenhum dos dois cabia numa quarta escolha de
+/// modo. `Same` e o default e nao acrescenta regra nenhuma ao prompt: o modo ja diz o que fazer,
+/// e uma frase a pedir "mantem o tamanho" so gasta contexto para repetir o silencio.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Length {
+    /// Sai mais curto do que entrou, sem perder factos.
+    Shorter,
+    /// Sem instrucao de tamanho: o modo decide.
+    #[default]
+    Same,
+    /// Desenvolve o que o input comprime, sem acrescentar afirmacoes novas.
+    Longer,
+}
+
+/// A aparencia da brasa que fica junto ao cursor.
+///
+/// Todas as peles desenham DENTRO da mesma caixa de tinta para o tamanho escolhido, e e isso que
+/// torna esta opcao barata: a ancoragem ao cursor, o morph da superficie e os testes de
+/// flutuacao medem essa caixa, nao o desenho. Trocar de pele nao mexe em geometria nenhuma.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum OrbSkin {
+    /// A brasa: oito celulas a perseguirem-se em volta de um halo quente.
+    #[default]
+    Ember,
+    /// Um ponto que respira. Para quem quer saber que esta a correr sem olhar para la.
+    Pulse,
+    /// Um anel fino com um arco a girar. O mais neutro dos tres.
+    Ring,
+}
+
+/// O tamanho da brasa, em multiplos INTEIROS do pixel do desenho: 2, 3 ou 4, o que da 10, 15 ou
+/// 20px de tinta.
+///
+/// Inteiro nao e um detalhe de implementacao. A marca e arte de pixeis; um multiplo fracionario
+/// poe as arestas entre dois pixeis do ecra e o anti-aliasing transforma a brasa num borrao. Tres
+/// passos fixos em vez de um seletor livre e a forma de tornar isso impossivel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum OrbSize {
+    Small,
+    #[default]
+    Normal,
+    Large,
+}
+
+impl OrbSkin {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            OrbSkin::Ember => "ember",
+            OrbSkin::Pulse => "pulse",
+            OrbSkin::Ring => "ring",
+        }
+    }
+}
+
+impl NoticeSpeed {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            NoticeSpeed::Quick => "quick",
+            NoticeSpeed::Normal => "normal",
+            NoticeSpeed::Relaxed => "relaxed",
+        }
+    }
+}
+
+impl OrbSize {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            OrbSize::Small => "small",
+            OrbSize::Normal => "normal",
+            OrbSize::Large => "large",
+        }
+    }
+
+    pub const fn px(self) -> u32 {
+        match self {
+            OrbSize::Small => 2,
+            OrbSize::Normal => 3,
+            OrbSize::Large => 4,
+        }
+    }
+}
+
+/// Quanto tempo as notas ficam no ecra depois de o refine acabar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum NoticeSpeed {
+    Quick,
+    #[default]
+    Normal,
+    Relaxed,
+}
+
+/// Pele, tamanho e ritmo, juntos porque viajam juntos: sao lidos de uma vez para o estado em
+/// memoria e enviados de uma vez para a janela do overlay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct OverlayStyle {
+    pub skin: OrbSkin,
+    pub size: OrbSize,
+    pub notice: NoticeSpeed,
 }
 
 /// De onde veio o perfil de personalizacao.

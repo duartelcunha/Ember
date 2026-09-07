@@ -28,6 +28,8 @@ pub mod providers;
 pub mod refine_cache;
 pub mod retry;
 pub mod selection;
+pub mod tray;
+pub mod window_geom;
 
 pub use cycle::{hotkey_action, may_hide, may_release_guard, owns_overlay, HotkeyAction};
 pub use engine::{
@@ -43,3 +45,5 @@ pub use overlay_geom::{overlay_geometry, Layout, Rect, DEFAULT_LAYOUT};
 pub use prompt::{build_llm_request, build_system_prompt};
 pub use refine_cache::{CacheEntry, CacheKey, Hit, RefineCache};
 pub use retry::{backoff_ms, classify, plan, Decision, LoopState, RetryConfig};
+
+pub mod context;

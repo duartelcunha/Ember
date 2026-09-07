@@ -67,6 +67,22 @@
   /* Sombra de popovers/dropdowns (dark): duas camadas, contacto curto + difusa, suave. */
   --shadow-pop: 0 2px 8px rgba(0, 0, 0, 0.22), 0 12px 28px rgba(0, 0, 0, 0.3);
 
+  /* Material for controls. The accent triplet is ordered by ROLE (base, hover, active) and the
+     two themes disagree on luminance: in dark the hover is the lightest of the three, in cream
+     it is darker than the base. A top-lit gradient must run light to dark, so the recipe reads
+     through three luminance-ordered aliases instead of the role names. */
+  --accent-lit: var(--color-accent-hover);
+  --accent-base: var(--color-accent);
+  --accent-deep: var(--color-accent-active);
+  /* The .ember-bubble highlight, promoted to a token so every control shares one sheen. */
+  --sheen: rgba(255, 246, 235, 0.06);
+  --sheen-strong: rgba(255, 246, 235, 0.22);
+  --shade: rgba(0, 0, 0, 0.22);
+  --shadow-control: 0 1px 2px rgba(0, 0, 0, 0.28);
+
+  /* Dialog scrim (dark): warm near-black, strong enough to park the tab behind it. */
+  --overlay-scrim: rgba(8, 6, 4, 0.55);
+
   /* Canvas nativo do WebView2, scrollbars e spinners a modo escuro (tema default). Sem isto, a
      janela settings (que NAO e transparent) mostrava o canvas BRANCO do SO por tras do body
      transparente: scrollbar clara e flash branco. O tema creme sobrepoe para `light`. */
@@ -83,9 +99,9 @@
 :root[data-theme="cream"] {
   /* Laranja da marca, um degrau mais escuro que no dark para contrastar sobre o creme claro
      (o texto do botao e claro). Mesma familia do logo. */
-  --color-accent: #e0761f;
-  --color-accent-hover: #c9691a;
-  --color-accent-active: #b25a13;
+  --color-accent: #ae5412;
+  --color-accent-hover: #97470f;
+  --color-accent-active: #813c0c;
   --color-accent-fg: #fff8f0;
 
   --color-bg: #f4ede1;
@@ -97,9 +113,9 @@
   --color-fg: #2e2519;
   --color-fg-muted: #6f6353;
 
-  --color-success: #2f9e6b;
+  --color-success: #247448;
   --color-warning: #b7791f;
-  --color-error: #d1453b;
+  --color-error: #b7352b;
   --color-info: #2f6fb0;
 
   /* Bordas: escuras translucidas sobre fundo claro (o inverso do dark). */
@@ -115,6 +131,19 @@
   /* Sombra de popovers no creme: quente (castanho, nao preto) e mais subtil, para nao ficar
      dura sobre o fundo claro. */
   --shadow-pop: 0 2px 8px rgba(80, 55, 30, 0.1), 0 12px 28px rgba(80, 55, 30, 0.14);
+
+  /* Cream: the base accent is the light edge; hover and active darken. White sheen reads as a
+     paper highlight over the warm surfaces, not as glass. */
+  --accent-lit: var(--color-accent);
+  --accent-base: var(--color-accent-hover);
+  --accent-deep: var(--color-accent-active);
+  --sheen: rgba(255, 255, 255, 0.45);
+  --sheen-strong: rgba(255, 255, 255, 0.28);
+  --shade: rgba(46, 37, 25, 0.16);
+  --shadow-control: 0 1px 2px rgba(80, 55, 30, 0.16);
+
+  /* Dialog scrim on cream: the same brown as the text, translucent, never grey. */
+  --overlay-scrim: rgba(46, 37, 25, 0.35);
 
   /* Canvas nativo do WebView2 claro (casa com o backgroundColor pintado no Rust). */
   color-scheme: light;
@@ -136,35 +165,115 @@
   }
 }
 
-/* Glow pulsante (estado "a pensar"), por baixo do orb. Sem rotacao: so respiracao de luz.
-   Tom quente da marca (laranja vivo -> transparente), a condizer com a estrela. */
-
-/* Bolha de preview (vidro). NUNCA animar transform (translate/scale) nesta classe: o
-   backdrop-filter re-amostra o fundo desfocado a cada frame do movimento e engasga. So
-   opacidade anima na bolha; o movimento vive no conteudo interno (sem blur). Ver Pill.tsx. */
+/* Solid floating cards keep contrast independent of the application underneath. */
+/* Floating surface over someone else's app. Depth comes from the layered pop shadow the
+   settings already use (offset + soft blur), not from a flat 6px smudge: the surface has to
+   separate from arbitrary content underneath, light or dark. The 1px inset highlight is what
+   reads as material instead of a painted rectangle. Opaque on purpose: backdrop-filter over a
+   transparent window re-samples every frame the content moves. */
 .ember-bubble {
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(140%);
-  backdrop-filter: blur(var(--glass-blur)) saturate(140%);
+  background: var(--ember-bubble-bg, var(--color-surface-1));
   border: 1px solid var(--border-default);
-  /* Sombra suave em camadas (contacto curto + difusa larga), em vez de uma unica sombra
-     grande e deslocada que era cortada pela borda da janela do overlay e deixava um edge duro.
-     Offsets/blur pequenos o bastante para desvanecerem dentro do padding da janela. */
-  box-shadow:
-    0 2px 6px rgba(0, 0, 0, 0.28),
-    0 8px 20px rgba(0, 0, 0, 0.32),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  box-shadow: var(--shadow-pop), inset 0 1px 0 rgba(255, 246, 235, 0.06);
   color: var(--color-fg);
 }
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .ember-bubble {
-    background: var(--glass-bg-strong);
-  }
+
+/* One chip spec for every cursor-side message (result pill, keyboard confirmation, project
+   and retry labels). They used to differ by a pixel or two of padding, radius and type size,
+   which read as three components instead of one voice. 8px radius matches the morph's final
+   `round 8px`, so the surface does not change shape as it finishes growing. */
+.ember-chip {
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 16px;
+  min-height: 28px;
+}
+:root[data-theme="cream"] { --ember-bubble-bg: #f7f2e9; }
+
+/* ----------------------------------------------------------------------------------
+   Material for controls: the bubble's recipe (a layered shadow and a 1px inset highlight)
+   applied to the things you press. Restrained on purpose, this is a settings window.
+
+   The primary button keeps `background-color` as the flat accent UNDER the gradient: the
+   contrast test reads background-color, and an image-only gradient computes to transparent;
+   it is also what paints while the image decodes. Hover lifts the drop shadow and brightens,
+   active flattens both and darkens, so a press reads as the surface going in, not as a colour
+   change. `background-image` does not transition in Chromium (it is discrete), which is why
+   hover and active never touch the gradient itself.
+---------------------------------------------------------------------------------- */
+.ember-btn-primary {
+  background-image: linear-gradient(180deg, var(--accent-lit) 0%, var(--accent-base) 52%, var(--accent-deep) 100%);
+  box-shadow: inset 0 1px 0 var(--sheen-strong), inset 0 -1px 0 var(--shade), var(--shadow-control);
+}
+.ember-btn-primary:hover:not(:disabled) {
+  box-shadow: inset 0 1px 0 var(--sheen-strong), inset 0 -1px 0 var(--shade), 0 2px 6px rgba(0, 0, 0, 0.3);
+  filter: brightness(1.05);
+}
+:root[data-theme="cream"] .ember-btn-primary:hover:not(:disabled) {
+  box-shadow: inset 0 1px 0 var(--sheen-strong), inset 0 -1px 0 var(--shade), 0 2px 6px rgba(80, 55, 30, 0.2);
+}
+.ember-btn-primary:active:not(:disabled) {
+  box-shadow: inset 0 1px 2px var(--shade);
+  filter: brightness(0.94);
 }
 
-/* Scrollbar fina e escura, a condizer com o tema glassy (a janela de settings e a unica que
-   scrolla). WebView2 e Chromium, por isso os pseudo-elementos ::-webkit-scrollbar aplicam-se;
-   as janelas overlay/splash nao scrollam, logo isto so se ve nas settings. */
+/* The bubble's material on a neutral surface: a sheen fading from the top and the 1px inset
+   highlight, no drop shadow. Hover changes the background-color under it, which transitions. */
+.ember-btn-ghost {
+  background-image: linear-gradient(180deg, var(--sheen) 0%, transparent 60%);
+  box-shadow: inset 0 1px 0 var(--sheen);
+}
+.ember-btn-ghost:hover:not(:disabled) { box-shadow: inset 0 1px 0 var(--sheen-strong); }
+.ember-btn-ghost:active:not(:disabled) { box-shadow: inset 0 1px 1px var(--shade); }
+
+/* A groove, not a pill: inset shade at the top edge, sheen at the bottom. Checked fills the
+   groove with the accent gradient INVERTED (deep at top, lit at bottom), so the track reads as
+   recessed and lit from the same side as the raised button: on/off and the action that commits
+   it are visibly one material. The thumb is warm white, top-lit, with a contact shadow so it
+   sits ON the groove. */
+.ember-switch {
+  box-shadow: inset 0 1px 2px var(--shade), inset 0 -1px 0 var(--sheen);
+  transition: background-color 150ms, box-shadow 150ms;
+}
+.ember-switch[data-state="checked"] {
+  background-image: linear-gradient(180deg, var(--accent-deep) 0%, var(--accent-base) 45%, var(--accent-lit) 100%);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.18), inset 0 -1px 0 var(--sheen-strong);
+}
+.ember-switch-thumb {
+  background-image: linear-gradient(180deg, #fffaf3 0%, #efe6da 100%);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 0 0 0.5px rgba(0, 0, 0, 0.12);
+}
+
+/* The overlay preview in the settings opts out of the theme.
+   The overlay window never gets a `data-theme` attribute, so it is always dark: it appears over
+   whatever application you were typing in, and a surface that followed your settings would be
+   unreadable over half of them. A preview that went cream inside a cream settings window would
+   therefore be showing something the user will never see. These are exactly the tokens the
+   overlay pieces read (`.ember-bubble`, `.ember-chip`, `.ember-confirmation`, Pill, Preview,
+   Orb); a test asserts the subtree computes identically in both themes, which is what stops the
+   list drifting from the @theme block. */
+.ember-overlay-preview {
+  --ember-bubble-bg: #1b1713;
+  --color-surface-1: #1b1713;
+  --color-surface-2: #251f19;
+  --color-fg: #f6f2ec;
+  --color-fg-muted: #b8afa3;
+  --color-accent: #fd8c3c;
+  --color-accent-fg: #1a0e03;
+  --color-error: #ff5d5d;
+  --color-ember-glow: #ffd9a8;
+  --color-ember-raw: #b4512a;
+  --border-default: rgba(255, 246, 235, 0.14);
+  --border-subtle: rgba(255, 246, 235, 0.09);
+  --shadow-pop: 0 2px 8px rgba(0, 0, 0, 0.22), 0 12px 28px rgba(0, 0, 0, 0.3);
+  color-scheme: dark;
+  max-block-size: 26rem;
+}
+
+/* Thin dark scrollbar to match the glassy theme. The settings window no longer scrolls as a
+   page; this styles the panes that do (editors, the project list, dialog bodies). WebView2 is
+   Chromium, so the ::-webkit-scrollbar pseudo-elements apply. */
 * {
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
@@ -190,8 +299,309 @@
 /* Floating surfaces measure their content and coalesce motion before painting. */
 .ember-floating { visibility: hidden; will-change: transform; }
 .ember-floating[data-side="left"] .ember-orb-row { flex-direction: row-reverse; }
-.ember-floating[data-moving="true"] .ember-bubble {
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-  background: var(--glass-bg-strong) !important;
+
+/* Every incoming surface opens; only the ones that follow the loading ring morph from it.
+   A hint fired with nothing selected goes straight from hidden to hint, never passing through
+   the loading phase, so it used to arrive fully drawn in a single frame. This opens it from the
+   cursor-facing edge instead. Declared BEFORE the morph on purpose: both are attribute selectors
+   of equal specificity on the same element, so the morph wins the `animation` shorthand and only
+   one animation ever runs. */
+[data-enter] {
+  --ember-open-start: inset(0 30% 0 0 round 8px);
+  animation: ember-surface-open 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.ember-floating[data-side="left"] [data-enter] {
+  --ember-open-start: inset(0 0 0 30% round 8px);
+}
+@keyframes ember-surface-open {
+  from { clip-path: var(--ember-open-start); opacity: 0; }
+  to { clip-path: inset(-6px -6px -6px -6px round 8px); opacity: 1; }
+}
+
+/* The incoming solid surface grows out of the visible 15px ring, without scaling text or
+   animating the translation owned by the cursor geometry controller.
+   Opacity stays at 1 throughout: the ring is already lit, so fading the surface in over it
+   would read as a second object rather than the same one changing shape.
+
+   The start is CENTRED on the cursor-facing edge, not tucked into its top corner. Surfaces are
+   anchored by their centre on the hotspot and so is the ring, which puts the ring halfway down
+   the surface; growing from the corner started the motion 7.5px above where the ring actually
+   was, and that mismatch is what made a real morph read as a corner wipe.
+
+   Two beats rather than one diagonal stretch: the ring swells to the surface's full height while
+   staying its own width, then unrolls sideways. A dot becoming a bar is a shape changing; a
+   rectangle growing diagonally out of a corner is a reveal. */
+[data-morph-from-orb] {
+  --ember-morph-start: inset(calc(50% - 7.5px) calc(100% - 15px) calc(50% - 7.5px) 0 round 7.5px);
+  --ember-morph-swell: inset(-6px calc(100% - 30px) -6px 0 round 12px);
+  animation: ember-surface-morph 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.ember-floating[data-side="left"] [data-morph-from-orb] {
+  --ember-morph-start: inset(calc(50% - 7.5px) 0 calc(50% - 7.5px) calc(100% - 15px) round 7.5px);
+  --ember-morph-swell: inset(-6px 0 -6px calc(100% - 30px) round 12px);
+}
+@keyframes ember-surface-morph {
+  from { clip-path: var(--ember-morph-start); }
+  38% { clip-path: var(--ember-morph-swell); }
+  to { clip-path: inset(-6px -6px -6px -6px round 8px); }
+}
+
+/* And back again. Hiding the window on the frame after the last visible pill made the morph
+   one-way: a shape grew out of the ring and then simply ceased. This is the same gesture in
+   reverse, on the leaving curve (fast at the start): the surface rolls back to the ring's width,
+   then closes to its height and goes out. `forwards` holds the last frame until the native hide.
+   The 200ms is mirrored by `CLOSE_MS` in `src-tauri/src/flow.rs`, which waits that long plus a
+   frame before hiding the window; change one, change the other. Declared after the morph so it
+   wins the `animation` shorthand on a surface that already carries one. */
+[data-leave] {
+  --ember-leave-swell: inset(-6px calc(100% - 30px) -6px 0 round 12px);
+  --ember-leave-end: inset(calc(50% - 7.5px) calc(100% - 15px) calc(50% - 7.5px) 0 round 7.5px);
+  animation: ember-surface-close 200ms cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+.ember-floating[data-side="left"] [data-leave] {
+  --ember-leave-swell: inset(-6px 0 -6px calc(100% - 30px) round 12px);
+  --ember-leave-end: inset(calc(50% - 7.5px) 0 calc(50% - 7.5px) calc(100% - 15px) round 7.5px);
+}
+@keyframes ember-surface-close {
+  from { clip-path: inset(-6px -6px -6px -6px round 8px); opacity: 1; }
+  58% { clip-path: var(--ember-leave-swell); opacity: 1; }
+  to { clip-path: var(--ember-leave-end); opacity: 0; }
+}
+
+/* The tray menu is born from the icon below it, so its edge is the bottom one: the same two
+   gestures, re-aimed through the variables alone. It folds in 140ms, mirrored by `CLOSE_MS` in
+   `src-tauri/src/tray.rs`; change one, change the other. */
+.ember-tray [data-enter] { --ember-open-start: inset(60% 0 0 0 round 12px); }
+.ember-tray [data-leave] {
+  --ember-leave-swell: inset(60% 0 0 0 round 12px);
+  --ember-leave-end: inset(100% 0 0 0 round 12px);
+  animation-duration: 140ms;
+}
+/* Taskbar at the top: the popup sits below the icon, so the icon-facing edge is the top one. */
+.ember-tray[data-side="below"] [data-enter] { --ember-open-start: inset(0 0 60% 0 round 12px); }
+.ember-tray[data-side="below"] [data-leave] {
+  --ember-leave-swell: inset(0 0 60% 0 round 12px);
+  --ember-leave-end: inset(0 0 100% 0 round 12px);
+}
+
+/* The surface opening is the box; this is what happens inside it. Without it the clip reveals
+   text that is already finished, which reads as a cut-out rather than a surface filling up.
+   Transform on a CHILD never changes the chip's own box, so the measured geometry the cursor
+   anchor depends on stays constant. Delays are the ones the pill carried before it was
+   stripped: icon first, then the words. */
+.ember-chip > *, .ember-label-in {
+  animation: ember-content-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.ember-chip > *:nth-child(2) { animation-delay: 50ms; }
+@keyframes ember-content-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-morph-from-orb], [data-enter], [data-leave], .ember-chip > *, .ember-label-in { animation: none; }
+}
+
+
+@media (prefers-reduced-motion: reduce) { .ember-spinner * { animation: none !important; } }
+
+
+/* Confirmation is a keyboard hint, not a document viewer. Metrics come from .ember-chip. */
+.ember-confirmation { width: max-content; max-width: calc(100vw - 16px); }
+.ember-confirmation > span { display: inline; }
+.ember-confirmation kbd {
+  font: inherit;
+  font-weight: 500;
+  color: var(--color-ember-glow);
+}
+
+/* Shared keyboard affordances for buttons and links (the settings have no native <details>). */
+button:focus-visible, a:focus-visible { outline: 2px solid var(--border-accent); outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) {
+  button, .ember-switch { transition: none !important; transform: none !important; }
+  .animate-pulse { animation: none !important; }
+}
+
+/* ----------------------------------------------------------------------------------
+   Settings layout. The viewport column is a size container named `settings`; the tabs pick
+   their column count from its width (Tailwind `@xl/settings:` variants) and their spacing from
+   its height (the variables below, read by the cards through `var(--card-pad, ...)`). Height
+   container queries have no Tailwind variant, hence the plain CSS. The variables live on the
+   container's CHILD because a container query never matches the container itself.
+---------------------------------------------------------------------------------- */
+.settings-viewport { container: settings / size; }
+.settings-density {
+  --card-pad: 1.25rem;
+  --card-gap: 1rem;
+  --row-gap: 1rem;
+  --hint: block;
+  --mode-hint: block;
+  --mode-input: block;
+}
+/* Tall windows breathe rather than stretch: more padding costs nothing and removes about 60px
+   of leftover per tab without opening a void anywhere. */
+@container settings (min-height: 760px) {
+  .settings-density { --card-pad: 1.5rem; --card-gap: 1.25rem; --row-gap: 1.25rem; }
+}
+@container settings (max-height: 560px) {
+  .settings-density {
+    --card-pad: 1rem;
+    --card-gap: 0.75rem;
+    --row-gap: 0.5rem;
+    --hint: none;
+    --example-lines: 2;
+  }
+}
+@container settings (max-width: 52rem) { [role="tab"] > svg { display: none; } }
+
+/* The height contract. Every tab body IS the panel (`flex min-h-0 flex-1`). Its columns stretch
+   to the full height, which costs nothing because a column wrapper has no border, and each
+   column centres its cards when it has slack. Growth is spent inside ONE card per tab, on a body
+   that reads better tall (a list, an editor, a readout, a stage, a comparison), never as padding
+   inside a card that cannot use it: a five-row form spread over 700px reads as a broken
+   template, and a one-control card stretched to full height reads as a failure to load.
+
+   Flex and not grid: stacked, only ONE column may take the leftover height, and a grid cannot
+   say "this row is 1fr, that one is auto" without knowing which row it is. `align-content:
+   stretch` would split the leftover between both, which halves the effect and pulls the fixed
+   cards apart.
+
+   Two columns need width; short windows get them even when narrow, because stacked cards would
+   not fit the height. A tall narrow window stacks: two 300px columns looked cramped. */
+.settings-density { --col-dir: column; --col-grow: 0; --col-basis: auto; }
+@container settings (min-width: 48rem) { .settings-density { --col-dir: row; --col-grow: 1; --col-basis: 0%; } }
+@container settings (min-width: 36rem) and (max-height: 560px) { .settings-density { --col-dir: row; --col-grow: 1; --col-basis: 0%; } }
+
+/* `safe center` is the fallback for a stacked tab whose columns all keep their natural height:
+   the pair sits centred instead of hugging the top. Side by side the children fill the row, so
+   there is no free space and this is a no-op. */
+.settings-two-col { display: flex; flex-direction: var(--col-dir); gap: var(--card-gap, 1rem);
+                    justify-content: safe center; min-height: 0; }
+/* No shrink by default: the growth column is also the SHRINK column, so a column of fixed cards
+   never gets asked to give up height it does not have. Without this, flex distributed a stacked
+   overflow across both columns by basis, the fixed one refused its share, and the tab overflowed
+   by exactly that amount (measured 56px on Refining at 720x856). */
+.settings-two-col > * { flex: var(--col-grow) 0 var(--col-basis); min-width: 0; min-height: 0; }
+/* Stacked, this is the column that takes the leftover, and gives it back first. Side by side it
+   is full height anyway. */
+.settings-two-col > .settings-col-grow { flex-grow: 1; flex-shrink: 1; }
+/* The column carrying the tab's evidence earns more width when there are two. */
+@container settings (min-width: 48rem) { .settings-two-col > .settings-col-wide { flex-grow: 1.6; } }
+
+/* A column of cards, top-aligned. Never centred: a centred block leaves a gap above it that
+   reads as broken rather than roomy, and two columns each centring their own cards stagger the
+   tops of objects that are obviously the same kind of thing. Content starts at the top and one
+   card per column may grow; padding at the bottom inside a card is acceptable, a gap above the
+   block is not. */
+.settings-col { display: flex; flex-direction: column; gap: var(--card-gap, 1rem); min-height: 0; }
+
+
+/* The modes, as one list drawn on the card's own surface.
+ *
+ * They used to be bordered panels, each holding a bordered block for its example, inside a
+ * bordered card: three frames deep before a single word. That reads as packaging, not as a
+ * comparison, and boxes inside boxes are out of this UI for good. What separates one mode from
+ * the next is a hairline; what marks the chosen one is a rule down its left edge and its title
+ * taking the accent. Nothing here draws a container.
+ *
+ * The rows share the height rather than a cap sitting under a void: four roomy rows at 1400x900
+ * read as a generous list, where four tidy ones over 300px of nothing read as a page that
+ * stopped early. */
+.mode-compare { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; overflow: auto; }
+.mode-option { display: grid; grid-template-columns: minmax(0, 7.5rem) minmax(0, 1fr);
+               align-items: center; gap: 0 1rem; flex: 1 1 auto; min-height: 2.25rem;
+               max-block-size: 9.5rem; padding: 0.375rem 0.75rem; }
+.mode-option + .mode-option { border-top: 1px solid var(--border-subtle); }
+
+/* The hit area of one option in a segmented control.
+ *
+ * The input IS the hit area, covering the label, rather than a screen-reader-only node beside
+ * it. That is what lets `:focus-visible` decide when to draw the ring. The rings were hung on
+ * `focus-within`, which fires for a mouse click as well, so the button you had just pressed kept
+ * a bright ring around it: it read as a rendering fault, not as focus, and it was on screen far
+ * more often than the keyboard case it was meant for. */
+.ember-seg-hit { position: absolute; inset: 0; margin: 0; appearance: none; -webkit-appearance: none;
+                 background: transparent; border: 0; border-radius: inherit; cursor: pointer; }
+.ember-seg-hit:focus-visible { outline: 2px solid var(--border-accent); outline-offset: 1px; }
+/* Only ever set in the 520px tier, where four full examples cannot fit whatever we do. Unset
+   everywhere else, so `-webkit-line-clamp: none` leaves the text alone. */
+.mode-example { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden;
+                -webkit-line-clamp: var(--example-lines, none); }
+/* Narrow, the per-mode hint goes: with the example on the same row, it is the more redundant of
+   the two, and the name plus the output is still a comparison you read top to bottom. */
+@container settings (max-width: 48rem) {
+  .settings-density { --mode-hint: none; --mode-input: none; }
+  .mode-option { grid-template-columns: minmax(0, 6rem) minmax(0, 1fr); padding-inline: 0.5rem; }
+}
+/* The four shortcut rows. Two-up when there is width for it, and also in short windows whatever
+   the width, because four stacked capture rows do not fit a 520px-tall panel. */
+.shortcut-rows { display: grid; grid-template-columns: repeat(var(--shortcut-cols, 1), minmax(0, 1fr));
+                 gap: var(--row-gap, 1rem) 1rem; }
+@container settings (min-width: 48rem) { .settings-density { --shortcut-cols: 2; } }
+@container settings (max-height: 560px) { .settings-density { --shortcut-cols: 2; } }
+
+/* The two provider forms: side by side from 56rem (two forms at 48rem squeeze the key input to
+   70px), stacked below that. Both cards are elastic and top-aligned, so together they take the
+   height in either direction. The seam between them is a flex child that IS the gap, with the
+   swap button centred on it: no positioning arithmetic in either direction, and it is last in
+   the DOM so it never remounts and keyboard focus survives a press. The columns carry a CSS
+   `order` (0 and 2, seam at 1) but their DOM order is the real try order, which is what screen
+   readers and the tests read. */
+.provider-pair { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.provider-pair > [data-settings-col] { flex: 1 1 auto; min-width: 0; min-height: 0; }
+.provider-seam { position: relative; flex: 0 0 var(--card-gap, 1rem); display: grid; place-items: center; z-index: 1; }
+.provider-swap { position: absolute; inset: 0; margin: auto; }
+.provider-swap .glyph-row { display: none; }
+@container settings (min-width: 56rem) {
+  .provider-pair { flex-direction: row; }
+  .provider-pair > [data-settings-col] { flex-basis: 0%; }
+  .provider-swap .glyph-row { display: block; }
+  .provider-swap .glyph-col { display: none; }
+}
+
+/* Provider cards fold into a summary row only when there is neither the width for two columns
+   nor the height for two stacked cards. Elsewhere both stay expanded. A collapsed column stops
+   growing, so the summary row hugs the expanded card instead of floating at the bottom. */
+.provider-summary { display: none; }
+@container settings (max-height: 560px) and (max-width: 56rem) {
+  .provider-card[data-collapsed] .provider-config { display: none; }
+  .provider-card[data-collapsed] .provider-summary { display: flex; }
+  .provider-pair > [data-collapsed] { flex-grow: 0; }
+}
+
+/* Dialogs and popovers enter with the shell's own ease, on opacity and the individual `scale`
+   property so the centring `translate` utilities keep their value. Compositor-only. */
+@keyframes ember-layer-in {
+  from { opacity: 0; scale: 0.985; }
+  to { opacity: 1; scale: 1; }
+}
+@keyframes ember-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes ember-layer-out {
+  from { opacity: 1; scale: 1; }
+  to { opacity: 0; scale: 0.985; }
+}
+@keyframes ember-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+.ember-dialog[data-state="open"], .ember-popover[data-state="open"] {
+  animation: ember-layer-in 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.ember-dialog-overlay[data-state="open"] { animation: ember-fade-in 180ms ease-out; }
+/* Radix keeps a layer mounted until the animation declared for its closed state ends, so an
+   exit costs nothing but these three rules. Without them every dialog, popover and scrim in the
+   settings vanished between two frames: they arrived as objects and left as if switched off. */
+.ember-dialog[data-state="closed"], .ember-popover[data-state="closed"] {
+  animation: ember-layer-out 140ms cubic-bezier(0.4, 0, 1, 1);
+}
+.ember-dialog-overlay[data-state="closed"] { animation: ember-fade-out 140ms ease-in; }
+@media (prefers-reduced-motion: reduce) {
+  /* Matched on [data-state] so this stays at least as specific as the rules above; a bare class
+     selector loses to them and the kill switch silently does nothing. */
+  .ember-dialog[data-state], .ember-popover[data-state], .ember-dialog-overlay[data-state] {
+    animation: none;
+  }
 }

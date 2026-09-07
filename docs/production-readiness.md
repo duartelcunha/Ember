@@ -6,8 +6,13 @@ not production approval.
 
 ## Implementation ledger
 
-The approved six-stage plan is **partially implemented**. Production release approval remains blocked. Windows evaluation candidate 1.1.0-rc.2 is published and installed locally; its signature, migration and two-monitor picker smoke results are recorded in [native qualification evidence](native-qualification.md). This ledger supersedes production claims in older audits
+The approved six-stage plan is **partially implemented**. Production release approval remains blocked. Windows evaluation candidate 1.1.0-rc.2 is published and installed locally; its signature, migration and version-specific native limitations are recorded in [native qualification evidence](native-qualification.md). The two-monitor picker pass belongs to rc.1. This ledger supersedes production claims in older audits
 and demonstration recordings. Baseline: `179e397`, `feat/picker-follows-the-pointer`.
+
+The subsequent [floating and context implementation](floating-context-refinement.md) adds
+visible-pixel anchoring, compact opaque review, authorized source refresh and recoverable
+profile migration. It is not a published candidate. A native geometry harness completed 16
+scenarios on two 100% monitors; mixed-DPI qualification remains required before delivery.
 
 | Area | Required evidence | State |
 | --- | --- | --- |
@@ -26,13 +31,13 @@ or remaining implementation is listed in the last column.
 
 | Audit IDs | Implemented change | Remaining work |
 | --- | --- | --- |
-| A01 | Reject unknown/different HWND/PID; Windows UIA editable element and selection-range lease before capture, after capture and before paste; reapply uses same path | Native browser/editor selection qualification; AX/AT-SPI adapters; input generation spanning every transition |
+| A01 | Reject unknown/different HWND/PID; Windows UIA editable element and selection-range lease before capture, after capture and before paste | Native browser/editor selection qualification; AX/AT-SPI adapters; input generation spanning every transition |
 | A02 | Hook install failure and unsupported platforms reject; actual original/result comparison with keyboard paging | Native focus and screen reader qualification |
 | A03 | Remove stale terminal clipboard fallback and generic line clearing; preserve bounded HGLOBAL formats; ownership-aware restore before network wait | Close ownership gaps around capture; delayed rendering tests; safe terminal adapters. Generic terminal replacement is disabled |
 | A04 | Mask original bytes before normalization; check token count/order/unknown markers; restore after cleanup; preserve joiners; protect fences, inline code, paths and explicit shell prompts | Broader linguistic/provider evaluation and ambiguous command fragments |
 | A05 | Complete PEM block redaction; explicit bounded global imports, reviewed snapshots and source provenance; oversized profiles refused before network | Semantic extraction limits and adversarial model evaluation |
 | A06 | HTTPS URL validation; no redirects; endpoint-bound vault entry; legacy credential binds to old configured endpoint before URL change; connection generations | Named connection schema and explicit local HTTP without authentication |
-| A07 | All custom commands listed in application ACL manifest; settings/overlay/picker/animation capabilities separated; static security contract tests | Negative IPC invocations in real packaged webviews |
+| A07 | All custom commands listed in application ACL manifest; settings/overlay/picker/tray/animation capabilities separated; static security contract tests | Negative IPC invocations in real packaged webviews |
 | A08 | Retention and diagnostic generations; one writer; separate session/persistent cache; authenticated encryption; logout invalidates before waiting and rejects stale commits | Native concurrent logout/login/refresh, disable/re-enable/write, vault failure and interrupted-write tests |
 | A09 | release-please explicitly creates prereleases; automatic promotion removed; actions/toolchains pinned | Three-platform artifacts, signature/notarization gates and controlled promotion |
 | A10/A11/A12 | Shared stationary monitor-sized click-through surface; physical cursor and logical content coordinates; 500 ms topology reconciliation; change-only events; measured bounds and edge hysteresis | Native mixed-DPI/hotplug/taskbar/remote session tests and measured idle/GPU/latency budgets. Display-change event invalidation remains preferable to polling |

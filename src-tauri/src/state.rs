@@ -41,7 +41,9 @@ pub struct AppState {
     /// Serializes run ownership and phase transitions, independently of background requests.
     pub execution: Mutex<ember_core::cycle::ExecutionCoordinator>,
     pub event_seq: AtomicU64,
-    pub resolved_context: Mutex<Option<serde_json::Value>>,
+    pub last_feedback: Mutex<Option<String>>,
+    pub resolved_context: Mutex<Option<ember_core::context::Snapshot>>,
+    pub context_sources: Mutex<std::collections::HashMap<String, crate::context::Cached>>,
     pub retention_generation: AtomicU64,
     pub prompt_generation: AtomicU64,
     /// Acorda quem espera (o `select!` do refine, a espera pela chamada em curso) quando o
@@ -98,6 +100,10 @@ pub struct AppState {
     /// O nome do projeto ativo. A cor diz que ha um projeto; o nome diz QUAL. Sem ele, quem tem
     /// varios projetos de cores parecidas fica a adivinhar, e adivinhar era o problema.
     pub orb_project: Mutex<Option<String>>,
+    /// Pele, tamanho e ritmo das notas, em cache pela mesma razao que a cor logo acima: o
+    /// `flow::emit` corre varias vezes por refine e ler o ficheiro de config nesse caminho era
+    /// pagar disco por algo que so muda quando alguem mexe nas definicoes.
+    pub overlay_style: Mutex<ember_core::model::OverlayStyle>,
     /// O picker de projetos esta aberto? Guarda de reentrancia + sinal para o atalho de refine.
     pub picker_open: AtomicBool,
     /// Quando o picker abriu. Serve para distinguir a SEGUNDA pressao do atalho (que fecha) do
@@ -106,6 +112,12 @@ pub struct AppState {
     pub picker_opened_at: Mutex<Option<std::time::Instant>>,
     /// Pedido de fecho do picker (segunda pressao do atalho dele, ou um refine a arrancar).
     pub picker_cancel: AtomicBool,
+    /// The tray menu is on screen. Also the reentrancy guard of its close: blur and Esc can both
+    /// ask for the same close, and only the first one that flips this does the work.
+    pub tray_open: AtomicBool,
+    /// When the tray menu last started closing. A click on the icon within a quarter second of
+    /// that is the click that caused the blur, not a request to open it again.
+    pub tray_hidden_at: Mutex<Option<std::time::Instant>>,
     /// O ultimo payload emitido para o overlay, para o poder re-emitir sem inventar estado.
     ///
     /// Existe para a travessia entre monitores com DPI diferente: ao redimensionar a janela, o
@@ -251,7 +263,9 @@ impl AppState {
             follow_cursor: AtomicBool::new(true),
             execution: Mutex::new(ember_core::cycle::ExecutionCoordinator::default()),
             event_seq: AtomicU64::new(0),
+            last_feedback: Mutex::new(None),
             resolved_context: Mutex::new(None),
+            context_sources: Mutex::new(std::collections::HashMap::new()),
             retention_generation: AtomicU64::new(0),
             prompt_generation: AtomicU64::new(0),
             cancel_notify: Notify::new(),
@@ -268,9 +282,12 @@ impl AppState {
             oauth_commit: Mutex::new(()),
             orb_accent: Mutex::new(None),
             orb_project: Mutex::new(None),
+            overlay_style: Mutex::new(ember_core::model::OverlayStyle::default()),
             picker_open: AtomicBool::new(false),
             picker_opened_at: Mutex::new(None),
             picker_cancel: AtomicBool::new(false),
+            tray_open: AtomicBool::new(false),
+            tray_hidden_at: Mutex::new(None),
             last_state: Mutex::new(None),
             picker_state: Mutex::new(None),
             floating_positions: Mutex::new(HashMap::new()),

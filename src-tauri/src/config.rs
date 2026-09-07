@@ -1,7 +1,7 @@
 //! Definicoes nao-secretas persistidas em disco (config.json no app config dir).
 //! As chaves de API NAO vivem aqui: ficam no Windows Credential Manager (ver secrets.rs).
 
-use ember_core::model::{Provider, RefineMode};
+use ember_core::model::{Length, OverlayStyle, Provider, RefineMode};
 use ember_core::providers::{DEFAULT_GEMINI_MODEL, DEFAULT_OPENAI_BASE_URL, DEFAULT_OPENAI_MODEL};
 use serde::{Deserialize, Serialize};
 
@@ -65,16 +65,22 @@ pub struct Config {
     /// nem pediu. Quem os quer poe a combinacao que sabe estar livre, nas settings.
     pub hotkey_polish: String,
     pub hotkey_turbo: String,
+    /// Atalho do modo Reply. Vazio por defeito, pela mesma razao que os outros dois.
+    pub hotkey_reply: String,
     /// Atalho do picker de projetos. Vazio = nao registado, pelas mesmas razoes dos de modo.
     pub hotkey_picker: String,
     pub autostart: bool,
     pub mode: RefineMode,
+    /// Quanto o refine pode mexer no tamanho. Ortogonal ao modo, e por isso um campo proprio:
+    /// "encurta" e um pedido que se faz tanto ao Fix como ao Rebuild.
+    pub length: Length,
     /// Raciocinio alargado do Gemini (default on). Mais qualidade, um pouco mais lento.
     pub thinking_enabled: bool,
     /// Nivel de thinking para Gemini 3.x: "minimal"|"low"|"medium"|"high".
     pub thinking_level: String,
     /// Reviewed profile text. None uses the built-in default, never ambient files.
     pub profile_override: Option<String>,
+    pub profile_archive: Option<String>,
     /// Provenance of explicitly imported, reviewed snapshots. Never a live filesystem grant.
     pub profile_sources: Vec<ember_core::profile_import::Source>,
     /// Legacy discovery flag, retained to explain why automatic loading was disabled.
@@ -108,6 +114,8 @@ pub struct Config {
     /// Tema visual da janela de Settings: "dark" (default) ou "cream". So afeta as Settings; a
     /// overlay/splash mantem a identidade dark de marca.
     pub theme: String,
+    /// Pele, tamanho e ritmo das notas da brasa junto ao cursor.
+    pub overlay_style: OverlayStyle,
     /// Se nao havia nada selecionado, seleciona o campo em foco (Ctrl+A) e refina-o todo.
     /// Default ON: e o caso dominante fora de terminais (escreveste o prompt na caixa e nunca o
     /// selecionaste). Uma captura por esta via passa SEMPRE pelo gate de preview, mesmo com o
@@ -135,7 +143,7 @@ pub const SELECT_ALL_MAX_CHARS: (usize, usize) = (500, 100_000);
 impl Default for Config {
     fn default() -> Self {
         Self {
-            schema_version: 1,
+            schema_version: 2,
             revision: 0,
             gemini_model: DEFAULT_GEMINI_MODEL.to_string(),
             openai_model: DEFAULT_OPENAI_MODEL.to_string(),
@@ -146,12 +154,16 @@ impl Default for Config {
             hotkey: "CmdOrCtrl+Shift+Space".to_string(),
             hotkey_polish: String::new(),
             hotkey_turbo: String::new(),
+            hotkey_reply: String::new(),
             hotkey_picker: String::new(),
             autostart: false,
             mode: RefineMode::Adaptive,
+            length: Length::Same,
+            overlay_style: OverlayStyle::default(),
             thinking_enabled: true,
             thinking_level: "high".to_string(),
             profile_override: None,
+            profile_archive: None,
             profile_sources: Vec::new(),
             ignore_claude_md: true,
             terminal_handling: true,
@@ -311,6 +323,7 @@ impl Config {
         }
         self.hotkey_polish = self.hotkey_polish.trim().to_string();
         self.hotkey_turbo = self.hotkey_turbo.trim().to_string();
+        self.hotkey_reply = self.hotkey_reply.trim().to_string();
         self.hotkey_picker = self.hotkey_picker.trim().to_string();
         // Um atalho de picker gravado antes desta regra existir (o `Shift+Up` da primeira
         // utilizacao) fica limpo no load. Deixa-lo em disco era manter uma combinacao que abre a
@@ -388,15 +401,19 @@ fn read_at(path: &std::path::Path) -> std::io::Result<Config> {
     }
     match serde_json::from_slice::<Config>(&bytes) {
         Ok(mut cfg) => {
-            if cfg.schema_version > 1 {
+            if cfg.schema_version > 2 {
                 return Err(std::io::Error::other(
                     "Configuration belongs to a newer Ember version",
                 ));
             }
-            if cfg.schema_version == 0 {
+            if cfg.schema_version < 2 {
                 // The old default was on, so its boolean does not establish consent to the
                 // new retention policy. Preserve the original before migrating to memory only.
-                let backup = path.with_extension(format!("json.v0-{}.bak", crate::now_ms()));
+                let backup = path.with_extension(format!(
+                    "json.v{}-{}.bak",
+                    cfg.schema_version,
+                    crate::now_ms()
+                ));
                 use std::io::Write;
                 let mut file = fs::OpenOptions::new()
                     .write(true)
@@ -404,8 +421,10 @@ fn read_at(path: &std::path::Path) -> std::io::Result<Config> {
                     .open(backup)?;
                 file.write_all(&bytes)?;
                 file.sync_all()?;
-                cfg.keep_results = false;
-                cfg.schema_version = 1;
+                if cfg.schema_version == 0 {
+                    cfg.keep_results = false;
+                }
+                cfg.schema_version = 2;
                 cfg.revision = cfg
                     .revision
                     .checked_add(1)
@@ -470,12 +489,19 @@ mod tests {
     use super::*;
 
     fn test_folder() -> PathBuf {
+        // A counter as well as the clock: tests run in parallel, and on macOS the clock only
+        // resolves to microseconds, so two of them got the same name and the second `create_dir`
+        // failed with AlreadyExists.
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let suffix = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let folder =
-            std::env::temp_dir().join(format!("ember-config-test-{}-{suffix}", std::process::id()));
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let folder = std::env::temp_dir().join(format!(
+            "ember-config-test-{}-{suffix}-{n}",
+            std::process::id()
+        ));
         fs::create_dir(&folder).unwrap();
         folder
     }
@@ -487,7 +513,7 @@ mod tests {
         let original = br#"{"keep_results":true,"theme":"cream"}"#;
         fs::write(&path, original).unwrap();
         let migrated = read_at(&path).unwrap();
-        assert_eq!(migrated.schema_version, 1);
+        assert_eq!(migrated.schema_version, 2);
         assert!(!migrated.keep_results);
         assert_eq!(migrated.theme, "cream");
         assert_eq!(read_at(&path).unwrap(), migrated);
@@ -501,6 +527,27 @@ mod tests {
         consented.keep_results = true;
         save_at(&path, &consented).unwrap();
         assert!(read_at(&path).unwrap().keep_results);
+        fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn v1_migration_preserves_opt_in_profile_and_project_without_authorizing_sources() {
+        let folder = test_folder();
+        let path = folder.join("config.json");
+        let original = br#"{"schema_version":1,"keep_results":true,"profile_override":"Tone: direct","projects":[{"id":"p","name":"P","brief":"Writing"}]}"#;
+        fs::write(&path, original).unwrap();
+        let cfg = read_at(&path).unwrap();
+        assert_eq!(cfg.schema_version, 2);
+        assert!(cfg.keep_results);
+        assert_eq!(cfg.profile_override.as_deref(), Some("Tone: direct"));
+        assert!(cfg.projects[0].context.sources.is_empty());
+        assert!(cfg.projects[0].context.applications.is_empty());
+        let backup = fs::read_dir(&folder)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| p.extension().is_some_and(|e| e == "bak"))
+            .unwrap();
+        assert_eq!(fs::read(backup).unwrap(), original);
         fs::remove_dir_all(folder).unwrap();
     }
 
@@ -840,6 +887,7 @@ mod tests {
 
         // E com o projeto la, mantem-se.
         c.projects = vec![ember_core::projects::Project {
+            context: Default::default(),
             id: "fantasma".into(),
             name: "Existe".into(),
             accent: 0,

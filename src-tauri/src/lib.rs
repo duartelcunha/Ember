@@ -7,6 +7,7 @@ mod clipboard_snapshot;
 mod commands;
 mod config;
 mod connection;
+mod context;
 mod floating;
 mod flow;
 mod foreground;
@@ -25,16 +26,16 @@ mod secrets;
 mod selection;
 mod selection_guard;
 mod state;
+mod tray;
 
 use std::sync::atomic::Ordering;
 
 use ember_core::model::RefineMode;
-use tauri::menu::{MenuBuilder, MenuItemBuilder};
-use tauri::tray::TrayIconBuilder;
 use tauri::window::Color;
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
 /// Medidas do overlay (faisca, pilula, padding, tamanho da janela) vivem em
 /// `ember_core::overlay_geom::DEFAULT_LAYOUT`, com os testes de geometria ao lado delas. Estao
@@ -42,6 +43,67 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 /// `width`/`height` da janela "overlay" (tauri.conf.json). Muda uma, muda a outra, senao a
 /// orbita descentra-se do ponteiro.
 use ember_core::overlay_geom as geom;
+use ember_core::window_geom;
+
+/// Size and position only. The settings window is never maximised or fullscreen, and saving
+/// `VISIBLE` would make a window that was hidden at quit come back hidden after a restart.
+fn window_state_flags() -> StateFlags {
+    StateFlags::SIZE | StateFlags::POSITION
+}
+
+/// The position saved for the settings window, when the window-state file has one. Read once
+/// per open; the file is a few hundred bytes.
+fn saved_settings_position(app: &AppHandle) -> Option<(i32, i32)> {
+    let dir = app.path().app_config_dir().ok()?;
+    let raw = std::fs::read(dir.join(app.filename())).ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&raw).ok()?;
+    let s = v.get("settings")?;
+    Some((s.get("x")?.as_i64()? as i32, s.get("y")?.as_i64()? as i32))
+}
+
+/// The plugin restores the saved geometry when the window is created. Centre only when there
+/// is nothing saved (first launch) or the saved spot is unreachable today (monitor unplugged,
+/// DPI changed): with no native title bar and no maximise button, an off-screen window cannot
+/// be dragged back. When the spot is fine but the saved size no longer fits the monitor, the
+/// window is shrunk in place instead of being moved.
+fn needs_centering(app: &AppHandle, w: &WebviewWindow) -> bool {
+    let Some((saved_x, saved_y)) = saved_settings_position(app) else {
+        return true;
+    };
+    let (Ok(pos), Ok(size)) = (w.outer_position(), w.outer_size()) else {
+        return true;
+    };
+    if (pos.x, pos.y) != (saved_x, saved_y) {
+        // The plugin skips a saved position that touches no monitor and leaves the window
+        // where the OS created it (Windows cascades it at 208,208). Measured: with x=-9000 the
+        // strip check below saw a perfectly grabbable window and left it in that arbitrary
+        // corner. Not applied means not trusted, so centre.
+        log::info!("settings: saved position ({saved_x}, {saved_y}) was not applied, centring");
+        return true;
+    }
+    let win = geom::Rect::new(pos.x, pos.y, size.width as i32, size.height as i32);
+    let areas: Vec<geom::Rect> = monitors_of(w).into_iter().map(|m| m.work).collect();
+    let scale = w.scale_factor().unwrap_or(1.0);
+    // The strip is 36 logical px (TitleBar h-9); 160 logical px is enough width to grab.
+    let strip = (36.0 * scale).round() as i32;
+    let min_w = (160.0 * scale).round() as i32;
+    match window_geom::strip_area(win, &areas, strip, min_w) {
+        None => {
+            log::info!("settings: saved position {win:?} is off every monitor, centring");
+            true
+        }
+        Some(area) => {
+            let margin = (12.0 * scale).round() as i32;
+            if let Some((cw, ch)) = window_geom::shrink_to_fit(win, area, margin) {
+                log::info!("settings: saved size {}x{} exceeds the work area, shrinking to {cw}x{ch}", win.w, win.h);
+                if let Err(e) = w.set_size(tauri::PhysicalSize::new(cw as u32, ch as u32)) {
+                    log::warn!("settings: shrink failed: {e}");
+                }
+            }
+            false
+        }
+    }
+}
 
 /// Um monitor como o SO o descreve: retangulo completo (para saber onde o cursor esta), area
 /// util (para clampar sem meter a pilula por baixo da barra de tarefas) e a ESCALA DELE.
@@ -49,13 +111,13 @@ use ember_core::overlay_geom as geom;
 /// A escala e por monitor e nao da janela de proposito. Perguntar `w.scale_factor()` era o bug:
 /// isso descreve o ecra onde a janela ESTA, e o Windows so a corrige no WM_DPICHANGED seguinte.
 /// Durante a travessia, os offsets sairiam a escala do ecra anterior.
-struct MonitorInfo {
-    full: geom::Rect,
-    work: geom::Rect,
-    scale: f64,
+pub(crate) struct MonitorInfo {
+    pub(crate) full: geom::Rect,
+    pub(crate) work: geom::Rect,
+    pub(crate) scale: f64,
 }
 
-fn monitors_of(w: &WebviewWindow) -> Vec<MonitorInfo> {
+pub(crate) fn monitors_of(w: &WebviewWindow) -> Vec<MonitorInfo> {
     let Ok(list) = w.available_monitors() else {
         return Vec::new();
     };
@@ -115,7 +177,24 @@ pub(crate) fn get_or_create_window(app: &AppHandle, label: &str) -> Option<Webvi
         w.on_window_event(move |event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
+                // The window-state plugin only writes its file on process exit, and a tray app
+                // can run for weeks. A crash or a forced shutdown in between would lose the
+                // geometry the user just chose, so every hide saves it.
+                if let Err(e) = win.app_handle().save_window_state(window_state_flags()) {
+                    log::warn!("settings: window state not saved: {e}");
+                }
                 let _ = win.hide();
+            }
+        });
+    }
+    if label == "tray" {
+        // Losing focus IS the close: a click anywhere else, or on the icon again, folds the menu.
+        // Hooked here, where the window is born, so a menu created by the warm-up and one
+        // created on the first click get the same treatment.
+        let a = app.clone();
+        w.on_window_event(move |event| {
+            if let tauri::WindowEvent::Focused(false) = event {
+                tray::close_menu(&a, tray::ClosedBy::Blur);
             }
         });
     }
@@ -216,8 +295,10 @@ pub(crate) fn show_settings(app: &AppHandle) {
         // These three calls used to have their errors dropped with `let _ =`. A failing `show()`
         // gave exactly what we saw while debugging this: no window, no clue, nothing in the log.
         // You do not discard what you need to read when things go wrong.
-        if let Err(e) = w.center() {
-            log::warn!("settings: center failed: {e}");
+        if needs_centering(app, &w) {
+            if let Err(e) = w.center() {
+                log::warn!("settings: center failed: {e}");
+            }
         }
         if let Err(e) = w.show() {
             log::error!("settings: show failed: {e}");
@@ -253,7 +334,7 @@ pub(crate) fn now_ms() -> u64 {
 /// casa: o fallback e validado a entrada, nao no momento da falha.
 async fn prevalidate_providers(app: AppHandle) {
     let cfg = config::load(&app);
-    commands::refresh_orb_accent(&app.state::<state::AppState>(), &cfg);
+    commands::refresh_orb_state(&app.state::<state::AppState>(), &cfg);
     for provider in ["gemini", "openai"] {
         let _ =
             commands::validate_key(app.clone(), app.state::<state::AppState>(), provider.into())
@@ -337,7 +418,7 @@ pub(crate) enum HotkeyAction {
 pub(crate) fn register_hotkeys(app: &AppHandle, cfg: &config::Config) -> Result<(), String> {
     let gs = app.global_shortcut();
     let _ = gs.unregister_all();
-    let wanted: [(&str, HotkeyAction); 4] = [
+    let wanted: [(&str, HotkeyAction); 5] = [
         (cfg.hotkey.as_str(), HotkeyAction::Refine(None)),
         (
             cfg.hotkey_polish.as_str(),
@@ -346,6 +427,10 @@ pub(crate) fn register_hotkeys(app: &AppHandle, cfg: &config::Config) -> Result<
         (
             cfg.hotkey_turbo.as_str(),
             HotkeyAction::Refine(Some(RefineMode::Turbo)),
+        ),
+        (
+            cfg.hotkey_reply.as_str(),
+            HotkeyAction::Refine(Some(RefineMode::Reply)),
         ),
         (cfg.hotkey_picker.as_str(), HotkeyAction::Picker),
     ];
@@ -462,7 +547,7 @@ fn register_one(app: &AppHandle, hotkey: &str, action: HotkeyAction) -> Result<(
                 foreground::debug_foreground_exe(),
                 terminal
             );
-            let project_title = if cfg.project_context {
+            let project_title = if cfg.project_context || cfg.active_project.is_some() {
                 foreground::foreground_title()
             } else {
                 None
@@ -475,6 +560,7 @@ fn register_one(app: &AppHandle, hotkey: &str, action: HotkeyAction) -> Result<(
                     settle_ms: cfg.paste_settle_ms,
                 },
                 project_title,
+                project_application: foreground::debug_foreground_exe(),
                 preview: cfg.preview_before_paste,
                 select_all_fallback: cfg.select_all_fallback
                     && foreground::select_all_is_safe_here(),
@@ -493,53 +579,21 @@ fn register_one(app: &AppHandle, hotkey: &str, action: HotkeyAction) -> Result<(
     .map_err(|e| e.to_string())
 }
 
-fn build_tray(app: &tauri::App) -> tauri::Result<()> {
-    let open = MenuItemBuilder::with_id("open_settings", "Settings").build(app)?;
-    // A saida para tudo o que interrompeu um refine: dispensado, recusado no preview, clipboard
-    // ocupado, janela trocada. Guardar o resultado so serve para alguma coisa se houver uma
-    // maneira de o aplicar depois.
-    let reapply = MenuItemBuilder::with_id("reapply_last", "Reapply last refine").build(app)?;
-    let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
-    let menu = MenuBuilder::new(app)
-        .items(&[&open, &reapply, &quit])
-        .build()?;
-    let Some(icon) = app.default_window_icon().cloned() else {
-        // Sem icone nao construimos a tray (em vez de rebentar). A app continua viva; o log
-        // deixa rasto. Na pratica o icone vem sempre da config, por isso isto e defensivo.
-        log::error!("tray: no default window icon, skipping tray build");
-        return Ok(());
-    };
-    TrayIconBuilder::new()
-        .icon(icon)
-        .tooltip("Ember")
-        .menu(&menu)
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            "open_settings" => {
-                show_settings(app);
-            }
-            "reapply_last" => {
-                let app = app.clone();
-                tauri::async_runtime::spawn(async move { flow::reapply_last(app).await });
-            }
-            "quit" => {
-                if let Some(quit_anim) = get_or_create_window(app, "quit_anim") {
-                    let _ = quit_anim.set_ignore_cursor_events(true);
-                    let _ = quit_anim.show();
-                }
-                // A animacao de quit chama `finalize_quit` quando termina: a saida acopla ao
-                // fim REAL da animacao, nao a um numero magico que podia divergir do duration.
-                // Fallback: se a webview nao completar (falhou a carregar), forca a saida ao
-                // fim de um tempo curto, para nunca ficar preso na tray sem sair.
-                let app = app.clone();
-                tauri::async_runtime::spawn(async move {
-                    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
-                    finalize_quit_now(&app);
-                });
-            }
-            _ => {}
-        })
-        .build(app)?;
-    Ok(())
+/// The way out, shared by everything that quits (today: the tray menu).
+pub(crate) fn begin_quit(app: &AppHandle) {
+    if let Some(quit_anim) = get_or_create_window(app, "quit_anim") {
+        let _ = quit_anim.set_ignore_cursor_events(true);
+        let _ = quit_anim.show();
+    }
+    // A animacao de quit chama `finalize_quit` quando termina: a saida acopla ao
+    // fim REAL da animacao, nao a um numero magico que podia divergir do duration.
+    // Fallback: se a webview nao completar (falhou a carregar), forca a saida ao
+    // fim de um tempo curto, para nunca ficar preso na tray sem sair.
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+        finalize_quit_now(&app);
+    });
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -566,6 +620,14 @@ pub fn run() {
             MacosLauncher::LaunchAgent,
             None,
         ))
+        // Remembers where the user left the settings window. Floating surfaces are placed by
+        // floating.rs every frame; a restored position there would be last week's cursor.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(window_state_flags())
+                .with_denylist(&["overlay", "picker", "tray", "splash", "startup_anim", "quit_anim"])
+                .build(),
+        )
         .manage(state::AppState::new())
         .invoke_handler(tauri::generate_handler![
             commands::get_settings,
@@ -575,11 +637,14 @@ pub fn run() {
             floating::floating_position,
             flow::overlay_snapshot,
             picker::picker_snapshot,
+            tray::tray_action,
             commands::set_model,
             commands::set_openai_base_url,
             commands::set_hotkey,
             commands::set_autostart,
             commands::set_mode,
+            commands::set_length,
+            commands::set_overlay_style,
             commands::set_theme,
             commands::set_thinking,
             commands::set_terminal_handling,
@@ -626,8 +691,9 @@ pub fn run() {
             if secrets::migrate_legacy_openai(&initial.openai_base_url).is_err() {
                 log::warn!("credentials: existing connection key could not be migrated");
             }
-            build_tray(app)?;
+            tray::build_tray(app)?;
             let handle = app.handle().clone();
+            context::start(handle.clone());
 
             // Refinados ja pagos de sessoes anteriores. Sem isto, fechar a app deitava fora
             // dinheiro gasto e o mesmo texto voltava a ser cobrado no arranque seguinte.
@@ -707,6 +773,12 @@ pub fn run() {
                         let _ = get_or_create_window(&h, "settings");
                         log::info!("settings: janela pre-aquecida");
                     }
+                    // The tray menu too, in the same breath: a third webview at t=0 was one too
+                    // many for the startup. A click inside these two seconds creates it on the
+                    // spot, and the `ready` handshake covers the listener arriving late.
+                    if h.get_webview_window("tray").is_none() {
+                        let _ = get_or_create_window(&h, "tray");
+                    }
                 });
             }
             // Pre-valida os fallbacks em background (nao bloqueia o arranque).
@@ -773,6 +845,7 @@ pub fn run() {
                 let mut only_main = cfg.clone();
                 only_main.hotkey_polish.clear();
                 only_main.hotkey_turbo.clear();
+                only_main.hotkey_reply.clear();
                 match register_hotkeys(&handle, &only_main) {
                     Ok(()) => {
                         log::warn!("main hotkey is up; the per-mode ones are off until fixed");
@@ -821,3 +894,11 @@ pub fn run() {
 pub fn purge_credentials_for_uninstall() -> Result<(), String> {
     secrets::purge_for_uninstall()
 }
+
+/// Offline native surface harness, excluded from distributed application builds.
+#[cfg(feature = "native-qualification")]
+pub fn qualify_floating() {
+    qualification::run();
+}
+#[cfg(feature = "native-qualification")]
+mod qualification;

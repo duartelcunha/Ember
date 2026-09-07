@@ -1,61 +1,38 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { build } from "vite";
-import { createServer } from "node:http";
-import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve, extname, dirname, basename } from "node:path";
-import puppeteer from "puppeteer";
-import { projectRegressions } from "./projects-components.mjs";
 
-// Real React components and CSS, with the documented Tauri IPC mock. This is browser
-// evidence only: it cannot establish native focus, input hooks or monitor transitions.
-test("UI components preserve geometry and asynchronous ownership", async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), "ember-browser-test-"));
-  await build({ logLevel: "error", build: { outDir: directory, emptyOutDir: false,
-    rollupOptions: { input: resolve("scripts/floating-fixture.html") } } });
-  const server = createServer(async (req, res) => {
-    try {
-      const pathname = new URL(req.url, "http://localhost").pathname;
-      const relative = pathname.startsWith("/assets/") ? pathname.slice(1) : "scripts/floating-fixture.html";
-      if (relative.includes("..")) { res.writeHead(400).end(); return; }
-      const mime = { ".js": "text/javascript", ".css": "text/css", ".html": "text/html", ".woff2": "font/woff2" };
-      res.setHeader("Content-Type", mime[extname(relative)] ?? "application/octet-stream");
-      res.end(await readFile(join(directory, relative)));
-    } catch { res.writeHead(404).end(); }
-  });
-  let browser;
-  try {
-    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-    const port = server.address().port;
-    browser = await puppeteer.launch({ headless: true,
-      // Ubuntu AppArmor authorizes the system Chrome sandbox, not downloaded CfT.
-      ...(process.env.CI && process.platform === "linux" ? { channel: "chrome" } : {}),
-    });
-    const page = await browser.newPage();
-    await page.bringToFront();
-    const errors = [];
-    const presented = () => page.evaluate(() => new Promise(resolve =>
-      requestAnimationFrame(() => requestAnimationFrame(resolve))));
-    const capture = async (name) => {
-      if (!process.env.EMBER_TEST_CAPTURE_DIR) return;
-      await mkdir(process.env.EMBER_TEST_CAPTURE_DIR, { recursive: true });
-      await page.screenshot({ path: join(process.env.EMBER_TEST_CAPTURE_DIR, name + ".png") });
-    };
-    page.on("pageerror", error => { errors.push(error.message); console.error("page error", error.message); });
-    page.on("console", message => { if (message.type() === "error") console.error("page console", message.text()); });
+const hexToRgb = (hex) => {
+  const [r, g, b] = hex.replace("#", "").match(/../g).map((part) => parseInt(part, 16));
+  return `rgb(${r}, ${g}, ${b})`;
+};
+import { readFile } from "node:fs/promises";
+import ts from "typescript";
+import { withBrowser } from "./browser-harness.mjs";
+
+// The anchor numbers below are derived from the source constants, never pinned. Three separate
+// design decisions moved them (the gap, centre anchoring, the shared chip spec) and each one
+// left this suite red about arithmetic instead of about behaviour.
+const geometrySource = await readFile(new URL("../src/components/floatingGeometry.ts", import.meta.url), "utf8");
+const { CURSOR_GAP, ORB_INK } = await import(`data:text/javascript;base64,${Buffer.from(
+  ts.transpileModule(geometrySource, { compilerOptions: { module: ts.ModuleKind.ESNext } }).outputText,
+).toString("base64")}`);
+
+// Overlay, picker and splash. The settings surfaces have their own test file so that a
+// regression here does not hide theirs.
+test("UI components preserve geometry and asynchronous ownership", (t) => withBrowser(async ({ page, origin, capture, presented, send }) => {
     await page.setViewport({ width: 640, height: 540, deviceScaleFactor: 1 });
-    await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
-    await page.goto(`http://127.0.0.1:${port}/__ember-test/overlay`);
+    await page.goto(`${origin}/__ember-test/overlay`);
     await page.waitForFunction(() => document.body.textContent.includes("Snapshot ready"));
-    const send = async (name, payload) => page.evaluate((name, payload) => window.__emit(name, payload), name, payload);
+    await t.test('hint messages do not draw a second pointer', async () => {
+      assert.equal(await page.$$eval('.ember-bubble svg', nodes => nodes.length), 0);
+    });
     await send("ember://state", { sequence: 99, runId: 2, phase: "error", message: "Obsolete run" });
     await page.evaluate(() => new Promise(requestAnimationFrame));
     assert.equal(await page.evaluate(() => document.body.textContent.includes("Obsolete run")), false);
     await send("ember://state", { sequence: 100, runId: 4, phase: "hint", message: "A long status message that must wrap and remain readable. ".repeat(8) });
     await page.waitForFunction(() => document.querySelector('.ember-floating')?.textContent.includes('A long status'));
     await presented();
-    const bounds = async () => page.$eval('.ember-floating', e => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, width: innerWidth, height: innerHeight }; });
+    const bounds = async () => page.$eval('.ember-floating', e => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, centre: (r.top + r.bottom) / 2, width: innerWidth, height: innerHeight }; });
     let rect = await bounds();
     assert.ok(rect.x >= 0 && rect.y >= 0 && rect.right <= rect.width + 1 && rect.bottom <= rect.height + 1, JSON.stringify(rect));
     await page.setViewport({ width: 320, height: 540, deviceScaleFactor: 2 });
@@ -63,76 +40,303 @@ test("UI components preserve geometry and asynchronous ownership", async (t) => 
     await page.waitForFunction(() => document.querySelector('.ember-orb-row'));
     await presented();
     await capture("project-status");
-    const row = await page.$eval('.ember-orb-row', e => ({ width: e.offsetWidth, children: Array.from(e.children).map(c => ({ left: c.getBoundingClientRect().left, right: c.getBoundingClientRect().right })) }));
-    // The retry orb grows into the eight-pixel margin. Both it and the labels must remain
-    // inside the viewport, while the measured layout reserves space for the complete labels.
-    assert.ok(row.width <= 304 && row.children.every(c => c.left >= 0 && c.right <= 320), JSON.stringify(row));
+    const visible = await page.$eval('.ember-orb-row svg', e => { const r = e.getBoundingClientRect(); return { left: r.left + 22, right: r.left + 37, top: r.top + 2, bottom: r.top + 17 }; });
+    assert.ok(visible.left >= 0 && visible.right <= 320 && visible.top >= 0 && visible.bottom <= 540, JSON.stringify(visible));
     await capture("project-status");
-    await send("ember://state", { sequence: 102, runId: 4, phase: "preview", preview: { original: ['First line\n'.repeat(8)], result: ['Changed line\n'.repeat(8)], page: 0 } });
+    await page.evaluate(() => {
+      window.__phaseOverlaps = [];
+      window.__phaseObserver = new MutationObserver(() => {
+        window.__phaseOverlaps.push(Boolean(document.querySelector('.ember-orb-row') && document.querySelector('.ember-confirmation')));
+      });
+      window.__phaseObserver.observe(document.getElementById('root'), { childList: true, subtree: true });
+    });
+    await send("ember://state", { sequence: 102, runId: 4, phase: "preview", confirmationScope: 'selection' });
     await page.setViewport({ width: 320, height: 540, deviceScaleFactor: 2 });
-    await page.waitForFunction(() => document.body.textContent.includes('Review changes'));
+    await page.waitForFunction(() => document.querySelector('.ember-confirmation'));
     await presented();
+    await t.test('review replaces the orb without retaining an exiting loading layer', async () => {
+      const overlaps = await page.evaluate(() => { window.__phaseObserver.disconnect(); return window.__phaseOverlaps; });
+      assert.ok(overlaps.length > 0);
+      assert.equal(overlaps.some(Boolean), false);
+      assert.equal(await page.$$eval('.ember-orb-row', nodes => nodes.length), 0);
+    });
     rect = await bounds();
     assert.ok(rect.right <= rect.width + 1 && rect.bottom <= rect.height + 1, JSON.stringify(rect));
-    await capture("preview");
-    await page.goto(`http://127.0.0.1:${port}/__ember-test/picker`);
+    const confirmation = await page.$eval('.ember-confirmation', e => ({ height: e.getBoundingClientRect().height, background: getComputedStyle(e).backgroundColor, text: e.textContent, token: getComputedStyle(document.documentElement).getPropertyValue('--color-surface-1').trim() }));
+    // 30 is the chip spec resolved: 16px line-height plus 6px padding top and bottom is the
+    // 28px min-height, and `.ember-bubble` adds a 1px border on each side. It is pinned exactly
+    // so the confirmation cannot quietly grow into a document viewer again.
+    assert.equal(confirmation.height, 30);
+    // The surface reads from the token rather than a literal, so this compares the two instead
+    // of pinning a hex that moves whenever the palette does.
+    assert.equal(confirmation.background, hexToRgb(confirmation.token));
+    assert.equal(confirmation.text, 'Enter apply · Esc cancel');
+    await capture("confirmation");
+    await t.test('whole-field confirmation exposes scope without document content', async () => {
+      await page.setViewport({ width: 170, height: 480, deviceScaleFactor: 2 });
+      await send('ember://state', { sequence: 103, runId: 4, phase: 'preview', confirmationScope: 'field', preview: { original: ['PRIVATE ORIGINAL'], result: ['PRIVATE RESULT'], page: 0 } });
+      await presented();
+      const compact = await page.$eval('.ember-confirmation', e => ({ width: e.getBoundingClientRect().width, height: e.getBoundingClientRect().height, text: e.textContent }));
+      // Two lines of the shared chip spec: 16px line-height twice, 12px padding, 2px border.
+      assert.ok(compact.width <= 154 && compact.height <= 48, JSON.stringify(compact));
+      assert.equal(compact.text, 'Whole field · Enter apply · Esc cancel');
+      assert.equal(await page.evaluate(() => document.body.textContent.includes('PRIVATE')), false);
+    });
+    await page.setViewport({ width: 800, height: 600, deviceScaleFactor: 1 });
+    await send('ember://overlay-at', { sequence: 1000, generation: 2, ready: true, scale: 1, width: 800, height: 600, x: 300, y: 180, originX: 0, originY: 0 });
+    await send('ember://state', { sequence: 104, runId: 4, phase: 'refining', project: 'Ember' });
+    await page.waitForSelector('.ember-orb-row svg');
+    await presented();
+    const ink = await page.$eval('.ember-orb-row svg', e => { const r = e.getBoundingClientRect(); return { x: r.x + 22, y: r.y + 2 }; });
+    assert.equal(ink.x, 300 + CURSOR_GAP.x);
+    // Rounded because the controller snaps the cursor-facing edge to a whole device pixel:
+    // centring a 15px ring lands on a half pixel, and a half-lit row of pixel art is exactly
+    // what that snap exists to prevent.
+    assert.equal(ink.y, Math.round(180 + CURSOR_GAP.y - ORB_INK.height / 2));
+    await send('ember://overlay-at', { sequence: 1001, generation: 3, ready: false, scale: 2, width: 800, height: 600, x: 300, y: 180, originX: 0, originY: 0 });
+    await presented();
+    assert.equal(await page.$eval('.ember-floating', e => getComputedStyle(e).visibility), 'hidden');
+    await send('ember://overlay-at', { sequence: 1002, generation: 4, ready: true, scale: 1, width: 800, height: 600, x: 300, y: 180, originX: 0, originY: 0 });
+    await presented();
+    assert.equal(await page.$eval('.ember-floating', e => getComputedStyle(e).visibility), 'visible');
+    await capture('orb-anchor');
+    await t.test('acceptance keeps the cursor-facing edge when review becomes a pill or orb', async () => {
+      let sequence = 110;
+      for (const scale of [1, 1.25, 1.5, 1.75, 2]) {
+        const near = (actual, expected) => assert.ok(Math.abs(actual - expected) <= .51 / scale, `${actual} is not within half a physical pixel of ${expected} at ${scale}`);
+        await page.setViewport({ width: 800, height: 600, deviceScaleFactor: scale });
+        await send('ember://overlay-at', { sequence: 2000 + sequence, generation: sequence, ready: true, scale, width: 800 * scale, height: 600 * scale, x: -1000 + 300 * scale, y: -500 + 180 * scale, originX: -1000, originY: -500 });
+        await send('ember://state', { sequence: sequence++, runId: 5, phase: 'preview', confirmationScope: 'selection' });
+        await presented();
+        let card = await bounds();
+        near(card.x, 300 + CURSOR_GAP.x);
+        // The surface is anchored by its centre, so this holds whatever its height turns out
+        // to be. Pinning the top edge only worked while every surface was one line tall.
+        near(card.centre, 180 + CURSOR_GAP.y);
+        await send('ember://overlay-at', { sequence: 2000 + sequence, generation: sequence, ready: true, scale, width: 800 * scale, height: 600 * scale, x: -1000 + 710 * scale, y: -500 + 180 * scale, originX: -1000, originY: -500 });
+        await presented();
+        card = await bounds();
+        near(card.right, 710 - CURSOR_GAP.x);
+        // This is the state emitted after native Enter acceptance and application.
+        // The browser test does not replace qualification of the native input hook.
+        await send('ember://state', { sequence: sequence++, runId: 5, phase: 'success', message: 'Sent' });
+        await presented();
+        card = await bounds();
+        near(card.right, 710 - CURSOR_GAP.x); near(card.centre, 180 + CURSOR_GAP.y);
+        await send('ember://state', { sequence: sequence++, runId: 5, phase: 'refining' });
+        await presented();
+        const ring = await page.$eval('.ember-orb-row svg', e => { const r = e.getBoundingClientRect(); return { right: r.x + 37, y: r.y + 2 }; });
+        near(ring.right, 710 - CURSOR_GAP.x);
+        near(ring.y, 180 + CURSOR_GAP.y - ORB_INK.height / 2);
+      }
+    });
+    // Does this runner actually play CSS animations? The headless macOS one does not: it fires
+    // `animationstart` and then applies nothing, and some animations never start at all, however
+    // correct the CSS is. Asked once with a throwaway keyframe, and asked properly, because
+    // "it started" was the answer that misled the first attempt: the probe reads the animated
+    // property two frames in and only says yes if the value moved. Where the answer is no, the
+    // two runtime proofs below say so instead of reporting a broken app; the wiring itself is
+    // still asserted on every platform.
+    const animates = await page.evaluate(() => new Promise((resolve) => {
+      const sheet = document.createElement('style');
+      sheet.textContent = '@keyframes ember-probe{from{clip-path:inset(50% 0 0 0)}to{clip-path:inset(0 0 0 0)}}';
+      const probe = document.createElement('div');
+      probe.style.cssText = 'position:fixed;left:-9999px;top:0;width:8px;height:8px;animation:ember-probe 600ms linear';
+      const done = (answer) => { probe.remove(); sheet.remove(); resolve(answer); };
+      probe.addEventListener('animationstart', () => requestAnimationFrame(() => requestAnimationFrame(() =>
+        done(getComputedStyle(probe).clipPath.startsWith('inset(')))));
+      document.head.append(sheet);
+      document.body.append(probe);
+      setTimeout(() => done(false), 2000);
+    }));
+    if (!animates) console.log('# this runner does not run CSS animations; asserting the wiring only');
+    await t.test('signature motion and surface morph preserve the anchor without retaining the orb', async () => {
+      await page.setViewport({ width: 800, height: 600, deviceScaleFactor: 1 });
+      await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'no-preference' }]);
+      let sequence = 300;
+      // A hint fired with nothing selected goes straight from hidden to hint, so it never gets
+      // the morph. It used to arrive fully drawn in a single frame; it now opens from the
+      // cursor-facing edge like every other surface.
+      await send('ember://overlay-at', { sequence: 4999, generation: 299, ready: true, scale: 1, width: 800, height: 600, x: 300, y: 180, originX: 0, originY: 0 });
+      await send('ember://state', { sequence: 299, runId: 6, phase: 'hidden' });
+      await presented();
+      await send('ember://state', { sequence: 300, runId: 6, phase: 'hint', message: 'Select text first' });
+      await presented();
+      assert.equal(await page.$eval('[data-enter]', e => getComputedStyle(e).animationName), 'ember-surface-open');
+      assert.equal(await page.$$eval('[data-morph-from-orb]', nodes => nodes.length), 0);
+      sequence = 301;
+      for (const x of [300, 790]) {
+        await send('ember://overlay-at', { sequence: 5000 + sequence, generation: sequence, ready: true, scale: 1, width: 800, height: 600, x, y: 180, originX: 0, originY: 0 });
+        await send('ember://state', { sequence: sequence++, runId: 6, phase: 'refining' });
+        await presented();
+        assert.equal(await page.$$eval('.ember-orb-row circle', nodes => nodes.filter(e => getComputedStyle(e).animationName === 'ember-chase').length), 8);
+        assert.equal(await page.$$eval('.ember-orb-row animate', nodes => nodes.length), 1);
+        // Read from the animation's own start event, and again two frames in. Pausing the
+        // Animation object was the older way and it needed `getAnimations()`, which one runner
+        // never populated; both things this asserts (the shape the surface starts from, and that
+        // the measured box does not move while it changes) are in computed style.
+        const morphing = page.evaluate(() => new Promise((resolve) => {
+          document.getElementById('root').addEventListener('animationstart', function started(event) {
+            if (event.animationName !== 'ember-surface-morph') return;
+            this.removeEventListener('animationstart', started);
+            const surface = event.target;
+            const floating = surface.closest('.ember-floating');
+            const at = () => {
+              const r = floating.getBoundingClientRect();
+              return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, centre: (r.top + r.bottom) / 2 };
+            };
+            const style = getComputedStyle(surface);
+            const first = {
+              // The shape it starts FROM, which is the variable the keyframe's `from` reads.
+              // `clipPath` here is already a frame or two in and interpolated, so it can say the
+              // surface is being clipped but not where the gesture began.
+              start: style.getPropertyValue('--ember-morph-start').trim(),
+              clip: style.clipPath, opacity: style.opacity, transform: style.transform,
+              side: floating.dataset.side, bounds: at(),
+            };
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve({ ...first, later: at() })));
+          });
+          setTimeout(() => resolve(null), 4000);
+        }));
+        await send('ember://state', { sequence: sequence++, runId: 6, phase: 'preview', confirmationScope: 'selection' });
+        const morph = await morphing;
+        assert.equal(await page.$$eval('.ember-orb-row', nodes => nodes.length), 0);
+        if (animates && morph) {
+          assert.equal(morph.opacity, '1');
+          assert.equal(morph.transform, 'none');
+          assert.equal(morph.side, x === 300 ? 'right' : 'left');
+          // The morph must begin where the ring is: a 15px band centred on the cursor-facing
+          // edge. Read off the variable rather than parsed out of arithmetic, and pinning the
+          // two properties that were wrong: substring-matching only '15px' passed happily while
+          // the start was the top corner, 7.5px above the ring, which is the bug this catches.
+          assert.ok(morph.start.includes('15px'), morph.start);
+          assert.ok(/^inset\(\s*calc\(50%/.test(morph.start), morph.start);
+          // Flush to the edge the cursor is on: the last inset is zero on the right, the second
+          // is zero on the left.
+          assert.ok((x === 300 ? / 0 round / : /px\) 0 calc/).test(morph.start), morph.start);
+          // And it is really clipping, not merely declared.
+          assert.ok(morph.clip.startsWith('inset('), morph.clip);
+          assert.deepEqual(morph.later, morph.bounds, 'the anchor must not move while the surface changes shape');
+        } else {
+          assert.ok(!animates, 'the morph did not run on a runner that does play animations');
+          assert.equal(await page.$eval('[data-morph-from-orb]', e => getComputedStyle(e).animationName), 'ember-surface-morph');
+        }
+        await capture(x === 300 ? 'morph-right' : 'morph-left');
+        // A new state interrupts the morph without an old layer or a late callback.
+        await send('ember://state', { sequence: sequence++, runId: 6, phase: 'success', message: 'Sent' });
+        await presented();
+        assert.equal(await page.$$eval('[data-morph-from-orb], .ember-confirmation, .ember-orb-row', nodes => nodes.length), 0);
+      }
+      // Closing is the same gesture backwards, on the surface that is already there. It arrives
+      // on the SAME phase on purpose: a different phase would remount the wrapper and the pill
+      // would be replaced rather than collapse. The box must not move while it does, for the
+      // same reason the morph must not: the cursor anchor is measured from it.
+      const settled = await bounds();
+      await send('ember://state', { sequence: sequence++, runId: 6, phase: 'success', message: 'Sent', closing: true });
+      await presented();
+      const leaving = await page.$eval('[data-leave]', e => {
+        const style = getComputedStyle(e);
+        return { name: style.animationName, transform: style.transform, fill: style.animationFillMode };
+      });
+      assert.equal(leaving.name, 'ember-surface-close');
+      assert.equal(leaving.transform, 'none');
+      // Without `forwards` the surface snaps back to full size for the frames between the end of
+      // the animation and the native hide.
+      assert.equal(leaving.fill, 'forwards');
+      assert.deepEqual(await bounds(), settled);
+      await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
+      await send('ember://state', { sequence: sequence++, runId: 6, phase: 'refining' });
+      await presented();
+      assert.equal(await page.$$eval('.ember-orb-row animate', nodes => nodes.length), 0);
+      assert.equal(await page.$$eval('.ember-orb-row circle', nodes => nodes.every(e => getComputedStyle(e).animationName === 'none')), true);
+      await send('ember://state', { sequence: sequence++, runId: 6, phase: 'preview', confirmationScope: 'selection' });
+      await presented();
+      assert.equal(await page.$eval('[data-morph-from-orb]', e => getComputedStyle(e).animationName), 'none');
+      await send('ember://state', { sequence: sequence++, runId: 6, phase: 'hidden' });
+      await presented();
+      await send('ember://state', { sequence: sequence++, runId: 6, phase: 'hint', message: 'Select text first' });
+      await presented();
+      assert.equal(await page.$eval('[data-enter]', e => getComputedStyle(e).animationName), 'none');
+      assert.equal(await page.$$eval('.ember-chip > *', nodes => nodes.every(e => getComputedStyle(e).animationName === 'none')), true);
+      await send('ember://state', { sequence: sequence++, runId: 6, phase: 'hint', message: 'Select text first', closing: true });
+      await presented();
+      assert.equal(await page.$eval('[data-leave]', e => getComputedStyle(e).animationName), 'none');
+    });
+    await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'no-preference' }]);
+    await page.goto(`${origin}/__ember-test/picker`);
     await page.waitForFunction(() => window.__pickerReady === true && document.querySelector('.ember-floating'));
     await send('ember://picker', { sequence: 20, rows: Array.from({ length: 20 }, (_, i) => ({ id: `${i}`, name: `Project ${i}`, color: '#fd8c3c', icon: 'sparkle' })), index: 19, open: true, chosen: null });
     await page.waitForSelector('[role=option][aria-selected=true]');
     assert.equal(await page.$eval('[role=option][aria-selected=true]', e => e.textContent.trim()), 'Project 19');
+    // The list opens like every other surface anchored to the cursor, and it TRAVELS: all twenty
+    // rows stay mounted and the column slides, instead of a nine-row slice being recut under a
+    // selection pill that was the only thing animating.
+    assert.equal(await page.$eval('.ember-bubble[data-enter]', e => getComputedStyle(e).animationName), 'ember-surface-open');
+    assert.equal(await page.$$eval('[role=option]', nodes => nodes.length), 20);
+    const framed = await page.evaluate(() => {
+      const row = document.querySelector('[role=option][aria-selected=true]').getBoundingClientRect();
+      const window_ = document.querySelector('[data-rows]').getBoundingClientRect();
+      return { above: row.top - window_.top, below: window_.bottom - row.bottom };
+    });
+    assert.ok(framed.above >= -1 && framed.below >= -1, JSON.stringify(framed));
     await send('ember://picker', { sequence: 19, rows: [], index: 0, open: false, chosen: null });
     await page.evaluate(() => new Promise(requestAnimationFrame));
     assert.equal(await page.$$eval('[role=option][aria-selected=true]', e => e.length), 1);
     await capture("picker");
-    await t.test("profile imports require review and discard obsolete responses", async () => {
-    await page.goto(`http://127.0.0.1:${port}/__ember-test/profile`);
-    await page.waitForSelector('textarea');
-    const clickButton = async label => page.evaluate(label => {
-      const button = Array.from(document.querySelectorAll('button')).find(button => button.textContent === label);
-      if (!button || button.disabled) throw new Error(`Button unavailable: ${label}`);
-      button.click();
-    }, label);
-    const enterProfile = async text => {
-      await page.focus('textarea');
-      await page.$eval('textarea', element => element.select());
-      await page.keyboard.type(text);
-    };
-    const resolveImport = draft => page.evaluate(draft => window.__profileFixture.resolveImport(draft), draft);
-    await clickButton('Import files...');
-    await page.waitForFunction(() => window.__profileFixture.imports === 1);
-    await enterProfile('Tone: my newer edit');
-    await resolveImport({ text: 'Tone: stale import', sources: [], warnings: ['Old import'] });
-    await page.waitForFunction(() => Array.from(document.querySelectorAll('button')).some(button => button.textContent === 'Import files...' && !button.disabled));
-    assert.equal(await page.$eval('textarea', element => element.value), 'Tone: my newer edit');
-    assert.equal(await page.evaluate(() => window.__profileFixture.saved.length), 0);
-
-    await clickButton('Import files...');
-    await page.waitForFunction(() => window.__profileFixture.imports === 2);
-    await clickButton('Use Ember default');
-    await page.waitForFunction(() => document.querySelector('textarea').value === 'Tone: default');
-    await resolveImport({ text: 'Tone: stale after reset', sources: [], warnings: [] });
-    await presented();
-    assert.equal(await page.$eval('textarea', element => element.value), 'Tone: default');
-
-    await page.waitForFunction(() => Array.from(document.querySelectorAll('button')).some(button => button.textContent === 'Import files...' && !button.disabled));
-    await clickButton('Import files...');
-    await page.waitForFunction(() => window.__profileFixture.imports === 3);
-    await resolveImport({ text: 'Tone: reviewed', sources: [{ path: '/fixture/AGENTS.md', fingerprint: 'a'.repeat(64), bytes: 80 }], warnings: ['Operational lines were excluded.'] });
-    await page.waitForFunction(() => document.body.textContent.includes('Operational lines were excluded.'));
-    assert.equal(await page.evaluate(() => window.__profileFixture.saved.length), 0);
-    await clickButton('Save reviewed profile');
-    await page.waitForFunction(() => window.__profileFixture.saved.length === 1);
-    const savedProfile = await page.evaluate(() => window.__profileFixture.saved[0]);
-    assert.equal(savedProfile.text, 'Tone: reviewed');
-    assert.equal(savedProfile.sources[0].fingerprint, 'a'.repeat(64));
-    await page.waitForFunction(() => !document.querySelector('textarea').disabled);
-    await enterProfile('é'.repeat(4097));
-    await page.waitForSelector('[role=alert]');
-    assert.equal(await page.evaluate(() => Array.from(document.querySelectorAll('button')).find(button => button.textContent === 'Save reviewed profile').disabled), true);
-    assert.equal(await page.evaluate(() => window.__profileFixture.saved.length), 1);
-    await capture('profile-review');
+    await t.test('the tray menu opens out of the icon, answers the keyboard and folds back', async () => {
+      // The first click can beat the page: the mount-time `ready` handshake has to open it.
+      await page.goto(`${origin}/__ember-test/tray?trayOpen`);
+      await page.waitForSelector('[role=menu]');
+      assert.equal(await page.$$eval('[role=menuitem]', nodes => nodes.length), 2);
+      assert.equal(await page.$eval('[role=menu]', e => e.textContent.trim()), 'EmberSettingsQuit Ember');
+      // Born from the icon below it: the house entrance, aimed at the bottom edge, and the menu
+      // node itself holds focus so the keyboard and a screen reader have a composite to follow.
+      assert.equal(await page.$eval('.ember-bubble[data-enter]', e => getComputedStyle(e).animationName), 'ember-surface-open');
+      assert.equal(await page.$eval('.ember-tray', e => e.dataset.side), 'above');
+      assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('role')), 'menu');
+      const active = () => page.$eval('[role=menu]', e => document.getElementById(e.getAttribute('aria-activedescendant'))?.querySelector('span')?.textContent.trim());
+      assert.equal(await active(), 'Settings');
+      await page.keyboard.press('ArrowDown');
+      await page.waitForFunction(() => document.querySelector('[role=menuitem][data-active]')?.textContent.startsWith('Quit'));
+      assert.equal(await active(), 'Quit Ember');
+      await page.keyboard.press('Escape');
+      await page.waitForFunction(() => window.__trayActions.at(-1) === 'close');
+      // Rust answers a close by flipping `open`; the surface folds before the window hides, and
+      // nothing chosen during the fold reaches Rust. The fold is 140ms, shorter than a slow
+      // runner's round trip, so the proof is the animation START seen from inside the page.
+      const folding = page.evaluate(() => new Promise((resolve) => {
+        document.addEventListener('animationstart', (event) => {
+          if (event.animationName === 'ember-surface-close') resolve(event.target.hasAttribute('data-leave'));
+        }, true);
+        setTimeout(() => resolve('never started'), 2000);
+      }));
+      await send('ember://tray', { open: false });
+      if (animates) assert.equal(await folding, true);
+      else assert.equal(await page.$eval('[data-leave]', e => getComputedStyle(e).animationName), 'ember-surface-close');
+      await page.keyboard.press('Enter');
+      await page.waitForFunction(() => !document.querySelector('[role=menu]'));
+      assert.equal(await page.evaluate(() => window.__trayActions.at(-1)), 'close');
+      // A taskbar at the top puts the menu below the icon: it opens out of its top edge instead.
+      // And Enter chooses once, however long it is held.
+      await send('ember://tray', { open: true, below: true });
+      await page.waitForSelector('[role=menu]');
+      assert.equal(await page.$eval('.ember-tray', e => e.dataset.side), 'below');
+      assert.ok((await page.$eval('.ember-bubble[data-enter]', e => getComputedStyle(e).getPropertyValue('--ember-open-start'))).includes('0 0 60%'));
+      await page.keyboard.press('ArrowDown');
+      await page.keyboard.press('Enter');
+      await page.keyboard.press('Enter');
+      await page.waitForFunction(() => window.__trayActions.at(-1) === 'quit');
+      assert.equal(await page.evaluate(() => window.__trayActions.filter(a => a === 'quit').length), 1);
+      await capture('tray');
     });
-    await t.test("project distillation and colour responses preserve the current draft", () => projectRegressions(page, `http://127.0.0.1:${port}`));
-    assert.deepEqual(errors, []);
-  } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)); assert.equal(dirname(directory), resolve(tmpdir())); assert.ok(basename(directory).startsWith("ember-browser-test-")); await rm(directory, { recursive: true, force: true }); }
-});
+    await t.test('static startup branding still completes its native lifecycle', async () => {
+      // Declared here rather than inherited from whatever ran before: this asserts the REDUCED
+      // branding, and it read as an intermittent failure whenever an earlier block left the
+      // preference at no-preference.
+      await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
+      await page.goto(`${origin}/__ember-test/splash?mode=startup`);
+      await page.waitForFunction(() => window.__closed === 'close_splash');
+      assert.equal(await page.$eval('img', e => getComputedStyle(e).transform), 'none');
+      assert.equal(await page.$eval('img', e => getComputedStyle(e).opacity), '1');
+    });
+}));

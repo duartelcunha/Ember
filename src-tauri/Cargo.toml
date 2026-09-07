@@ -89,7 +89,17 @@ keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
 # Auto-update assinado (so desktop: o updater nao suporta mobile).
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
+# Remembers the settings window size and position between launches (floating windows are
+# denylisted in lib.rs: floating.rs places them every frame).
+tauri-plugin-window-state = "2"
 
 [dev-dependencies]
 base64 = "0.22.1"
 minisign-verify = "0.2.5"
+
+[features]
+native-qualification = ["tauri/custom-protocol"]
+
+[[example]]
+name = "floating_native"
+required-features = ["native-qualification"]

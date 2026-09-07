@@ -9,7 +9,7 @@ use crate::state::AppState;
 use crate::{commands, hide_orb, show_settings};
 use ember_core::cycle::RunPhase;
 use ember_core::model::{Provider, RefineMode};
-use ember_core::overlay::{feedback_for, FlowOutcome};
+use ember_core::overlay::{feedback_for, FlowOutcome, OverlayFeedback};
 use ember_core::selection as seq;
 
 const STATE_EVENT: &str = "ember://state";
@@ -44,6 +44,7 @@ pub struct RunOpts {
     pub timing: CaptureTiming,
     /// Titulo da janela em foco, para contexto de projeto. `None` = desligado.
     pub project_title: Option<String>,
+    pub project_application: Option<String>,
     /// Gate de aprovacao antes de colar (Enter aplica, Esc mantem).
     pub preview: bool,
     /// Sem seleccao, seleciona o campo em foco e refina-o todo.
@@ -109,7 +110,22 @@ fn emit(
     message: Option<String>,
     provider: Option<String>,
 ) {
-    emit_payload(app, run_id, phase, message, provider, None);
+    emit_payload(app, run_id, phase, message, provider, None, false);
+}
+
+/// Reemite a fase atual marcada como a fechar. Fase, texto e provider iguais de proposito: a
+/// `key` do wrapper no DOM e a fase, portanto mudar qualquer um deles remontava a pilula e o
+/// fecho passava a ser um corte seco a seguir a outro.
+fn emit_closing(app: &AppHandle, run_id: u64, fb: &OverlayFeedback) {
+    emit_payload(
+        app,
+        run_id,
+        fb.phase,
+        fb.message.clone(),
+        fb.provider.clone(),
+        None,
+        true,
+    );
 }
 
 fn emit_payload(
@@ -118,11 +134,17 @@ fn emit_payload(
     phase: &str,
     message: Option<String>,
     provider: Option<String>,
-    preview: Option<serde_json::Value>,
+    confirmation_scope: Option<ember_core::preview::ConfirmationScope>,
+    closing: bool,
 ) {
     let state = app.state::<AppState>();
     if state.hide_gen.load(Ordering::SeqCst) != run_id {
         return;
+    }
+    if matches!(phase, "hint" | "error") {
+        if let Ok(mut feedback) = state.last_feedback.lock() {
+            *feedback = message.clone();
+        }
     }
     state
         .orb_visible
@@ -148,10 +170,12 @@ fn emit_payload(
     // semana com o contexto errado sem dar por nada.
     let accent = state.orb_accent.lock().ok().and_then(|a| a.clone());
     let project = state.orb_project.lock().ok().and_then(|a| a.clone());
+    let style = state.overlay_style.lock().ok().map(|s| *s).unwrap_or_default();
     let payload = serde_json::json!({
         "runId": run_id, "sequence": state.event_seq.fetch_add(1, Ordering::SeqCst) + 1,
-        "preview": preview, "phase": phase, "message": message, "provider": provider,
-        "accent": accent, "project": project
+        "confirmationScope": confirmation_scope, "phase": phase, "message": message, "provider": provider,
+        "accent": accent, "project": project, "closing": closing,
+        "orbSkin": style.skin.as_str(), "orbPx": style.size.px()
     });
     if let Ok(mut slot) = state.last_state.lock() {
         *slot = Some(payload.clone());
@@ -362,11 +386,11 @@ fn now_ms() -> u64 {
 /// em vez de cada chamador embutir a sua propria string e o seu proprio numero magico.
 async fn finish(app: &AppHandle, run_id: u64, outcome: FlowOutcome) {
     let fb = feedback_for(outcome);
-    emit(app, run_id, fb.phase, fb.message, fb.provider);
+    emit(app, run_id, fb.phase, fb.message.clone(), fb.provider.clone());
     // Feedback may outlive its run. Only this run's ownership is released, so late cleanup
     // cannot admit a third interaction while a newer run is capturing or applying text.
     app.state::<AppState>().complete_run(run_id);
-    hide_after(app, run_id, fb.hide_after_ms).await;
+    hide_after(app, run_id, fb).await;
 }
 
 /// Restaura o clipboard (texto ou imagem) e mostra "Cancelled" brevemente. Usado nos ramos
@@ -390,6 +414,7 @@ pub async fn run(app: AppHandle, opts: RunOpts, lease: RunLease) {
         terminal,
         timing,
         project_title,
+        project_application,
         preview,
         select_all_fallback,
         select_all_max_chars,
@@ -519,7 +544,7 @@ pub async fn run(app: AppHandle, opts: RunOpts, lease: RunLease) {
         &app,
         run_id,
         &selected,
-        project_title.as_deref(),
+        (project_title.as_deref(), project_application.as_deref()),
         mode,
         preview,
     )
@@ -575,10 +600,12 @@ pub async fn run(app: AppHandle, opts: RunOpts, lease: RunLease) {
                     finish(&app, run_id, FlowOutcome::Cancelled).await;
                     return;
                 }
-                // Um reaproveitamento PARECIDO (nao identico) diz-se: os caracteres que diferem
-                // sao precisamente a edicao que a pessoa acabou de fazer, e aplicar por cima sem
-                // avisar revertia-a em silencio.
-                emit_preview(&app, run_id, &selected, &refined);
+                // Confirmation carries scope only; document content stays in native memory.
+                emit_confirmation(
+                    &app,
+                    run_id,
+                    ember_core::preview::ConfirmationScope::from_whole_field(via_select_all),
+                );
                 crate::preview_hook::gate(app.clone(), run_id).await
             } else {
                 crate::preview_hook::Decision::Accept
@@ -717,16 +744,27 @@ async fn obtain_refined(
     app: &AppHandle,
     run_id: u64,
     selected: &str,
-    project_title: Option<&str>,
+    project_signal: (Option<&str>, Option<&str>),
     mode: RefineMode,
     preview: bool,
 ) -> Obtained {
     let state = app.state::<AppState>();
-    let prep =
-        match commands::prepare_refine(app, state.inner(), selected, project_title, mode).await {
-            Ok(p) => p,
-            Err(e) => return Obtained::Failed(e),
-        };
+    let prep = match commands::prepare_refine(
+        app,
+        state.inner(),
+        selected,
+        crate::project::Signal {
+            run_id,
+            title: project_signal.0,
+            application: project_signal.1,
+        },
+        mode,
+    )
+    .await
+    {
+        Ok(p) => p,
+        Err(e) => return Obtained::Failed(e),
+    };
     let key = prep.key.clone();
 
     // Subscrever ANTES de consultar: se a tarefa em curso guardar o resultado entre a consulta e
@@ -735,6 +773,7 @@ async fn obtain_refined(
     let mut gen = state.store_gen.subscribe();
 
     if let Some((entry, reuse)) = lookup_cache(app, &key, preview) {
+        crate::context::delivery(state.inner(), run_id, ember_core::context::Delivery::Cached);
         log::info!(
             "[run {run_id}] cache {reuse:?}: {} chars de {} ({}), sem chamada ao modelo",
             entry.refined.chars().count(),
@@ -773,6 +812,7 @@ async fn obtain_refined(
             return Obtained::Dismissed;
         }
         if let Some((entry, reuse)) = lookup_cache(app, &key, preview) {
+            crate::context::delivery(state.inner(), run_id, ember_core::context::Delivery::Cached);
             log::info!("[run {run_id}] resultado da chamada a que se juntou: reaproveitado");
             return ready_from(entry, reuse);
         }
@@ -953,104 +993,38 @@ impl Drop for InFlightGuard {
     }
 }
 
-/// Cola outra vez o ultimo refinado guardado, na janela que estiver em foco. E a saida para tudo
-/// o que interrompeu um refine: dispensado, recusado no preview, clipboard ocupado, janela
-/// trocada. Sem isto, guardar o resultado nao servia de nada.
-pub async fn reapply_last(app: AppHandle) {
-    let run_id = match app.state::<AppState>().begin_run() {
-        Ok(id) => id,
-        Err(_) => return,
-    };
-    let lease = RunLease::new(app.clone(), run_id);
-    let entry = {
-        let state = app.state::<AppState>();
-        let entry = state.store.lock().ok().and_then(|mut c| {
-            c.evict_expired(crate::now_ms());
-            c.last().cloned()
-        });
-        entry
-    };
-    crate::show_orb_at_cursor(&app);
-    let Some(entry) = entry else {
-        finish(&app, run_id, FlowOutcome::NothingToReapply).await;
-        return;
-    };
-    let cfg = crate::config::load(&app);
-    let terminal = cfg.terminal_handling && crate::foreground::is_terminal_foreground();
-    let settle_ms = cfg.paste_settle_ms;
-    let refined = entry.refined.clone();
-    log::info!(
-        "[run {run_id}] reapply: {} chars de {} (terminal={terminal})",
-        refined.chars().count(),
-        entry.provider
-    );
-    let target = crate::foreground::foreground_target();
-    let capture_lease = lease.clone();
-    let capture = tauri::async_runtime::spawn_blocking(move || {
-        let _capture_lease = capture_lease;
-        blocking_capture(
-            terminal,
-            CaptureTiming {
-                polls: 10,
-                step_ms: 10,
-                settle_ms,
-            },
-            false,
-            target,
-        )
-    })
-    .await;
-    let (selected, selection_guard) = match capture {
-        Ok(Ok(output)) => (output.captured.text, output.selection_guard),
-        Ok(Err(CaptureFailure::Unverifiable)) => {
-            finish(&app, run_id, FlowOutcome::TargetUnverifiable).await;
-            return;
-        }
-        _ => (None, None),
-    };
-    let Some(selected) = selected else {
-        finish(&app, run_id, FlowOutcome::NoSelectionFound).await;
-        return;
-    };
-    if !app
-        .state::<AppState>()
-        .advance_run(run_id, RunPhase::Reviewing)
-    {
-        finish(&app, run_id, FlowOutcome::Cancelled).await;
-        return;
-    }
-    emit_preview(&app, run_id, &selected, &refined);
-    if crate::preview_hook::gate(app.clone(), run_id).await != crate::preview_hook::Decision::Accept
-    {
-        finish(&app, run_id, FlowOutcome::Cancelled).await;
-        return;
-    }
-    if !app
-        .state::<AppState>()
-        .advance_run(run_id, RunPhase::Applying)
-    {
-        finish(&app, run_id, FlowOutcome::Cancelled).await;
-        return;
-    }
-    let target = ApplyTarget {
-        window: target,
-        selection: selection_guard,
-        lease,
-    };
-    let pasted = tauri::async_runtime::spawn_blocking(move || {
-        blocking_replace(refined, terminal, settle_ms, target, selected)
-    })
-    .await;
-    match pasted {
-        Ok(Ok(true)) => finish(&app, run_id, FlowOutcome::ReusedFromCache).await,
-        _ => finish(&app, run_id, FlowOutcome::PasteFailed).await,
-    }
-}
+/// Quanto tempo a superficie tem para se recolher no anel antes de a janela desaparecer.
+/// Espelha `ember-surface-close` em `src/styles/globals.css` (200ms), com um frame de folga
+/// para o ultimo fotograma chegar a ser apresentado. Muda um, muda o outro.
+const CLOSE_MS: u64 = 220;
 
-async fn hide_after(app: &AppHandle, run_id: u64, ms: u64) {
-    tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+async fn hide_after(app: &AppHandle, run_id: u64, fb: OverlayFeedback) {
+    // A duracao medida por tipo de mensagem, esticada ou encolhida pela preferencia, com um chao
+    // que nenhuma escolha atravessa (`ember_core::overlay::notice_ms`): preferir depressa nao
+    // pode tornar ilegivel a frase que explica porque e que o refine falhou.
+    let speed = app
+        .state::<AppState>()
+        .overlay_style
+        .lock()
+        .ok()
+        .map(|s| s.notice)
+        .unwrap_or_default();
+    let visible_ms = ember_core::overlay::notice_ms(fb.hide_after_ms, speed);
+    tokio::time::sleep(std::time::Duration::from_millis(visible_ms)).await;
     // Um ciclo novo comecou entretanto: a orb que esta no ecra e dele, nao a nossa pilula.
     // Esconde-la aqui apagava o feedback do ciclo em curso a meio.
+    let current = app.state::<AppState>().hide_gen.load(Ordering::SeqCst);
+    if !ember_core::may_hide(current, run_id) {
+        return;
+    }
+    // A superficie recolhe-se no anel de onde cresceu, e so depois a janela desaparece. Esconder
+    // no fotograma seguinte a ultima pilula era o unico sitio onde o morph era so de ida: a forma
+    // crescia do anel e depois simplesmente deixava de existir. O picker ja espera assim.
+    emit_closing(app, run_id, &fb);
+    tokio::time::sleep(std::time::Duration::from_millis(CLOSE_MS)).await;
+    // Reconfirmado: um ciclo novo pode ter arrancado durante o recolher, e a orb dele nao pode
+    // ser escondida por nos. Sem esta segunda verificacao, alargar a janela de espera alargava
+    // exatamente a janela em que isso acontece.
     let current = app.state::<AppState>().hide_gen.load(Ordering::SeqCst);
     if !ember_core::may_hide(current, run_id) {
         return;
@@ -1063,45 +1037,8 @@ async fn hide_after(app: &AppHandle, run_id: u64, ms: u64) {
     emit(app, run_id, "hidden", None, None);
 }
 
-fn emit_preview(app: &AppHandle, run_id: u64, original: &str, result: &str) {
-    emit_payload(
-        app,
-        run_id,
-        "preview",
-        None,
-        None,
-        Some(serde_json::json!({
-            "original": ember_core::preview::pages(original), "result": ember_core::preview::pages(result), "page": 0,
-        })),
-    );
-}
-
-#[cfg(windows)]
-pub(crate) fn move_preview_page(app: &AppHandle, run_id: u64, delta: i32) {
-    let state = app.state::<AppState>();
-    if state.hide_gen.load(Ordering::SeqCst) != run_id {
-        return;
-    }
-    let Ok(mut slot) = state.last_state.lock() else {
-        return;
-    };
-    let Some(payload) = slot.as_mut() else {
-        return;
-    };
-    let Some(preview) = payload.get_mut("preview").filter(|v| v.is_object()) else {
-        return;
-    };
-    let pages = ["original", "result"]
-        .iter()
-        .filter_map(|key| preview[*key].as_array())
-        .map(Vec::len)
-        .max()
-        .unwrap_or(1)
-        .max(1) as i64;
-    let page = (preview["page"].as_i64().unwrap_or(0) + delta as i64).clamp(0, pages - 1);
-    preview["page"] = page.into();
-    payload["sequence"] = (state.event_seq.fetch_add(1, Ordering::SeqCst) + 1).into();
-    let _ = app.emit_to("overlay", STATE_EVENT, payload.clone());
+fn emit_confirmation(app: &AppHandle, run_id: u64, scope: ember_core::preview::ConfirmationScope) {
+    emit_payload(app, run_id, "preview", None, None, Some(scope), false);
 }
 
 #[tauri::command]

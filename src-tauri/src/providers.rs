@@ -19,6 +19,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 /// Os modelos ja NAO vivem aqui: passaram para cada passo da cadeia (`ChainStep`), porque o mesmo
 /// provider pode ser tentado com modelos diferentes na mesma cadeia.
 pub struct ProviderCtx<'a> {
+    pub on_response: Option<&'a (dyn Fn() + Send + Sync)>,
     pub openai_base_url: &'a str,
 }
 
@@ -190,6 +191,9 @@ async fn call_once(
             Ok(Ok(r)) => r,
             _ => return Err(OutcomeClass::Uncertain),
         };
+        if let Some(received) = pctx.on_response {
+            received();
+        }
         let last = i + 1 == endpoints.len();
         if r.status().as_u16() == 404 && !last {
             log::info!("codex: {endpoint} respondeu 404; a tentar o caminho alternativo");

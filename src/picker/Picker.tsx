@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { ICON_BY_NAME } from "../components/projectIcons";
 import { useEffect, useState } from "react";
-import { AnimatePresence, LazyMotion, MotionConfig, domAnimation, m } from "motion/react";
+import { AnimatePresence, LazyMotion, MotionConfig, domAnimation, m, useReducedMotion } from "motion/react";
 import { useFloatingPosition } from "../components/useFloatingPosition";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -60,6 +60,7 @@ const HINT_H = 20;
  *  dois movimentos da mesma passagem; longo de mais e nota-se que a lista ficou opaca. */
 
 export function Picker() {
+  const still = useReducedMotion();
   const [s, setS] = useState<PickerState>({
     rows: [],
     index: 0,
@@ -95,8 +96,11 @@ export function Picker() {
     Math.max(0, s.index - (maxVisible - 1)),
     Math.max(0, total - maxVisible),
   );
-  const visible = s.rows.slice(first, first + maxVisible);
+  const shown = Math.min(total, maxVisible);
   const selected = s.rows[s.index];
+  // Um so spring para a coluna e para a pilula: sao duas metades do mesmo movimento e
+  // andavam a ritmos diferentes.
+  const slide = still ? { duration: 0 } : ({ type: "spring", stiffness: 640, damping: 42 } as const);
   // O fecho por escolha: a lista já está a fechar, mas tem de se ver O QUE foi escolhido.
   const chosen = !s.open && s.chosen !== null ? s.chosen : null;
   const accent = selected?.color ?? "#fd8c3c";
@@ -112,6 +116,10 @@ export function Picker() {
           {s.open && s.rows.length > 0 && (
             <m.div
               key="picker"
+              // A abertura e a mesma das superficies do overlay: cresce da aresta virada ao
+              // cursor, em `clip-path`. A lista aparecia com um fade proprio, o unico sitio
+              // colado ao ponteiro que nao falava a lingua da casa.
+              data-enter=""
               role="listbox"
               aria-label="Project context"
               aria-activedescendant={`project-option-${s.index}`}
@@ -120,97 +128,109 @@ export function Picker() {
                 borderRadius: 12,
                 padding: PAD,
                 width: 240,
-                willChange: "opacity, transform",
+                willChange: "opacity",
                 // O vidro sai de cena enquanto a lista anda: `backdrop-filter` re-amostra o
                 // fundo a cada frame do movimento, e é isso que se vê como ranger.
 
               }}
-              initial={{ opacity: 0, scale: 0.96, y: 4 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
+              // A entrada e do CSS (`ember-surface-open`); aqui so fica o valor de repouso
+              // de onde a saida parte.
+              initial={false}
+              animate={{ opacity: 1 }}
               exit={
-                chosen !== null
-                  ? // Escolheu: a lista confirma antes de sair, com um crescer curto. É o único
-                    // sinal que ela dá (a janela não tem foco, não há toast nenhum).
+                still ? { opacity: 0, transition: { duration: 0 } } : chosen !== null
+                  ? // Confirm the choice with colour and a short fade, within the measured bounds.
                     {
                       opacity: [1, 1, 0],
-                      scale: [1, 1.04, 1.02],
                       transition: { duration: 0.34, times: [0, 0.45, 1] },
                     }
-                  : { opacity: 0, scale: 0.97, transition: { duration: 0.1 } }
+                  : { opacity: 0, transition: { duration: 0.1 } }
               }
-              transition={{ type: "spring", stiffness: 600, damping: 34 }}
+              transition={still ? { duration: 0 } : { type: "spring", stiffness: 600, damping: 34 }}
             >
               {/* O flash da cor do projeto escolhido, por cima da lista inteira. Existe para a
                   escolha ter cor: é a mesma que passa a pintar o orb a seguir. */}
-              {chosen !== null && (
+              {chosen !== null && !still && (
                 <m.div
                   className="pointer-events-none absolute inset-0"
                   style={{ borderRadius: 12, background: s.rows[chosen]?.color ?? accent }}
-                  initial={{ opacity: 0 }}
+                  initial={still ? false : { opacity: 0 }}
                   animate={{ opacity: [0, 0.32, 0] }}
                   transition={{ duration: 0.34, times: [0, 0.4, 1] }}
                 />
               )}
-              {visible.map((row, vi) => {
-                const i = first + vi;
-                const isSel = i === s.index;
-                const isChosen = chosen === i;
-                const I = row.id === null && !row.automatic ? Prohibit : (ICON_BY_NAME[row.icon] ?? Sparkle);
-                return (
-                  <m.div
-                    key={row.automatic ? "__auto__" : row.id ?? "__none__"}
-                    id={`project-option-${i}`}
-                    role="option"
-                    aria-selected={isSel}
-                    className="relative flex items-center gap-2 px-2"
-                    style={{ height: ITEM_H }}
-                    animate={
-                      chosen === null
-                        ? { opacity: 1, scale: 1 }
-                        : // As outras saem de cena para a escolhida ficar sozinha.
-                          { opacity: isChosen ? 1 : 0, scale: isChosen ? 1.06 : 1 }
-                    }
-                    transition={{ duration: 0.16 }}
-                  >
-                    {/* A pilula deslizante: um so elemento partilhado por `layoutId`, que o motion
-                        desliza com spring entre linhas em vez de a fazer saltar. E o detalhe que
-                        faz o menu parecer nativo, e custa um div. */}
-                    {isSel && (
+              {/* A lista inteira vive numa coluna que desliza dentro de uma janela recortada, e
+                  a pilula de seleccao e um elemento dessa mesma coluna. Antes so a pilula andava:
+                  as linhas eram uma fatia recortada por indice, por isso, ao passar do fim da
+                  janela visivel, saltavam uma altura de linha por baixo de uma pilula que
+                  deslizava com spring. Era o sitio da app onde a incoerencia mais se via, porque
+                  as duas coisas estao encostadas uma a outra. */}
+              <div data-rows="" className="relative overflow-hidden" style={{ height: shown * ITEM_H }}>
+                <m.div className="relative" initial={false} animate={{ y: -first * ITEM_H }} transition={slide}>
+                  {/* A pilula ja nao vive dentro da linha escolhida: uma pilula por linha, trocada
+                      a cada movimento, obrigava a projecao de layout do motion a medir contra um
+                      antecessor que tambem estava a andar. Aqui a posicao e o indice vezes a
+                      altura da linha, e as duas transformacoes somam-se em vez de disputarem. */}
+                  {selected && (
+                    <m.div
+                      className="absolute inset-x-0 rounded-md"
+                      style={{
+                        height: ITEM_H - 6,
+                        background: `color-mix(in srgb, ${accent} 26%, transparent)`,
+                        border: `1px solid color-mix(in srgb, ${accent} 55%, transparent)`,
+                      }}
+                      initial={false}
+                      animate={{ y: s.index * ITEM_H + 3 }}
+                      transition={slide}
+                    />
+                  )}
+                  {s.rows.map((row, i) => {
+                    const isSel = i === s.index;
+                    const isChosen = chosen === i;
+                    const I = row.id === null && !row.automatic ? Prohibit : (ICON_BY_NAME[row.icon] ?? Sparkle);
+                    return (
                       <m.div
-                        layoutId="picker-sel"
-                        className="absolute inset-x-0 inset-y-[3px] rounded-md"
-                        style={{
-                          background: `color-mix(in srgb, ${accent} 26%, transparent)`,
-                          border: `1px solid color-mix(in srgb, ${accent} 55%, transparent)`,
-                        }}
-                        transition={{ type: "spring", stiffness: 640, damping: 42 }}
-                      />
-                    )}
-                    <span
-                      className="relative z-10 flex h-5 w-5 shrink-0 items-center justify-center rounded-full"
-                      style={
-                        row.id === null
-                          ? { color: "var(--color-fg-muted)" }
-                          : { background: row.color, color: "#1a0e03" }
-                      }
-                    >
-                      <I size={12} weight="bold" />
-                    </span>
-                    <span
-                      className={`relative z-10 truncate text-xs ${
-                        row.id === null ? "text-fg-muted" : "text-fg"
-                      } ${isSel ? "font-semibold" : ""}`}
-                    >
-                      {row.name}
-                    </span>
-                  </m.div>
-                );
-              })}
+                        key={row.automatic ? "__auto__" : row.id ?? "__none__"}
+                        id={`project-option-${i}`}
+                        role="option"
+                        aria-selected={isSel}
+                        className="relative flex items-center gap-2 px-2"
+                        style={{ height: ITEM_H }}
+                        animate={
+                          chosen === null
+                            ? { opacity: 1 }
+                            : // As outras saem de cena para a escolhida ficar sozinha.
+                              { opacity: isChosen ? 1 : 0 }
+                        }
+                        transition={{ duration: still ? 0 : 0.16 }}
+                      >
+                        <span
+                          className="relative z-10 flex h-5 w-5 shrink-0 items-center justify-center rounded-full"
+                          style={
+                            row.id === null
+                              ? { color: "var(--color-fg-muted)" }
+                              : { background: row.color, color: "#1a0e03" }
+                          }
+                        >
+                          <I size={12} weight="bold" />
+                        </span>
+                        <span
+                          className={`relative z-10 truncate text-xs ${
+                            row.id === null ? "text-fg-muted" : "text-fg"
+                          } ${isSel ? "font-semibold" : ""}`}
+                        >
+                          {row.name}
+                        </span>
+                      </m.div>
+                    );
+                  })}
+                </m.div>
+              </div>
               <m.div
                 className="flex items-center justify-center gap-1 text-[10px] text-fg-muted"
                 style={{ height: HINT_H }}
                 animate={{ opacity: chosen === null ? 1 : 0 }}
-                transition={{ duration: 0.12 }}
+                transition={{ duration: still ? 0 : 0.12 }}
               >
                 <span>scroll or</span>
                 <kbd className="rounded border border-white/15 px-1">↑</kbd>

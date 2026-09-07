@@ -215,7 +215,7 @@ pub async fn open_picker(app: AppHandle) {
             outcome = crate::preview_hook::PickerOutcome::Cancelled;
         }
         let cfg = crate::config::load(&app);
-        crate::commands::refresh_orb_accent(&state, &cfg);
+        crate::commands::refresh_orb_state(&state, &cfg);
         log::debug!("picker: selection transaction completed");
     }
 

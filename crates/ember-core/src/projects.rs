@@ -359,6 +359,8 @@ pub fn icon_or_default(name: &str) -> &str {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Project {
+    #[serde(default)]
+    pub context: crate::context::ProjectContext,
     /// Estavel e gerado uma vez. NUNCA derivado do nome nem do caminho: mudar o nome de um
     /// projeto, ou mover a pasta, nao pode desligar o projeto que esta ativo.
     pub id: String,
@@ -702,6 +704,7 @@ Testes antes do codigo.",
 
     fn proj(id: &str, name: &str) -> Project {
         Project {
+            context: Default::default(),
             id: id.into(),
             name: name.into(),
             accent: 0,

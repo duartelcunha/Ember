@@ -6,10 +6,28 @@ use std::path::Path;
 
 // English defaults avoid biasing multilingual input toward the profile's language.
 // Spaces before continuation escapes keep adjacent words separated in the prompt.
+//
+// This is preference data, injected verbatim inside [EMBER_GLOBAL_PROFILE] on every refine for
+// everyone who never edits their profile. It says how writing should READ. It must not repeat
+// the core rules (intent, language, spelling, invented facts, placeholders, code, output-only)
+// nor the mode rules (what structure to add or keep): the test below pins that, and pins that
+// no line trips `context::needs_review`, which would show a review warning on a fresh install.
+// The "Writing preferences:" first line matches what `profile_import::compose` produces, so a
+// default and an imported profile look like the same kind of thing in the Profile tab.
 pub const DEFAULT_PROFILE: &str = "\
-Write with clarity and precision. Professional but direct tone. Short sentences. Avoid \
-unnecessary jargon and filler. When context is missing, keep the request generic or use \
-placeholders instead of inventing details or asking the user for clarification.";
+Writing preferences:\n\
+Tone: direct, warm, plainly professional. Confident without hedging, polite without ceremony.\n\
+Sentences: short, concrete, active, one idea each. Cut filler and repetition; every sentence \
+must earn its place.\n\
+Words: plain over fancy, specific over vague. Prefer use, help, show to utilize, facilitate, \
+showcase. No jargon the reader would not use.\n\
+Structure: the point first, then the detail. Short paragraphs. Lists only when the items are \
+truly parallel.\n\
+Voice: keep the author's register, person and contractions. Sharpen it; do not replace it.\n\
+Never read as machine-written: no em dashes (comma, colon or full stop instead), no delve, \
+leverage, robust, seamless, no \"I hope this finds you well\", no flattering or apologetic \
+openers, no reflexive triads, no rhetorical questions, no closing line that restates the text, \
+no emoji, no added exclamation marks.";
 
 pub struct Resolved {
     pub profile: Profile,
@@ -179,6 +197,38 @@ pub(crate) fn read_bounded(path: &Path, limit: u64) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_default_profile_is_short_clean_and_does_not_repeat_the_core_rules() {
+        assert!(DEFAULT_PROFILE.len() <= 900, "{} bytes", DEFAULT_PROFILE.len());
+        // commands.rs runs this on the resolved profile; a hit would warn on every fresh install.
+        assert!(!ember_core::context::needs_review(DEFAULT_PROFILE));
+        assert!(!DEFAULT_PROFILE.contains('\u{2014}') && !DEFAULT_PROFILE.contains('\u{2013}'));
+        // Preference data only: nothing the base or mode rules already say.
+        for dup in [
+            "SAME language",
+            "ONLY the refined",
+            "Do not invent",
+            "placeholder",
+            "Polish only",
+            "Scale aggressiveness",
+            "to the maximum",
+            "EMBER_",
+        ] {
+            assert!(!DEFAULT_PROFILE.contains(dup), "duplicates a core rule: {dup}");
+        }
+        // A missing space before a continuation escape fuses two words; prompt.rs had that bug.
+        let fused = DEFAULT_PROFILE.split_whitespace().any(|w| {
+            w.bytes()
+                .zip(w.bytes().skip(1))
+                .any(|(a, b)| a.is_ascii_lowercase() && b.is_ascii_uppercase())
+        });
+        assert!(!fused, "a continuation escape fused two words");
+        // Redaction and delimiter escaping leave it untouched.
+        assert_eq!(ember_core::prompt::profile_data(DEFAULT_PROFILE), DEFAULT_PROFILE);
+        assert!(DEFAULT_PROFILE.starts_with("Writing preferences:"));
+    }
+
     #[test]
     fn absent_override_uses_defaults_without_reading_an_ambient_file() {
         let source = Source {

@@ -164,7 +164,9 @@ impl RefineCache {
         self.entries.truncate(self.cap);
     }
 
-    /// A entrada mais recente, seja de que texto for. E o que o "reaplicar o ultimo" cola.
+    /// A entrada mais recente, seja de que texto for. Sem leitor em producao desde que o
+    /// "reaplicar o ultimo" saiu do tray; fica porque e a prova, nos testes, de que a ordem LRU
+    /// e a que `insert` promete.
     pub fn last(&self) -> Option<&CacheEntry> {
         self.entries.first().map(|(_, e)| e)
     }

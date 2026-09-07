@@ -2,11 +2,20 @@
 
 export type OverlayPhase = "hidden" | "refining" | "success" | "error" | "hint" | "preview";
 
+export type ConfirmationScope = "selection" | "field";
+
 export interface OverlayState {
   phase: OverlayPhase;
   runId?: number;
   sequence?: number;
-  preview?: { original: string[]; result: string[]; page: number } | null;
+  confirmationScope?: ConfirmationScope | null;
+  /**
+   * A fase atual esta a fechar: a superficie recolhe-se no anel de onde cresceu e so depois a
+   * janela desaparece. Vem no mesmo evento e com a mesma fase de proposito. Mudar a fase aqui
+   * remontava a pilula (a `key` do wrapper e a fase), e o fecho passava a ser um corte seco
+   * seguido de outro.
+   */
+  closing?: boolean;
   /** Mensagem (fase error/hint). */
   message?: string | null;
   /** Provider usado ("Gemini"/"OpenAI-compatible"), fase success. */
@@ -26,7 +35,20 @@ export interface OverlayState {
    * volta a ser adivinhar, que era exatamente o problema que a cor veio resolver.
    */
   project?: string | null;
+  /**
+   * A pele e o pixel de desenho da marca, escolhidos nas definicoes.
+   *
+   * Viajam no estado, ao lado da cor do projeto, porque sao a mesma especie de coisa: algo que a
+   * janela precisa de saber para se desenhar e que nao consegue descobrir sozinha. Ausentes, a
+   * marca desenha-se como sempre se desenhou, o que e o que acontece a um evento antigo que
+   * ficou em cache antes de esta opcao existir.
+   */
+  orbSkin?: OrbSkin | null;
+  orbPx?: number | null;
 }
+
+/** As tres peles da marca. Todas desenham dentro da mesma caixa de tinta. */
+export type OrbSkin = "ember" | "pulse" | "ring";
 
 /** Evento emitido pelo nucleo Rust com o novo estado do overlay. */
 export const STATE_EVENT = "ember://state";

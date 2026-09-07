@@ -1,10 +1,11 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Minus, X } from "@phosphor-icons/react";
 
-/** Barra de titulo custom (a janela e decorations:false). Seamless: sem faixa preta nativa, so
- *  uma faixa arrastavel que se funde com o painel, com minimizar e fechar (sem maximizar). O
- *  fechar ESCONDE para a tray (o handler nativo em Rust trata do CloseRequested; aqui chamamos
- *  hide diretamente, que e o mesmo efeito e evita o flicker de disparar o evento). */
+/** Custom title bar (the window is decorations:false). Seamless: no native black strip, just a
+ *  draggable band that blends into the panel, with minimise and close (no maximise). Close goes
+ *  through the native CloseRequested handler in Rust, which saves the window geometry and then
+ *  hides to the tray. It used to call hide() directly; that skipped the handler, so the size and
+ *  position the user had just chosen were never persisted. */
 export function TitleBar() {
   const win = getCurrentWindow();
   return (
@@ -21,7 +22,7 @@ export function TitleBar() {
         <Minus size={15} weight="bold" />
       </button>
       <button
-        onClick={() => win.hide()}
+        onClick={() => win.close()}
         aria-label="Close"
         className="group grid h-7 w-9 place-items-center rounded-md text-fg-muted transition-colors hover:bg-[color:var(--color-error)] hover:text-white"
       >

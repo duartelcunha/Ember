@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "tray",
+  "description": "The tray menu window. One command, with a verb: nothing here can read settings, credentials or files.",
+  "windows": [
+    "tray"
+  ],
+  "permissions": [
+    "core:default",
+    "allow-tray-action"
+  ]
+}

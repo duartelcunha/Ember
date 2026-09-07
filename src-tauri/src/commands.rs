@@ -1,6 +1,8 @@
 //! Comandos Tauri das settings + o helper de refinamento usado pelo loop nativo.
 
-use ember_core::model::{ProfileSource, Provider, RefineMode};
+use ember_core::model::{
+    Length, NoticeSpeed, OrbSize, OrbSkin, OverlayStyle, ProfileSource, Provider, RefineMode,
+};
 use ember_core::prompt::build_llm_request;
 use ember_core::retry::RetryConfig;
 use serde::Serialize;
@@ -23,6 +25,10 @@ pub struct SettingsDto {
     hotkey: String,
     hotkey_polish: String,
     hotkey_turbo: String,
+    hotkey_reply: String,
+    orb_skin: &'static str,
+    orb_size: &'static str,
+    notice_speed: &'static str,
     hotkey_picker: String,
     autostart: bool,
     has_gemini_key: bool,
@@ -43,6 +49,8 @@ pub struct SettingsDto {
     profile_text: String,
     profile_limit_bytes: usize,
     profile_source: &'static str,
+    profile_review: Option<String>,
+    profile_archive: Option<String>,
     profile_path: Option<String>,
     profile_sources: Vec<ember_core::profile_import::Source>,
     legacy_auto_profile_disabled: bool,
@@ -102,6 +110,7 @@ fn mode_str(m: RefineMode) -> &'static str {
         RefineMode::Adaptive => "adaptive",
         RefineMode::Polish => "polish",
         RefineMode::Turbo => "turbo",
+        RefineMode::Reply => "reply",
     }
 }
 
@@ -110,7 +119,25 @@ fn parse_mode(s: &str) -> Result<RefineMode, String> {
         "adaptive" => Ok(RefineMode::Adaptive),
         "polish" => Ok(RefineMode::Polish),
         "turbo" => Ok(RefineMode::Turbo),
+        "reply" => Ok(RefineMode::Reply),
         _ => Err(format!("invalid mode: {s}")),
+    }
+}
+
+fn length_str(l: Length) -> &'static str {
+    match l {
+        Length::Shorter => "shorter",
+        Length::Same => "same",
+        Length::Longer => "longer",
+    }
+}
+
+fn parse_length(s: &str) -> Result<Length, String> {
+    match s {
+        "shorter" => Ok(Length::Shorter),
+        "same" => Ok(Length::Same),
+        "longer" => Ok(Length::Longer),
+        _ => Err(format!("invalid length: {s}")),
     }
 }
 
@@ -143,6 +170,10 @@ fn build_dto(_app: &AppHandle, cfg: &config::Config) -> SettingsDto {
         hotkey: cfg.hotkey.clone(),
         hotkey_polish: cfg.hotkey_polish.clone(),
         hotkey_turbo: cfg.hotkey_turbo.clone(),
+        hotkey_reply: cfg.hotkey_reply.clone(),
+        orb_skin: cfg.overlay_style.skin.as_str(),
+        orb_size: cfg.overlay_style.size.as_str(),
+        notice_speed: cfg.overlay_style.notice.as_str(),
         hotkey_picker: cfg.hotkey_picker.clone(),
         autostart: cfg.autostart,
         has_gemini_key: has_g,
@@ -159,6 +190,9 @@ fn build_dto(_app: &AppHandle, cfg: &config::Config) -> SettingsDto {
         // identificador opaco nao responde a isso. Sem nome, a UI diz so que ha sessao.
         chatgpt_account: session.and_then(|s| s.account_label),
         key_store_error,
+        profile_archive: cfg.profile_archive.clone(),
+        profile_review: ember_core::context::needs_review(&resolved.profile.text)
+            .then(|| ember_core::context::safe_manual(&resolved.profile.text)),
         profile_text: resolved.profile.text,
         profile_limit_bytes: ember_core::prompt::MAX_PROFILE_BYTES,
         profile_source: source_str(resolved.profile.source),
@@ -322,6 +356,7 @@ fn other_slots(cfg: &config::Config, editing: &str) -> Vec<(String, String)> {
         ("main", &cfg.hotkey),
         ("polish", &cfg.hotkey_polish),
         ("turbo", &cfg.hotkey_turbo),
+        ("reply", &cfg.hotkey_reply),
         ("picker", &cfg.hotkey_picker),
     ]
     .into_iter()
@@ -344,7 +379,10 @@ pub fn check_hotkey(
     hotkey: String,
 ) -> Result<ember_core::hotkey::HotkeyVerdict, String> {
     use ember_core::hotkey::{self, HotkeyVerdict};
-    if !matches!(which.as_str(), "main" | "polish" | "turbo" | "picker") {
+    if !matches!(
+        which.as_str(),
+        "main" | "polish" | "turbo" | "reply" | "picker"
+    ) {
         return Err(format!("invalid hotkey slot: {which}"));
     }
     let cfg = config::load(&app);
@@ -364,6 +402,7 @@ pub fn check_hotkey(
     let current = match which.as_str() {
         "main" => &cfg.hotkey,
         "polish" => &cfg.hotkey_polish,
+        "reply" => &cfg.hotkey_reply,
         "picker" => &cfg.hotkey_picker,
         _ => &cfg.hotkey_turbo,
     };
@@ -433,6 +472,7 @@ pub fn set_hotkey(app: AppHandle, which: String, hotkey: String) -> Result<(), S
         "main" => cfg.hotkey = hotkey,
         "polish" => cfg.hotkey_polish = hotkey,
         "turbo" => cfg.hotkey_turbo = hotkey,
+        "reply" => cfg.hotkey_reply = hotkey,
         "picker" => cfg.hotkey_picker = hotkey,
         _ => return Err(format!("invalid hotkey slot: {which}")),
     }
@@ -481,6 +521,52 @@ pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
 pub fn set_mode(app: AppHandle, mode: String) -> Result<(), String> {
     let mut cfg = config::load(&app);
     cfg.mode = parse_mode(&mode)?;
+    config::save(&app, &cfg).map_err(|e| e.to_string())
+}
+
+/// Pele, tamanho e ritmo num comando so, e nao tres.
+///
+/// Viajam juntos para o estado em memoria e para a janela do overlay, e a UI tem sempre os tres
+/// a mao. Tres comandos separados seriam tres entradas na lista de permissoes e tres caminhos
+/// por onde a cache do `refresh_orb_state` podia ficar desatualizada.
+#[tauri::command]
+pub fn set_overlay_style(
+    app: AppHandle,
+    skin: String,
+    size: String,
+    notice: String,
+) -> Result<(), String> {
+    let style = OverlayStyle {
+        skin: match skin.as_str() {
+            "ember" => OrbSkin::Ember,
+            "pulse" => OrbSkin::Pulse,
+            "ring" => OrbSkin::Ring,
+            other => return Err(format!("invalid orb skin: {other}")),
+        },
+        size: match size.as_str() {
+            "small" => OrbSize::Small,
+            "normal" => OrbSize::Normal,
+            "large" => OrbSize::Large,
+            other => return Err(format!("invalid orb size: {other}")),
+        },
+        notice: match notice.as_str() {
+            "quick" => NoticeSpeed::Quick,
+            "normal" => NoticeSpeed::Normal,
+            "relaxed" => NoticeSpeed::Relaxed,
+            other => return Err(format!("invalid notice speed: {other}")),
+        },
+    };
+    let mut cfg = config::load(&app);
+    cfg.overlay_style = style;
+    config::save(&app, &cfg).map_err(|e| e.to_string())?;
+    refresh_orb_state(&app.state::<AppState>(), &cfg);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_length(app: AppHandle, length: String) -> Result<(), String> {
+    let mut cfg = config::load(&app);
+    cfg.length = parse_length(&length)?;
     config::save(&app, &cfg).map_err(|e| e.to_string())
 }
 
@@ -629,6 +715,7 @@ pub async fn validate_key(
             return Ok(ember_core::health::KeyCheck::Invalid);
         };
         let pctx = providers::ProviderCtx {
+            on_response: None,
             openai_base_url: &cfg.openai_base_url,
         };
         providers::validate(&state.http, p, &key, &pctx).await
@@ -861,6 +948,14 @@ pub fn set_profile(
     let sources = sources.unwrap_or_default();
     ember_core::profile_import::validate_reviewed(text, &sources).map_err(str::to_owned)?;
     let mut cfg = config::load(&app);
+    if cfg.profile_archive.is_none()
+        && cfg
+            .profile_override
+            .as_deref()
+            .is_some_and(ember_core::context::needs_review)
+    {
+        cfg.profile_archive = cfg.profile_override.clone();
+    }
     cfg.profile_override = (!text.is_empty()).then(|| text.to_owned());
     cfg.profile_sources = if text.is_empty() { Vec::new() } else { sources };
     cfg.ignore_claude_md = true;
@@ -881,6 +976,14 @@ pub fn reload_profile() -> Result<SettingsDto, String> {
 #[tauri::command]
 pub fn reset_profile(app: AppHandle) -> Result<SettingsDto, String> {
     let mut cfg = config::load(&app);
+    if cfg.profile_archive.is_none()
+        && cfg
+            .profile_override
+            .as_deref()
+            .is_some_and(ember_core::context::needs_review)
+    {
+        cfg.profile_archive = cfg.profile_override.clone();
+    }
     cfg.profile_override = None;
     cfg.profile_sources.clear();
     cfg.ignore_claude_md = true;
@@ -931,6 +1034,7 @@ pub fn save_project(
     if project.name.trim().is_empty() {
         return Err("give the project a name first".into());
     }
+    crate::context::authorize(&mut project)?;
     match cfg.projects.iter_mut().find(|p| p.id == project.id) {
         Some(existente) => *existente = project,
         None => {
@@ -1045,12 +1149,13 @@ pub async fn distill_project(
         .map_err(|e| e.message())
 }
 
-/// Recalcula a cor do orb a partir do projeto ativo e guarda-a no estado.
+/// Recalcula tudo o que a brasa precisa de saber e guarda-o no estado: a cor e o nome do projeto
+/// ativo, e a pele, o tamanho e o ritmo escolhidos.
 ///
-/// Chamada no arranque e sempre que a lista ou o projeto ativo mudam. Um sitio so a decidir isto:
-/// se cada comando calculasse a sua, um deles acabaria por esquecer e o orb ficava com a cor do
-/// projeto anterior sem ninguem perceber porque.
-pub(crate) fn refresh_orb_accent(state: &AppState, cfg: &config::Config) {
+/// Chamada no arranque e sempre que a config muda. Um sitio so a decidir isto: se cada comando
+/// calculasse o seu, um deles acabaria por esquecer e a brasa ficava com a cor do projeto
+/// anterior, ou com a pele antiga ate ao reinicio, sem ninguem perceber porque.
+pub(crate) fn refresh_orb_state(state: &AppState, cfg: &config::Config) {
     let ativo = ember_core::projects::active(&cfg.projects, cfg.active_project.as_deref());
     let cor = ativo.map(|p| {
         // `resolve_accent` decides between the project's custom colour and its palette index; it
@@ -1064,6 +1169,9 @@ pub(crate) fn refresh_orb_accent(state: &AppState, cfg: &config::Config) {
     if let Ok(mut slot) = state.orb_project.lock() {
         *slot = ativo.map(|p| p.name.clone());
     }
+    if let Ok(mut slot) = state.overlay_style.lock() {
+        *slot = cfg.overlay_style;
+    }
 }
 
 /// Grava e volta a LER do disco antes de devolver o estado.
@@ -1074,7 +1182,7 @@ pub(crate) fn refresh_orb_accent(state: &AppState, cfg: &config::Config) {
 fn save_and_reload(app: &AppHandle, cfg: config::Config) -> Result<SettingsDto, String> {
     config::save(app, &cfg).map_err(|e| e.to_string())?;
     let fresca = config::load(app);
-    refresh_orb_accent(&app.state::<AppState>(), &fresca);
+    refresh_orb_state(&app.state::<AppState>(), &fresca);
     Ok(build_dto(app, &fresca))
 }
 
@@ -1242,6 +1350,13 @@ pub fn reveal_log_dir(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn get_diagnostics(app: AppHandle) -> String {
     let cfg = config::load(&app);
+    let feedback = app
+        .state::<AppState>()
+        .last_feedback
+        .lock()
+        .ok()
+        .and_then(|value| value.clone())
+        .unwrap_or_else(|| "None".into());
     let version = app.package_info().version.to_string();
     let log_path = crate::logging::log_file_path(&app)
         .map(|p| p.display().to_string())
@@ -1273,12 +1388,16 @@ pub fn get_diagnostics(app: AppHandle) -> String {
         }
     };
     format!(
-        "Ember {version}\nOS: {} ({})\nGemini key: {}\nFallback key: {}\nMode: {}  Thinking: {} ({})  Debug: {}\nFallback endpoint: {}\nHotkeys: main={} polish={} turbo={}\nProcess: {elevation}\nSelect-all fallback: {}{legacy}\nLog: {log_path}",
+        "Ember {version}\nLast feedback: {feedback}\nOS: {} ({})\nGemini key: {}\nFallback key: {}\nMode: {} ({})  Orb: {} {} notices {}\nThinking: {} ({})  Debug: {}\nFallback endpoint: {}\nHotkeys: main={} polish={} turbo={} reply={} picker={}\nProcess: {elevation}\nSelect-all fallback: {}{legacy}\nLog: {log_path}",
         std::env::consts::OS,
         std::env::consts::ARCH,
         key_state(Provider::Gemini, &cfg.openai_base_url),
         key_state(Provider::OpenAi, &cfg.openai_base_url),
         mode_str(cfg.mode),
+        length_str(cfg.length),
+        cfg.overlay_style.skin.as_str(),
+        cfg.overlay_style.size.as_str(),
+        cfg.overlay_style.notice.as_str(),
         cfg.thinking_enabled,
         cfg.thinking_level,
         cfg.debug_mode,
@@ -1286,6 +1405,8 @@ pub fn get_diagnostics(app: AppHandle) -> String {
         slot(&cfg.hotkey),
         slot(&cfg.hotkey_polish),
         slot(&cfg.hotkey_turbo),
+        slot(&cfg.hotkey_reply),
+        slot(&cfg.hotkey_picker),
         if !cfg.select_all_fallback {
             "off".to_string()
         } else if crate::foreground::select_all_is_safe_here() {
@@ -1458,6 +1579,7 @@ pub(crate) fn friendly_error(e: &ember_core::CoreError) -> String {
 /// se poder perguntar "isto ja foi refinado?" e para o ciclo seguinte saber que ha uma chamada
 /// igual a decorrer e se poder juntar a ela em vez de pagar a mesma coisa outra vez.
 pub(crate) struct PreparedRefine {
+    pub run_id: u64,
     pub chain: Vec<providers::ChainStep>,
     pub req: ember_core::LlmRequest,
     pub prepared: ember_core::Prepared,
@@ -1478,7 +1600,7 @@ pub(crate) async fn prepare_refine(
     app: &AppHandle,
     state: &AppState,
     input: &str,
-    foreground_title: Option<&str>,
+    signal: crate::project::Signal<'_>,
     // O modo deste refine vem do atalho que disparou (ver `flow::RunOpts`), nao de `cfg.mode`:
     // com atalhos por modo, a config so decide o que faz o atalho principal.
     mode: RefineMode,
@@ -1492,7 +1614,9 @@ pub(crate) async fn prepare_refine(
         .prompt_generation
         .load(std::sync::atomic::Ordering::SeqCst);
     let cfg = config::load(app);
-    let resolved = profile::resolve(cfg.profile_override.as_deref(), &cfg.profile_sources);
+    let mut resolved = profile::resolve(cfg.profile_override.as_deref(), &cfg.profile_sources);
+    let profile_review_needed = ember_core::context::needs_review(&resolved.profile.text);
+    resolved.profile.text = ember_core::context::safe_manual(&resolved.profile.text);
     let active = ember_core::projects::active(&cfg.projects, cfg.active_project.as_deref());
     let selection = if active.is_some() {
         "pinned"
@@ -1501,15 +1625,56 @@ pub(crate) async fn prepare_refine(
     } else {
         "none"
     };
+    let home = app.path().home_dir().ok();
+    let detected = signal
+        .title
+        .and_then(|title| crate::project::resolve(title, home.as_deref(), &cfg.projects));
+    let application = signal
+        .application
+        .and_then(|app| std::path::Path::new(app).canonicalize().ok())
+        .map(|path| path.to_string_lossy().to_string());
+    let associated = application
+        .as_deref()
+        .and_then(|app| ember_core::context::associated(&cfg.projects, app));
     let selected = active.or_else(|| {
-        if !cfg.project_context {
-            return None;
-        }
-        let home = app.path().home_dir().ok();
-        foreground_title
-            .and_then(|title| crate::project::resolve(title, home.as_deref(), &cfg.projects))
+        cfg.project_context
+            .then_some(detected.or(associated))
+            .flatten()
     });
-    let project_block = selected.and_then(|p| ember_core::project::frame_project(&p.brief));
+    let scope = signal
+        .title
+        .and_then(|title| ember_core::project::extract_path(title, home.as_deref()))
+        .and_then(|path| path.canonicalize().ok());
+    let (mut sources, mut source_status) = selected
+        .map(|project| {
+            crate::context::resolved_sources(
+                state,
+                project,
+                scope.as_deref().filter(|path| {
+                    project
+                        .folder
+                        .as_deref()
+                        .is_some_and(|root| path.starts_with(root))
+                }),
+            )
+        })
+        .unwrap_or_else(|| (Vec::new(), "No project sources".into()));
+    let project_text = selected.map(|p| {
+        let composed = ember_core::context::compose(
+            &sources.iter().map(|s| s.text.clone()).collect::<Vec<_>>(),
+            &p.brief,
+        );
+        if composed.chars().count() > ember_core::project::MAX_PROJECT_CHARS {
+            source_status = "Context exceeds the limit; only saved preferences are used".into();
+            sources.clear();
+            ember_core::context::safe_manual(&p.brief)
+        } else {
+            composed
+        }
+    });
+    let project_block = project_text
+        .as_deref()
+        .and_then(ember_core::project::frame_project);
     // Label only the context actually sent. Empty briefs do not impersonate active context.
     let used = selected.filter(|_| project_block.is_some());
     if let Ok(mut label) = state.orb_project.lock() {
@@ -1526,26 +1691,51 @@ pub(crate) async fn prepare_refine(
             .clone()
             .unwrap_or_else(|| "User edited brief".into())
     });
+    use sha2::{Digest, Sha256};
+    let context_fingerprint = format!(
+        "{:x}",
+        Sha256::digest(
+            serde_json::to_vec(&(&resolved.profile.text, &project_block)).unwrap_or_default()
+        )
+    );
     if let Ok(mut snapshot) = state.resolved_context.lock() {
-        *snapshot = Some(serde_json::json!({
-            "selection": selection,
-            "project": used.map(|p| &p.name),
-            "projectId": used.map(|p| &p.id),
-            "sourceChanged": used.and_then(crate::projects::source_changed),
-            "projectSource": project_source,
-            "profileSource": resolved.path,
-            "profileSources": cfg.profile_sources,
-            "profile": ember_core::prompt::profile_data(&resolved.profile.text),
-            "profileTruncated": resolved.profile.text.len() > ember_core::prompt::MAX_PROFILE_BYTES,
-            "profileRedacted": ember_core::project::redact_secrets(&resolved.profile.text) != resolved.profile.text.lines().collect::<Vec<_>>().join("\n"),
-            "profileInvalid": resolved.profile.text.trim().len() > ember_core::prompt::MAX_PROFILE_BYTES,
-            "projectContext": project_block,
-            "reason": if selected.is_some() && used.is_none() { "Selected project has an empty brief" }
-                else if selection == "none" { "Project context explicitly disabled" }
-                else if used.is_none() { "No registered project matches the foreground path" }
-                else { "Reviewed brief from a registered project" },
-            "configRevision": cfg.revision,
-        }));
+        let next = ember_core::context::Snapshot {
+            run_id: signal.run_id,
+            selection: selection.into(),
+            project: used.map(|p| p.name.clone()),
+            project_id: used.map(|p| p.id.clone()),
+            reason: if selected.is_some() && used.is_none() {
+                "Project has no usable context"
+            } else if selection == "none" {
+                "Project context disabled"
+            } else if used.is_none() {
+                "No unambiguous project match"
+            } else if active.is_some() {
+                "Pinned project"
+            } else if detected.is_some() {
+                "Project path"
+            } else {
+                "Application association"
+            }
+            .into(),
+            profile: ember_core::prompt::profile_data(&resolved.profile.text),
+            profile_sources: cfg.profile_sources.clone(),
+            profile_review_needed,
+            profile_invalid: resolved.profile.text.trim().len()
+                > ember_core::prompt::MAX_PROFILE_BYTES,
+            project_context: project_block.clone(),
+            sources,
+            source_status,
+            fingerprint: context_fingerprint.clone(),
+            config_revision: cfg.revision,
+            delivery: ember_core::context::Delivery::Prepared,
+        };
+        if snapshot
+            .as_ref()
+            .is_none_or(|current| current.run_id <= signal.run_id)
+        {
+            *snapshot = Some(next);
+        }
     }
     if resolved.profile.text.trim().len() > ember_core::prompt::MAX_PROFILE_BYTES {
         return Err(ember_core::CoreError::InvalidProfile);
@@ -1559,6 +1749,7 @@ pub(crate) async fn prepare_refine(
         &resolved.profile,
         &cfg.gemini_model,
         mode,
+        cfg.length,
         cfg.thinking_enabled,
         &cfg.thinking_level,
         project_block.as_deref(),
@@ -1575,7 +1766,6 @@ pub(crate) async fn prepare_refine(
     // MODELO e as definicoes de thinking nao vivem la dentro, e sem eles trocar de modelo servia
     // o refine do modelo anterior, que e precisamente a experiencia que faria alguem desistir da
     // funcionalidade. O projeto ativo tambem entra, porque muda o contexto sem mudar o texto.
-    use sha2::{Digest, Sha256};
     let steps: Vec<_> = chain
         .iter()
         .map(|step| {
@@ -1591,13 +1781,14 @@ pub(crate) async fn prepare_refine(
             "credential": format!("{:x}", Sha256::digest(identity.as_bytes())) })
         })
         .collect();
-    let fingerprint_src = serde_json::json!({ "engine": 3, "endpoint": cfg.openai_base_url,
+    let fingerprint_src = serde_json::json!({ "engine": 4, "context": context_fingerprint, "endpoint": cfg.openai_base_url,
         "auth": cfg.openai_auth, "request": req, "steps": steps })
     .to_string();
     let mut key =
         ember_core::CacheKey::new(input, mode, used.map(|p| p.id.as_str()), &fingerprint_src);
     key.context_digest = Some(format!("{:x}", Sha256::digest(fingerprint_src.as_bytes())));
     Ok(PreparedRefine {
+        run_id: signal.run_id,
         chain,
         req,
         prepared,
@@ -1625,9 +1816,13 @@ pub(crate) async fn execute_refine(
     // O preview de streaming fica desligado de proposito: o texto cru pre-engine nao e o que se
     // cola. `on_delta` mantem-se como no-op para a assinatura de `refine`.
     let on_delta = |_delta: &str| {};
+    let received =
+        || crate::context::delivery(state, p.run_id, ember_core::context::Delivery::Sent);
     let pctx = providers::ProviderCtx {
         openai_base_url: &p.openai_base_url,
+        on_response: Some(&received),
     };
+    crate::context::delivery(state, p.run_id, ember_core::context::Delivery::Sending);
     let started = std::time::Instant::now();
     let resp = providers::refine(
         &state.http,
@@ -1638,7 +1833,10 @@ pub(crate) async fn execute_refine(
         on_attempt,
         &on_delta,
     )
-    .await?;
+    .await
+    .inspect_err(|_| {
+        crate::context::delivery(state, p.run_id, ember_core::context::Delivery::Unconfirmed);
+    })?;
     // Registo opt-in do que foi mesmo enviado e do que voltou. Depois do `?` de proposito: so se
     // guarda o que chegou a ser uma resposta. Um refine que falhou ja deixa rasto no log normal,
     // e o que aqui interessa estudar e o par prompt/resposta, nao a ausencia dele.
@@ -1717,6 +1915,8 @@ mod tests {
 }
 
 #[tauri::command]
-pub fn get_context_snapshot(state: tauri::State<'_, AppState>) -> Option<serde_json::Value> {
+pub fn get_context_snapshot(
+    state: tauri::State<'_, AppState>,
+) -> Option<ember_core::context::Snapshot> {
     state.resolved_context.lock().ok().and_then(|s| s.clone())
 }

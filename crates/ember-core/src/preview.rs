@@ -1,6 +1,36 @@
 //! Stable comparison pages preserve every grapheme and bound visible lines.
 use unicode_segmentation::UnicodeSegmentation;
 
+/// Only the capture scope crosses into the floating confirmation UI.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ConfirmationScope {
+    Selection,
+    Field,
+}
+
+impl ConfirmationScope {
+    pub fn from_whole_field(whole_field: bool) -> Self {
+        if whole_field {
+            Self::Field
+        } else {
+            Self::Selection
+        }
+    }
+}
+
+#[test]
+fn confirmation_serializes_scope_without_document_content() {
+    assert_eq!(
+        serde_json::to_value(ConfirmationScope::from_whole_field(false)).unwrap(),
+        "selection"
+    );
+    assert_eq!(
+        serde_json::to_value(ConfirmationScope::from_whole_field(true)).unwrap(),
+        "field"
+    );
+}
+
 pub fn pages(text: &str) -> Vec<String> {
     let mut result = Vec::new();
     let mut page = String::new();
@@ -15,11 +45,11 @@ pub fn pages(text: &str) -> Vec<String> {
         } else {
             2
         };
-        if !newline && columns + width > 32 {
+        if !newline && columns + width > 24 {
             lines += 1;
             columns = 0;
         }
-        if lines > 8 {
+        if lines > 2 {
             result.push(std::mem::take(&mut page));
             lines = 1;
             columns = 0;
@@ -58,8 +88,8 @@ mod tests {
     #[test]
     fn newline_heavy_pages_remain_readable() {
         let chunks = pages(&"\n".repeat(400));
-        assert_eq!(chunks.len(), 50);
-        assert!(chunks.iter().all(|s| s.matches('\n').count() <= 8));
+        assert_eq!(chunks.len(), 200);
+        assert!(chunks.iter().all(|s| s.matches('\n').count() <= 2));
     }
     #[test]
     fn empty_comparison_still_has_one_page() {
