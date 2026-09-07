@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.0-rc.2](https://github.com/duartelcunha/Ember/compare/v1.1.0-rc.2...v1.2.0-rc.2) (2026-09-07)
+
+
+### Features
+
+* a settings window that fits, a tray menu, and a Reply mode ([b07252f](https://github.com/duartelcunha/Ember/commit/b07252fc6bc0f773e2b7df5777e44d5034191041))
+
+
+### Bug Fixes
+
+* **about:** label the release notes with the version that will ship them ([#36](https://github.com/duartelcunha/Ember/issues/36)) ([d177403](https://github.com/duartelcunha/Ember/commit/d1774030d13aae474d1c620246c6c0f1e401dca7))
+
 ## 1.1.0-rc.1 (2026-09-05)
 
 Windows evaluation candidate, excluded from stable automatic updates.
