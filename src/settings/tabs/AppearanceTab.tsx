@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
-import { LazyMotion, domAnimation, useReducedMotion } from "motion/react";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { FieldRow, Section } from "../Section";
+import { LazyMotion, domAnimation, motion, useReducedMotion } from "motion/react";
+import { Section } from "../Section";
 import { Orb } from "../../overlay/Orb";
 import { Pill } from "../../overlay/Pill";
 import { Preview } from "../../overlay/Preview";
@@ -19,6 +18,63 @@ const STAGE_COPY: Record<StageState, { label: string; caption: string }> = {
 
 /** The loop skips `problem`: a demo that keeps flashing an error reads as a real error. */
 const CYCLE: StageState[] = ["refining", "confirm", "applied"];
+
+const THEMES: { value: Theme; label: string }[] = [
+  { value: "dark", label: "Dark" },
+  { value: "cream", label: "Cream" },
+];
+
+/** Quick and settled: the thumb explains a move, it does not perform. */
+const THUMB_SPRING = { type: "spring" as const, stiffness: 520, damping: 40 };
+
+/**
+ * The theme switch, as a two-way segment in the card header. Native radios in hidden inputs,
+ * the same pattern as the stage's state pills and the Refining comparison, so arrow keys, Space
+ * and a single tab stop come for free. The moving thumb is a shared-layout element; it carries
+ * the surface colour, not the accent, because this is a setting and not a call to action.
+ */
+function ThemeSegment({ value, onChange }: { value: Theme; onChange: (theme: Theme) => void }) {
+  const still = useReducedMotion();
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Theme"
+      className="inline-flex shrink-0 rounded-full border border-[color:var(--border-subtle)] bg-surface-2 p-0.5"
+    >
+      {THEMES.map((t) => {
+        const on = value === t.value;
+        return (
+          <label
+            key={t.value}
+            className={cn(
+              "relative cursor-pointer rounded-full px-3 py-1 text-[11px] font-medium transition-colors",
+              "focus-within:outline-none focus-within:ring-2 focus-within:ring-[color:var(--border-accent)]",
+              on ? "text-fg" : "text-fg-muted hover:text-fg",
+            )}
+          >
+            {on && (
+              <motion.span
+                layoutId="theme-thumb"
+                transition={still ? { duration: 0 } : THUMB_SPRING}
+                aria-hidden="true"
+                className="absolute inset-0 rounded-full border border-[color:var(--border-default)] bg-surface-3 shadow-[inset_0_1px_0_var(--sheen)]"
+              />
+            )}
+            <input
+              type="radio"
+              name="settings-theme"
+              value={t.value}
+              className="sr-only"
+              checked={on}
+              onChange={() => onChange(t.value)}
+            />
+            <span className="relative z-10">{t.label}</span>
+          </label>
+        );
+      })}
+    </div>
+  );
+}
 
 /**
  * A stand-in for someone else's application: light on one side, dark on the other, with faint
@@ -45,7 +101,10 @@ function StageBackdrop() {
 }
 
 /**
- * What Ember puts next to your cursor, in this window.
+ * What Ember puts next to your cursor, in this window, with the theme control in its header.
+ *
+ * One card, not two: the theme is a single control, and a card of its own left a void under it
+ * beside the tall preview. In the header it sits where a setting for this panel belongs.
  *
  * These are the real components from `src/overlay`, not a drawing of them, so the preview cannot
  * drift from the thing it depicts. Two mechanics make that work:
@@ -58,7 +117,7 @@ function StageBackdrop() {
  *   overlay window never gets a `data-theme` attribute, so it is always dark; a preview that went
  *   cream in a cream window would be showing something the user will never see.
  */
-function OverlayStage() {
+function OverlayStage({ theme, onTheme }: { theme: Theme; onTheme: (theme: Theme) => void }) {
   const still = useReducedMotion();
   const [state, setState] = useState<StageState>("refining");
   // A pick is intent and it beats the demo: the loop stops for good, rather than moving the
@@ -78,15 +137,18 @@ function OverlayStage() {
   return (
     <Section
       title="Next to your cursor"
+      titleId="theme-heading"
       elastic
-      hint="The overlay stays dark on purpose: it has to read over any app, light or dark."
+      hint="Always dark, so it reads over any app."
       detail={
         <p>
-          This is the real overlay, rendered here. It never follows the theme above, because it
-          appears over whatever application you were typing in, and a surface that changed with
-          your settings would be unreadable over half of them.
+          The theme control changes only this window. The overlay never follows it: it appears over
+          whatever application you were typing in, and a surface that changed with your settings
+          would be unreadable over half of them. Motion everywhere follows the system's
+          reduced-motion setting.
         </p>
       }
+      action={<ThemeSegment value={theme} onChange={onTheme} />}
     >
       <LazyMotion features={domAnimation}>
         <div
@@ -136,36 +198,8 @@ function OverlayStage() {
 
 export function AppearanceTab({ s, setTheme }: { s: EmberSettings; setTheme: (theme: Theme) => void }) {
   return (
-    <div data-tab-body="" className="settings-two-col min-h-0 flex-1">
-      <div data-settings-col="" className="settings-col">
-        <Section
-          title="Theme"
-          titleId="theme-heading"
-          hint="For this window only."
-          detail={
-            <p>
-              Only the settings window changes. Motion everywhere follows the system's
-              reduced-motion setting.
-            </p>
-          }
-        >
-          <FieldRow label="Theme" htmlFor="theme-select">
-            <Select value={s.theme} onValueChange={(v) => setTheme(v as Theme)}>
-              <SelectTrigger id="theme-select" aria-labelledby="theme-heading" className="flex-1">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="dark">Dark (glassy, orange accent)</SelectItem>
-                <SelectItem value="cream">Cream (warm light)</SelectItem>
-              </SelectContent>
-            </Select>
-          </FieldRow>
-        </Section>
-      </div>
-
-      <div data-settings-col="" className="settings-col settings-col-grow settings-col-wide">
-        <OverlayStage />
-      </div>
+    <div data-tab-body="" className="settings-col min-h-0 flex-1">
+      <OverlayStage theme={s.theme} onTheme={setTheme} />
     </div>
   );
 }

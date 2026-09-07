@@ -113,4 +113,14 @@ test("settings surfaces fit the window and keep their behaviour", (t) => withBro
     await t.test("each tab shows the data it already had", () => tabContentRegressions(page, `${origin}`));
     await t.test("the overlay preview keeps its own palette and its orb is visible", () => appearanceRegressions(page, `${origin}`, capture));
     await t.test("every tab fits the window at three sizes in both themes", () => settingsLayoutRegressions(page, `${origin}`, capture));
+    // About with Developer tools on is the one state the matrix above does not reach: stacked at
+    // 720x856 it holds the hero, the switch, the diagnostics and the report, all at once.
+    await t.test("About with developer tools on still fits", async () => {
+      await settingsLayoutRegressions(page, `${origin}`, async name => capture(`${name}-devtools`), ['about'], async () => {
+        await (await page.$$('[role=tab]'))[6].click();
+        await page.waitForSelector('#debug-mode');
+        await page.click('#debug-mode');
+        await page.waitForSelector('[aria-label="Diagnostics report"]');
+      });
+    });
 }));

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check } from "@phosphor-icons/react";
+import { Blueprint, Check, MagicWand, PencilSimple, type Icon } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -83,14 +83,15 @@ function ModeComparison({ mode, onPick }: { mode: RefineMode; onPick: (mode: Ref
       <legend className="sr-only">Refine mode</legend>
       {(Object.keys(MODE_COPY) as RefineMode[]).map((m) => {
         const on = mode === m;
+        const ModeIcon = MODE_ICON[m];
         return (
           <label
             key={m}
             className={cn(
-              "mode-option flex min-w-0 cursor-pointer flex-col rounded-sm border p-3 transition-colors",
+              "mode-option flex min-w-0 cursor-pointer flex-col rounded-sm border p-3 transition-[color,background-color,border-color,box-shadow]",
               "focus-within:outline-none focus-within:ring-2 focus-within:ring-[color:var(--border-accent)]",
               on
-                ? "border-[color:var(--border-accent)] bg-surface-3"
+                ? "border-[color:var(--border-accent)] bg-surface-3 shadow-[0_0_0_1px_var(--border-accent),0_8px_24px_-12px_var(--color-accent)]"
                 : "border-[color:var(--border-subtle)] bg-surface-2 hover:border-[color:var(--border-default)]",
             )}
           >
@@ -104,16 +105,31 @@ function ModeComparison({ mode, onPick }: { mode: RefineMode; onPick: (mode: Ref
               aria-describedby={`mode-${m}-out`}
             />
             <span className="flex items-center gap-1.5">
+              <ModeIcon
+                size={14}
+                weight={on ? "fill" : "regular"}
+                aria-hidden="true"
+                className={cn("shrink-0", on ? "text-accent" : "text-fg-muted")}
+              />
               <span className="text-sm font-semibold text-fg">{MODE_COPY[m].title}</span>
               {on && <Check size={12} weight="bold" aria-hidden="true" className="shrink-0 text-accent" />}
             </span>
             <span className="mt-0.5 text-xs text-fg-muted [display:var(--mode-hint,block)]">{MODE_COPY[m].hint}</span>
+            {/* The output on its own surface with a rule on the left: what comes OUT of the mode,
+                visibly distinct from the label that names it. */}
             <span
-              id={`mode-${m}-out`}
-              className="mode-example mt-2 whitespace-pre-line font-mono text-xs text-fg"
-              title={MODE_EXAMPLE.outputs[m]}
+              className={cn(
+                "mode-output mt-2 block min-h-0 flex-1 rounded-xs border-l-2 bg-bg/70 px-2.5 py-2",
+                on ? "border-l-[color:var(--color-accent)]" : "border-l-[color:var(--border-strong)]",
+              )}
             >
-              {MODE_EXAMPLE.outputs[m]}
+              <span
+                id={`mode-${m}-out`}
+                className="mode-example whitespace-pre-line font-mono text-xs text-fg"
+                title={MODE_EXAMPLE.outputs[m]}
+              >
+                {MODE_EXAMPLE.outputs[m]}
+              </span>
             </span>
           </label>
         );
@@ -121,6 +137,9 @@ function ModeComparison({ mode, onPick }: { mode: RefineMode; onPick: (mode: Ref
     </fieldset>
   );
 }
+
+/** One glyph per mode, so the three panels read at a glance before the titles do. */
+const MODE_ICON: Record<RefineMode, Icon> = { polish: PencilSimple, adaptive: MagicWand, turbo: Blueprint };
 
 const THINKING_LEVELS: ThinkingLevel[] = ["minimal", "low", "medium", "high"];
 
@@ -259,11 +278,13 @@ export function RefiningTab({
           </p>
         }
       >
-        <p className="shrink-0 text-xs text-fg-muted [display:var(--mode-input,block)]">
-          You typed{" "}
-          <span className="font-mono line-through decoration-1">{MODE_EXAMPLE.input}</span>
-        </p>
-        <ModeComparison mode={s.mode} onPick={setMode} />
+        <div className="flex min-h-0 flex-1 flex-col gap-1.5">
+          <p className="shrink-0 text-xs text-fg-muted [display:var(--mode-input,block)]">
+            <span className="mr-1.5 font-medium text-fg">Before</span>
+            <span className="font-mono line-through decoration-1">{MODE_EXAMPLE.input}</span>
+          </p>
+          <ModeComparison mode={s.mode} onPick={setMode} />
+        </div>
       </Section>
       </div>
 

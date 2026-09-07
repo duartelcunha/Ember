@@ -305,7 +305,7 @@ export function Settings({ initialTab = "providers" }: { initialTab?: string } =
                 </TabsContent>
 
                 <TabsContent value="about">
-                  <AboutTab s={s} />
+                  <AboutTab s={s} setS={setS} />
                 </TabsContent>
               </Tabs>
             )}

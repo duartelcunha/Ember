@@ -151,11 +151,16 @@ export async function tabContentRegressions(page, origin) {
   // Shortcut: all four in one list, each saying what it does.
   await open(2, '[aria-label="Global shortcut shortcut"]');
   assert.equal(await page.$$eval('[aria-label$=" shortcut"]', e => e.length), 4);
+  assert.ok(!(await page.$$eval('button', b => b.some(x => x.textContent.trim() === 'Set shortcut'))),
+    'the box is the only capture affordance; a Set shortcut button duplicates it');
   assert.ok(await page.evaluate(() =>
     document.querySelector('[data-tab-body]').innerText.includes('Fixes spelling and wording')));
 
-  // About: the report is on screen, read-only, with Copy beside it.
-  await open(6, '[aria-label="Diagnostics report"]');
+  // About: the product first; the report only after Developer tools is switched on.
+  await open(6, 'img[alt="Ember"]');
+  assert.equal(await page.$('[aria-label="Diagnostics report"]'), null, 'diagnostics must stay behind the gate');
+  await page.click('#debug-mode');
+  await page.waitForSelector('[aria-label="Diagnostics report"]');
   const report = await page.$eval('[aria-label="Diagnostics report"]', e => ({
     tag: e.tagName, pane: e.hasAttribute('data-scroll-pane'), text: e.textContent, editable: e.isContentEditable,
   }));
@@ -182,9 +187,11 @@ export const LAYOUT_SIZES = [[720, 520], [720, 856], [1000, 640], [1400, 900]];
  * centres passes with equal gaps, and the original defect (everything pinned to the top with
  * 40% empty beneath) fails.
  */
-export async function settingsLayoutRegressions(page, origin, capture, tabs = Object.keys(TAB_LABELS)) {
+export async function settingsLayoutRegressions(page, origin, capture, tabs = Object.keys(TAB_LABELS), prepare = null) {
   await page.goto(`${origin}/__ember-test/settings`);
   await page.waitForSelector('[role=tab]');
+  // A hook to put the page in a state the default matrix does not reach (a toggle switched on).
+  if (prepare) await prepare();
   const settle = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   for (const [width, height] of LAYOUT_SIZES) {
     await page.setViewport({ width, height, deviceScaleFactor: 1 });
