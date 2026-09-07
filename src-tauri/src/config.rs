@@ -478,12 +478,19 @@ mod tests {
     use super::*;
 
     fn test_folder() -> PathBuf {
+        // A counter as well as the clock: tests run in parallel, and on macOS the clock only
+        // resolves to microseconds, so two of them got the same name and the second `create_dir`
+        // failed with AlreadyExists.
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let suffix = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let folder =
-            std::env::temp_dir().join(format!("ember-config-test-{}-{suffix}", std::process::id()));
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let folder = std::env::temp_dir().join(format!(
+            "ember-config-test-{}-{suffix}-{n}",
+            std::process::id()
+        ));
         fs::create_dir(&folder).unwrap();
         folder
     }

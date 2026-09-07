@@ -93,7 +93,13 @@ export async function projectRegressions(page, origin, capture = async () => {})
   await page.mouse.up();
   await page.waitForFunction(() => window.__projectsFixture.wheel.length >= 2);
   await click('Done');
+  // Closing the colour popover hands focus back to its trigger in a setTimeout(0) (Radix
+  // FocusScope). Focusing the name field before that fires kept the first letter and sent the
+  // rest to the swatch, which is what "A" instead of "Alpha revised" on a slow runner was.
+  await page.waitForFunction(() => !document.querySelector('.ember-popover'));
+  await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 0)));
   await page.focus('#name-a');
+  await page.waitForFunction(() => document.activeElement?.id === 'name-a');
   await page.$eval('#name-a', e => e.select());
   await page.keyboard.type('Alpha revised');
   await page.evaluate(() => {
