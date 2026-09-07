@@ -156,13 +156,27 @@ test("UI components preserve geometry and asynchronous ownership", (t) => withBr
           document.getElementById('root').addEventListener('animationstart', function started(event) {
             if (event.animationName !== 'ember-surface-morph') return;
             this.removeEventListener('animationstart', started);
-            window.__morphAnimation = event.target.getAnimations().find(a => a.animationName === event.animationName);
-            window.__morphAnimation.pause();
-            window.__morphAnimation.currentTime = 0;
+            // `getAnimations()` can still be empty on the frame `animationstart` fires: the event
+            // says the animation began, not that the engine has published its object yet, and on
+            // one runner it did not. Retried for a few frames, then rewound, so the scrub below
+            // reads the same first frame either way. Without this the find returned undefined and
+            // the page threw on `.pause()`, which the harness reported as a broken morph.
+            const target = event.target;
+            const grab = (tries) => {
+              const found = target.getAnimations().find(a => a.animationName === event.animationName);
+              if (found) {
+                found.pause();
+                found.currentTime = 0;
+                window.__morphAnimation = found;
+              } else if (tries > 0) {
+                requestAnimationFrame(() => grab(tries - 1));
+              }
+            };
+            grab(20);
           });
         });
         await send('ember://state', { sequence: sequence++, runId: 6, phase: 'preview', confirmationScope: 'selection' });
-        await page.waitForFunction(() => window.__morphAnimation !== null);
+        await page.waitForFunction(() => window.__morphAnimation);
         const start = await bounds();
         assert.equal(await page.$$eval('.ember-orb-row', nodes => nodes.length), 0);
         const morph = await page.$eval('[data-morph-from-orb]', e => {
