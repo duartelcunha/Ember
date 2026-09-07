@@ -134,7 +134,7 @@ function DiagnosticsSection({ savePrompts, keepResults }: { savePrompts: boolean
               <DialogDescription>The last 200 lines of Ember.log. Refresh reads the file again.</DialogDescription>
             </DialogHeader>
             <DialogBody>
-              <pre className="whitespace-pre-wrap rounded-md border border-[color:var(--border-subtle)] bg-surface-2 p-3 font-mono text-[11px] leading-relaxed text-fg-muted">
+              <pre className="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-fg-muted">
                 {logs || (loadingLogs ? "Loading…" : "No log lines yet.")}
               </pre>
             </DialogBody>
@@ -203,7 +203,7 @@ function DiagnosticsReport() {
         data-scroll-pane=""
         tabIndex={0}
         aria-label="Diagnostics report"
-        className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words rounded-md border border-[color:var(--border-subtle)] bg-surface-2 p-3 font-mono text-[11px] leading-relaxed text-fg-muted"
+        className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words border-t border-[color:var(--border-subtle)] pt-3 font-mono text-[11px] leading-relaxed text-fg-muted"
       >
         {report ?? (loading ? "Reading…" : "Diagnostics are unavailable right now.")}
       </pre>
