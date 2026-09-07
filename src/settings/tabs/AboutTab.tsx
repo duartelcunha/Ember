@@ -74,7 +74,7 @@ export function AboutTab({
           {/* The band takes the slack, which is the whole point: the mark centred in a tall
               warm field reads as composition, while the same emptiness sitting between the notes
               and the version line reads as a page that ran out of things to say. */}
-          <div className="relative flex min-h-[9rem] flex-1 flex-col items-center justify-center gap-3 overflow-hidden rounded-md border border-[color:var(--border-subtle)] bg-surface-2 p-5 text-center">
+          <div className="relative flex min-h-[9rem] flex-1 flex-col items-center justify-center gap-3 overflow-hidden p-5 text-center">
             <span
               aria-hidden="true"
               className="pointer-events-none absolute inset-0"

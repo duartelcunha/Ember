@@ -496,20 +496,27 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--border-accent);
 .settings-col { display: flex; flex-direction: column; gap: var(--card-gap, 1rem); min-height: 0; }
 
 
-/* The three modes, compared. Capped rather than stretched: at 1400x900 three panels each
-   holding one line of text in 240px of air reads worse than three tidy ones centred. One column
-   when the container is narrow, because three 95px panels are not a comparison. */
-.mode-compare { display: grid; grid-template-columns: repeat(var(--mode-cols, 3), minmax(0, 1fr));
-                grid-auto-rows: minmax(0, 1fr); gap: 0.5rem; align-content: start;
-                max-block-size: 22rem; overflow: auto; }
-/* Narrow, the three panels stack, and three cards do not fit above five switches: measured 56px
-   over at 720x856. They become rows instead, name on the left and the example beside it on one
-   line, which is a third of the height and still a comparison you read top to bottom. The
-   per-mode hint goes: with the example right there, it is the more redundant of the two. */
+/* The modes, as one list drawn on the card's own surface.
+ *
+ * They used to be bordered panels, each holding a bordered block for its example, inside a
+ * bordered card: three frames deep before a single word. That reads as packaging, not as a
+ * comparison, and boxes inside boxes are out of this UI for good. What separates one mode from
+ * the next is a hairline; what marks the chosen one is a rule down its left edge and its title
+ * taking the accent. Nothing here draws a container.
+ *
+ * The rows share the height rather than a cap sitting under a void: four roomy rows at 1400x900
+ * read as a generous list, where four tidy ones over 300px of nothing read as a page that
+ * stopped early. */
+.mode-compare { display: flex; flex-direction: column; min-height: 0; overflow: auto; }
+.mode-option { display: grid; grid-template-columns: minmax(0, 7.5rem) minmax(0, 1fr);
+               align-items: center; gap: 0 1rem; flex: 1 1 auto; min-height: 2.75rem;
+               max-block-size: 7rem; padding: 0.5rem 0.75rem; }
+.mode-option + .mode-option { border-top: 1px solid var(--border-subtle); }
+/* Narrow, the per-mode hint goes: with the example on the same row, it is the more redundant of
+   the two, and the name plus the output is still a comparison you read top to bottom. */
 @container settings (max-width: 48rem) {
-  .settings-density { --mode-cols: 1; --example-lines: 1; --mode-hint: none; --mode-input: none; }
-  .mode-option { flex-direction: row; align-items: center; gap: 0.5rem; }
-  .mode-option > .mode-output { margin-top: 0; flex: 1 1 auto; min-width: 0; padding-block: 0.25rem; }
+  .settings-density { --example-lines: 1; --mode-hint: none; --mode-input: none; }
+  .mode-option { grid-template-columns: minmax(0, 6rem) minmax(0, 1fr); padding-inline: 0.5rem; }
 }
 /* The example clamps instead of scrolling: a comparison you have to scroll is not a comparison.
    The full text stays in the title attribute. */

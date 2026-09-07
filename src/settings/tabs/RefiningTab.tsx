@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { ArrowBendUpLeft, Blueprint, Check, MagicWand, PencilSimple, type Icon } from "@phosphor-icons/react";
 import { motion, useReducedMotion } from "motion/react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -17,7 +16,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Section, SwitchRow } from "../Section";
-import { ipc, type ComparedMode, type EmberSettings, type Length, type RefineMode, type ThinkingLevel } from "@/lib/ipc";
+import { ipc, type EmberSettings, type Length, type RefineMode, type ThinkingLevel } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 
 // Os nomes visiveis sao VERBOS, nao adjetivos. "Adaptive", "Polish" e "Turbo" descreviam o
@@ -46,16 +45,19 @@ export const MODE_COPY: Record<RefineMode, { title: string; hint: string }> = {
   },
 };
 
-/** Os modos que a grelha compara. O Reply fica de fora de proposito: a comparacao existe para
- *  ver o MESMO texto tratado de tres maneiras, e o Reply parte de outro tipo de input e produz
- *  outra coisa. Postos lado a lado, os quatro deixavam de comparar coisa nenhuma. */
-const COMPARED: ComparedMode[] = ["polish", "adaptive", "turbo"];
+/** A ordem em que se leem: os tres que reescrevem o teu texto, por intensidade crescente, e
+ *  depois o que faz outra coisa com ele. */
+const MODES: RefineMode[] = ["polish", "adaptive", "turbo", "reply"];
 
-/** O mesmo texto refinado pelos tres modos, para a diferenca se VER em vez de se ler. E um
- *  exemplo escrito a mao, nao um refine ao vivo, e a UI diz isso: mostrar uma amostra colada
- *  como se fosse output real seria uma promessa que nao podemos garantir. */
+/** O mesmo texto tratado por cada modo, para a diferenca se VER em vez de se ler. Sao exemplos
+ *  escritos a mao, nao refines ao vivo, e a UI diz isso: mostrar uma amostra colada como se fosse
+ *  output real seria uma promessa que nao podemos garantir.
+ *
+ *  O Reply parte de outro input (uma mensagem recebida, nao um rascunho teu), por isso a linha
+ *  dele traz o seu proprio "antes"; os outros tres partilham o que esta no cabecalho. */
 const MODE_EXAMPLE = {
   input: "set up meeting tomorrow with john",
+  replyInput: "Hi, can you confirm the meeting time and who is joining?",
   outputs: {
     polish: "Set up a meeting tomorrow with John.",
     adaptive: "Schedule a meeting with John for tomorrow and confirm the time with him.",
@@ -66,51 +68,46 @@ const MODE_EXAMPLE = {
         "When: Tomorrow, time to be confirmed.",
         "Output: Ready-to-send invite and note.",
       ].join("\n"),
-  } as Record<ComparedMode, string>,
-};
-
-/** O Reply tem exemplo proprio porque parte de outro input: uma mensagem recebida, nao um
- *  rascunho do utilizador. Mostra as duas coisas que o distinguem: escreve na primeira pessoa,
- *  e deixa um marcador visivel onde a mensagem nao deu o facto, em vez de o inventar. */
-const REPLY_EXAMPLE = {
-  input: "Hi, can you confirm the meeting time and who is joining?",
-  output: "The meeting is at {time}. {names} are joining. Tell me if that does not work for you.",
+    reply: "The meeting is at {time}. {names} are joining. Tell me if that does not work for you.",
+  } as Record<RefineMode, string>,
 };
 
 /**
- * The three modes, compared, choosable.
+ * The four modes, as one list you read down.
  *
- * All three example outputs have always existed in this file and only the selected one was ever
- * on screen, behind a dropdown. Side by side the choice becomes visual: you pick by reading what
- * comes out, not by reading a label and then a sample of it.
+ * They were bordered panels, each holding a bordered block for its example, inside a bordered
+ * card: three frames deep before a word of text. Boxes inside boxes are out of this UI. A row per
+ * mode on the card's own surface, hairlines between them, and the chosen one marked by a rule
+ * down its left edge and by its title taking the accent.
+ *
+ * Reply is a row like the others now. Side by side it could not be, because it starts from a
+ * different kind of input and the columns would have been comparing nothing; read down a list,
+ * each row carries its own before and after and the question of what a mode does is answered
+ * the same way for all four.
  *
  * Native radios in visually hidden inputs, not a role=radio grid: arrow-key roving focus, Space,
  * wrapping and a single tab stop all come for free and cannot drift. The ring sits on the label
  * through `focus-within` rather than `:has()`, which shipped in exactly the build-target
- * Chromium. The checked styling is driven from React state, not `:checked`, because border
- * colour alone disappears in the cream theme's lower-contrast borders, so it needs the fill and
- * the glyph too.
+ * Chromium. The checked styling is driven from React state, not `:checked`, because a border
+ * colour alone disappears in the cream theme's lower-contrast borders.
  */
 function ModeComparison({ mode, onPick }: { mode: RefineMode; onPick: (mode: RefineMode) => void }) {
   return (
-    // The safety valve, not the plan: at every size but one the three panels fit and nothing
-    // scrolls. Stacked at 720x856 the five switches below leave about 280px, which three panels
-    // cannot have, and scrolling a little beats budgeting pixels that the next copy change
-    // would break.
+    // The safety valve, not the plan: the four rows fit at every size in the matrix. Scrolling a
+    // little beats budgeting pixels that the next copy change would break.
     <fieldset data-scroll-pane="" className="mode-compare min-h-0 flex-auto">
       <legend className="sr-only">Refine mode</legend>
-      {COMPARED.map((m) => {
+      {MODES.map((m) => {
         const on = mode === m;
-        const ModeIcon = MODE_ICON[m];
         return (
           <label
             key={m}
             className={cn(
-              "mode-option flex min-w-0 cursor-pointer flex-col rounded-sm border p-3 transition-[color,background-color,border-color,box-shadow]",
-              "focus-within:outline-none focus-within:ring-2 focus-within:ring-[color:var(--border-accent)]",
+              "mode-option cursor-pointer transition-[color,background-color,box-shadow]",
+              "focus-within:outline-none focus-within:ring-2 focus-within:ring-inset focus-within:ring-[color:var(--border-accent)]",
               on
-                ? "border-[color:var(--border-accent)] bg-surface-3 shadow-[0_0_0_1px_var(--border-accent),0_8px_24px_-12px_var(--color-accent)]"
-                : "border-[color:var(--border-subtle)] bg-surface-2 hover:border-[color:var(--border-default)]",
+                ? "bg-surface-2 shadow-[inset_2px_0_0_var(--color-accent)]"
+                : "hover:bg-surface-2/60",
             )}
           >
             <input
@@ -122,25 +119,21 @@ function ModeComparison({ mode, onPick }: { mode: RefineMode; onPick: (mode: Ref
               onChange={() => onPick(m)}
               aria-describedby={`mode-${m}-out`}
             />
-            <span className="flex items-center gap-1.5">
-              <ModeIcon
-                size={14}
-                weight={on ? "fill" : "regular"}
-                aria-hidden="true"
-                className={cn("shrink-0", on ? "text-accent" : "text-fg-muted")}
-              />
-              <span className="text-sm font-semibold text-fg">{MODE_COPY[m].title}</span>
-              {on && <Check size={12} weight="bold" aria-hidden="true" className="shrink-0 text-accent" />}
+            {/* The name alone. The chosen row already says so three times over: a rule down its
+                left edge, its own ground, and the name in the accent. A tick beside that is a
+                fourth way of saying the same thing. */}
+            <span className={cn("truncate text-sm font-semibold", on ? "text-accent" : "text-fg")}>
+              {MODE_COPY[m].title}
             </span>
-            <span className="mt-0.5 text-xs text-fg-muted [display:var(--mode-hint,block)]">{MODE_COPY[m].hint}</span>
-            {/* The output on its own surface with a rule on the left: what comes OUT of the mode,
-                visibly distinct from the label that names it. */}
-            <span
-              className={cn(
-                "mode-output mt-2 block min-h-0 flex-1 rounded-xs border-l-2 bg-bg/70 px-2.5 py-2",
-                on ? "border-l-[color:var(--color-accent)]" : "border-l-[color:var(--border-strong)]",
+            <span className="min-w-0">
+              <span className="truncate text-xs text-fg-muted [display:var(--mode-hint,block)]">
+                {MODE_COPY[m].hint}
+              </span>
+              {m === "reply" && (
+                <span className="truncate font-mono text-xs text-fg-muted line-through decoration-1 [display:var(--mode-input,block)]">
+                  {MODE_EXAMPLE.replyInput}
+                </span>
               )}
-            >
               <span
                 id={`mode-${m}-out`}
                 className="mode-example whitespace-pre-line font-mono text-xs text-fg"
@@ -155,14 +148,6 @@ function ModeComparison({ mode, onPick }: { mode: RefineMode; onPick: (mode: Ref
     </fieldset>
   );
 }
-
-/** One glyph per mode, so the three panels read at a glance before the titles do. */
-const MODE_ICON: Record<RefineMode, Icon> = {
-  polish: PencilSimple,
-  adaptive: MagicWand,
-  turbo: Blueprint,
-  reply: ArrowBendUpLeft,
-};
 
 const LENGTHS: { value: Length; label: string }[] = [
   { value: "shorter", label: "Shorter" },
@@ -224,58 +209,6 @@ function LengthSegment({ value, onChange }: { value: Length; onChange: (length: 
         );
       })}
     </div>
-  );
-}
-
-/**
- * O Reply, uma linha por baixo da comparacao e dentro do mesmo grupo de radios.
- *
- * Nao entra na grelha porque parte de outro input e nao ha nada para comparar lado a lado, mas e
- * um modo que o atalho principal pode correr, por isso vive no cartao que pergunta qual e o modo
- * do atalho principal. Uma linha e nao um cartao: medido, o cartao proprio custava 150px que a
- * comparacao nao tinha para dar, e a 720x856 os tres paineis ficavam com dez pixeis.
- */
-function ReplyRow({ mode, onPick }: { mode: RefineMode; onPick: (mode: RefineMode) => void }) {
-  const on = mode === "reply";
-  const Icon = MODE_ICON.reply;
-  return (
-    <label
-      className={cn(
-        "flex shrink-0 cursor-pointer flex-col rounded-sm border px-3 py-2 transition-[color,background-color,border-color,box-shadow]",
-        "focus-within:outline-none focus-within:ring-2 focus-within:ring-[color:var(--border-accent)]",
-        on
-          ? "border-[color:var(--border-accent)] bg-surface-3 shadow-[0_0_0_1px_var(--border-accent),0_8px_24px_-12px_var(--color-accent)]"
-          : "border-[color:var(--border-subtle)] bg-surface-2 hover:border-[color:var(--border-default)]",
-      )}
-    >
-      <input
-        type="radio"
-        name="refine-mode"
-        value="reply"
-        className="sr-only"
-        checked={on}
-        onChange={() => onPick("reply")}
-        aria-describedby="mode-reply-out"
-      />
-      <span className="flex items-center gap-1.5">
-        <Icon
-          size={14}
-          weight={on ? "fill" : "regular"}
-          aria-hidden="true"
-          className={cn("shrink-0", on ? "text-accent" : "text-fg-muted")}
-        />
-        <span className="text-sm font-semibold text-fg">{MODE_COPY.reply.title}</span>
-        {on && <Check size={12} weight="bold" aria-hidden="true" className="shrink-0 text-accent" />}
-        <span className="min-w-0 truncate text-xs text-fg-muted">{MODE_COPY.reply.hint}</span>
-      </span>
-      <span
-        id="mode-reply-out"
-        className="mode-example mt-1 block truncate font-mono text-xs text-fg"
-        title={`${REPLY_EXAMPLE.input}  ->  ${REPLY_EXAMPLE.output}`}
-      >
-        {REPLY_EXAMPLE.output}
-      </span>
-    </label>
   );
 }
 
@@ -413,8 +346,9 @@ export function RefiningTab({
         detail={
           <div className="space-y-2">
             <p>
-              The three examples are the same sentence refined by each mode, written by hand to
-              show the difference, not live refines. Length applies on top of whichever mode is
+              The examples are written by hand to show the difference, not live refines: the
+              first three are one sentence through each mode, and Reply answers a message of its
+              own. Length applies on top of whichever mode is
               running, Reply included. Bind a shortcut to a mode under Shortcut to switch as you
               press.
             </p>
@@ -436,7 +370,6 @@ export function RefiningTab({
             <span className="font-mono line-through decoration-1">{MODE_EXAMPLE.input}</span>
           </p>
           <ModeComparison mode={s.mode} onPick={setMode} />
-          <ReplyRow mode={s.mode} onPick={setMode} />
         </div>
       </Section>
       </div>
