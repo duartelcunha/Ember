@@ -270,6 +270,10 @@ fn output_budget(input: &str, mode: RefineMode, length: Length, thinking: bool) 
 }
 
 /// Monta o `LlmRequest` provider-agnostic a partir do input, perfil e config de thinking.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Eight unrelated decisions, not one object: bundling them would move the same list up a level"
+)]
 pub fn build_llm_request(
     input: &str,
     profile: &Profile,
