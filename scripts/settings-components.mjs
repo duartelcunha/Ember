@@ -68,8 +68,7 @@ export async function appearanceRegressions(page, origin, capture) {
   await page.goto(`${origin}/__ember-test/settings`);
   await page.waitForSelector('[role=tab]');
   const openAppearance = async () => {
-    const trigger = (await page.$$('[role=tab]'))[5];
-    await trigger.click();
+    await openTab(page, 'Appearance');
     await page.waitForSelector('[data-overlay-preview]');
   };
   const pick = value => page.evaluate(v => {
@@ -110,6 +109,29 @@ export async function appearanceRegressions(page, origin, capture) {
 }
 
 /**
+ * Open a tab by the label a person reads on it, and wait until it is the active one.
+ *
+ * Every lookup here used to be an index into `[role=tab]`, which is coupling you cannot see:
+ * the Developer tab exists only while its switch is on, so the position of About depends on a
+ * setting, and a test that asked for tab 6 would silently open a different one. A real pointer
+ * click, not `handle.click()` on a detached node: Radix activates tabs on pointer-down, and a
+ * synthetic `click()` left every capture sitting on the first tab.
+ */
+export async function openTab(page, label) {
+  for (const handle of await page.$$('[role=tab]')) {
+    const text = await handle.evaluate(el => el.textContent);
+    if (!text.includes(label)) continue;
+    await handle.click();
+    await page.waitForFunction(
+      l => document.querySelector('[role=tab][data-state=active]')?.textContent.includes(l),
+      {}, label,
+    );
+    return;
+  }
+  throw new Error(`no tab labelled ${label}`);
+}
+
+/**
  * Each tab shows the thing it claims to show, and the data it already had. These are content
  * assertions, not layout ones: they fail if a refactor quietly drops the comparison back to a
  * dropdown, hides the shortcut descriptions, stops reading ProviderHealth, or puts the
@@ -119,14 +141,13 @@ export async function tabContentRegressions(page, origin) {
   await page.setViewport({ width: 1000, height: 640, deviceScaleFactor: 1 });
   await page.goto(`${origin}/__ember-test/settings`);
   await page.waitForSelector('[role=tab]');
-  const open = async (index, ready) => {
-    const trigger = (await page.$$('[role=tab]'))[index];
-    await trigger.click();
+  const open = async (label, ready) => {
+    await openTab(page, label);
     await page.waitForSelector(ready);
   };
 
   // Providers: the try order, fed by the health fields the tab used to discard.
-  await open(0, '[data-try-order]');
+  await open('Providers', '[data-try-order]');
   const strip = await page.$eval('[data-try-order]', e => e.textContent);
   assert.match(strip, /Gemini/, `the strip should name the primary first: ${strip}`);
   assert.match(strip, /No pre-validated fallback/, `the strip should carry the health verdict: ${strip}`);
@@ -140,7 +161,7 @@ export async function tabContentRegressions(page, origin) {
   await page.waitForFunction(() => document.querySelector('.provider-pair [data-settings-col]:first-child h3').textContent.trim() === 'Gemini');
 
   // Refining: three radios, all three outputs on screen, arrows move the selection.
-  await open(1, 'input[name="refine-mode"]');
+  await open('Refining', 'input[name="refine-mode"]');
   assert.equal(await page.$$eval('input[name="refine-mode"]', e => e.length), 3);
   const outputs = await page.$$eval('.mode-example', e => e.map(x => x.textContent).join(' | '));
   for (const expected of ['Set up a meeting', 'Schedule a meeting', 'scheduling assistant']) {
@@ -158,19 +179,37 @@ export async function tabContentRegressions(page, origin) {
     return picked && other && getComputedStyle(picked).borderTopColor !== getComputedStyle(other).borderTopColor;
   }, { timeout: 3000 }).catch(() => { throw new Error('the chosen mode needs a visible difference, not only a checked input'); });
 
-  // Shortcut: all four in one list, each saying what it does.
-  await open(2, '[aria-label="Global shortcut shortcut"]');
-  assert.equal(await page.$$eval('[aria-label$=" shortcut"]', e => e.length), 4);
+  // Shortcut: all five in one list, each saying what it does.
+  await open('Shortcut', '[aria-label="Global shortcut shortcut"]');
+  assert.equal(await page.$$eval('[aria-label$=" shortcut"]', e => e.length), 5);
+  // O Reply e um modo com atalho proprio, e o cartao dele diz a condicao que ninguem adivinha:
+  // o campo tem de ser editavel, senao a captura e recusada antes de haver chamada ao modelo.
+  assert.ok(await page.$('[aria-label="Reply shortcut"]'), 'Reply needs a shortcut slot of its own');
   assert.ok(!(await page.$$eval('button', b => b.some(x => x.textContent.trim() === 'Set shortcut'))),
     'the box is the only capture affordance; a Set shortcut button duplicates it');
   assert.ok(await page.evaluate(() =>
     document.querySelector('[data-tab-body]').innerText.includes('Fixes spelling and wording')));
 
-  // About: the product first; the report only after Developer tools is switched on.
-  await open(6, 'img[alt="Ember"]');
+  // About: the product, and nothing technical. The mark, what this build changed, and the one
+  // switch that opens everything else.
+  await open('About', 'img[alt="Ember"]');
   assert.equal(await page.$('[aria-label="Diagnostics report"]'), null, 'diagnostics must stay behind the gate');
+  assert.equal(await page.$$eval('[role=tab]', t => t.length), 7, 'the Developer tab must not exist while the switch is off');
+  assert.ok(await page.evaluate(() => document.querySelector('[data-tab-body]').innerText.includes('New in this version')),
+    'About needs something to say about the build that is running, not a mark in an empty card');
+
+  // Developer tools: a tab of its own, so About stays a product page.
   await page.click('#debug-mode');
-  await page.waitForSelector('[aria-label="Diagnostics report"]');
+  await page.waitForFunction(() => document.querySelectorAll('[role=tab]').length === 8);
+  // Eight triggers is exactly what the width of the strip cannot take for granted.
+  await page.setViewport({ width: 720, height: 640, deviceScaleFactor: 1 });
+  assert.equal(await page.$$eval('[role=tab]', tabs => tabs.every(tab => {
+    const r = tab.getBoundingClientRect();
+    return r.left >= 0 && r.right <= innerWidth && tab.scrollWidth <= tab.clientWidth + 1;
+  })), true, 'the eighth tab must still fit the narrowest window');
+  await page.setViewport({ width: 1000, height: 640, deviceScaleFactor: 1 });
+
+  await open('Dev', '[aria-label="Diagnostics report"]');
   const report = await page.$eval('[aria-label="Diagnostics report"]', e => ({
     tag: e.tagName, pane: e.hasAttribute('data-scroll-pane'), text: e.textContent, editable: e.isContentEditable,
   }));
@@ -179,9 +218,18 @@ export async function tabContentRegressions(page, origin) {
   assert.ok(!report.editable);
   assert.ok(report.text.includes('Ember 1.1.0-test'), report.text.slice(0, 60));
   assert.ok(await page.$$eval('button', b => b.some(x => x.textContent.trim() === 'Copy')));
+
+  // Switching the gate off from the Dev tab must not strand the user on a panel that is gone.
+  await open('About', '#debug-mode');
+  await page.click('#debug-mode');
+  await page.waitForFunction(() => document.querySelectorAll('[role=tab]').length === 7);
+  assert.ok(await page.evaluate(() => document.querySelector('[role=tab][data-state=active]').textContent.includes('About')));
 }
 
-const TAB_LABELS = { providers: 'Providers', refining: 'Refining', hotkey: 'Shortcut', projects: 'Projects', profile: 'Profile', appearance: 'Appearance', about: 'About' };
+// The default matrix walks the seven tabs everyone has. `dev` is reachable by name for the
+// pass that switches it on; it is absent from the strip until then, so it is not in the default.
+const TAB_LABELS = { providers: 'Providers', refining: 'Refining', hotkey: 'Shortcut', projects: 'Projects', profile: 'Profile', appearance: 'Appearance', about: 'About', dev: 'Dev' };
+const DEFAULT_TABS = Object.keys(TAB_LABELS).filter(t => t !== 'dev');
 export const LAYOUT_SIZES = [[720, 520], [720, 856], [1000, 640], [1400, 900]];
 
 /**
@@ -197,7 +245,7 @@ export const LAYOUT_SIZES = [[720, 520], [720, 856], [1000, 640], [1400, 900]];
  * centres passes with equal gaps, and the original defect (everything pinned to the top with
  * 40% empty beneath) fails.
  */
-export async function settingsLayoutRegressions(page, origin, capture, tabs = Object.keys(TAB_LABELS), prepare = null) {
+export async function settingsLayoutRegressions(page, origin, capture, tabs = DEFAULT_TABS, prepare = null) {
   await page.goto(`${origin}/__ember-test/settings`);
   await page.waitForSelector('[role=tab]');
   // A hook to put the page in a state the default matrix does not reach (a toggle switched on).
@@ -208,11 +256,7 @@ export async function settingsLayoutRegressions(page, origin, capture, tabs = Ob
     for (const theme of ['dark', 'cream']) {
       await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
       for (const tab of tabs) {
-        // A real pointer click: Radix tabs activate on pointer-down, and a synthetic `click()`
-        // left every capture on the first tab.
-        const trigger = (await page.$$('[role=tab]'))[Object.keys(TAB_LABELS).indexOf(tab)];
-        await trigger.click();
-        await page.waitForFunction(label => document.querySelector('[role=tab][data-state=active]')?.textContent.includes(label), {}, TAB_LABELS[tab]);
+        await openTab(page, TAB_LABELS[tab]);
         await page.waitForSelector('[data-tab-body]');
         await settle();
         const issues = await page.evaluate(() => {

@@ -2,6 +2,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { DEFAULT_SETTINGS } from "../src/lib/ipc";
+import { RELEASES } from "../src/lib/release";
 import { Settings } from "../src/settings/Settings";
 import "@fontsource-variable/geist";
 import "../src/styles/globals.css";
@@ -71,7 +72,7 @@ mockIPC((command, args) => {
     return new Promise(resolve => { fixture.resolveKey = resolve; });
   }
   if (command === "validate_key") return "invalid";
-  if (command === "plugin:app|version") return "1.1.0-test";
+  if (command === "plugin:app|version") return RELEASES[0].version;
   if (command === "plugin:updater|check") throw new Error("Offline fixture");
   return null;
 }, { shouldMockEvents: true });

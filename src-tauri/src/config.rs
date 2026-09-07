@@ -1,7 +1,7 @@
 //! Definicoes nao-secretas persistidas em disco (config.json no app config dir).
 //! As chaves de API NAO vivem aqui: ficam no Windows Credential Manager (ver secrets.rs).
 
-use ember_core::model::{Provider, RefineMode};
+use ember_core::model::{Length, Provider, RefineMode};
 use ember_core::providers::{DEFAULT_GEMINI_MODEL, DEFAULT_OPENAI_BASE_URL, DEFAULT_OPENAI_MODEL};
 use serde::{Deserialize, Serialize};
 
@@ -65,10 +65,15 @@ pub struct Config {
     /// nem pediu. Quem os quer poe a combinacao que sabe estar livre, nas settings.
     pub hotkey_polish: String,
     pub hotkey_turbo: String,
+    /// Atalho do modo Reply. Vazio por defeito, pela mesma razao que os outros dois.
+    pub hotkey_reply: String,
     /// Atalho do picker de projetos. Vazio = nao registado, pelas mesmas razoes dos de modo.
     pub hotkey_picker: String,
     pub autostart: bool,
     pub mode: RefineMode,
+    /// Quanto o refine pode mexer no tamanho. Ortogonal ao modo, e por isso um campo proprio:
+    /// "encurta" e um pedido que se faz tanto ao Fix como ao Rebuild.
+    pub length: Length,
     /// Raciocinio alargado do Gemini (default on). Mais qualidade, um pouco mais lento.
     pub thinking_enabled: bool,
     /// Nivel de thinking para Gemini 3.x: "minimal"|"low"|"medium"|"high".
@@ -147,9 +152,11 @@ impl Default for Config {
             hotkey: "CmdOrCtrl+Shift+Space".to_string(),
             hotkey_polish: String::new(),
             hotkey_turbo: String::new(),
+            hotkey_reply: String::new(),
             hotkey_picker: String::new(),
             autostart: false,
             mode: RefineMode::Adaptive,
+            length: Length::Same,
             thinking_enabled: true,
             thinking_level: "high".to_string(),
             profile_override: None,
@@ -313,6 +320,7 @@ impl Config {
         }
         self.hotkey_polish = self.hotkey_polish.trim().to_string();
         self.hotkey_turbo = self.hotkey_turbo.trim().to_string();
+        self.hotkey_reply = self.hotkey_reply.trim().to_string();
         self.hotkey_picker = self.hotkey_picker.trim().to_string();
         // Um atalho de picker gravado antes desta regra existir (o `Shift+Up` da primeira
         // utilizacao) fica limpo no load. Deixa-lo em disco era manter uma combinacao que abre a

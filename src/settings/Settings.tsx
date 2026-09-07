@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { motion, MotionConfig, useReducedMotion } from "motion/react";
 import { toast } from "sonner";
 import { listen } from "@tauri-apps/api/event";
-import { Cube, GearSix, Keyboard, Plugs, Sliders, Sparkle, UserCircleGear } from "@phosphor-icons/react";
+import { Cube, GearSix, Keyboard, Plugs, Sliders, Sparkle, Terminal, UserCircleGear } from "@phosphor-icons/react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TitleBar } from "@/components/TitleBar";
 import { SettingsViewport } from "./SettingsViewport";
@@ -13,6 +13,7 @@ import { MODE_COPY, RefiningTab } from "./tabs/RefiningTab";
 import { ShortcutTab } from "./tabs/ShortcutTab";
 import { AppearanceTab } from "./tabs/AppearanceTab";
 import { AboutTab } from "./tabs/AboutTab";
+import { DevTab } from "./tabs/DevTab";
 import {
   DEFAULT_SETTINGS,
   ipc,
@@ -20,6 +21,7 @@ import {
   type ProviderHealth,
   type ProviderKind,
   type RefineMode,
+  type Length,
   type Theme,
   type ThinkingLevel,
   type ModelCatalog,
@@ -57,6 +59,7 @@ export function Settings({ initialTab = "providers" }: { initialTab?: string } =
   const settledToast = useSettledToast(400);
   const announceMode = (mode: RefineMode) => settledToast(`Refine mode: ${MODE_COPY[mode].title}.`);
   const [openKey, setOpenKey] = useState(0);
+  const [tab, setTab] = useState(initialTab);
   const [s, setS] = useState<EmberSettings>(DEFAULT_SETTINGS);
   const [hotkey, setHotkey] = useState(DEFAULT_SETTINGS.hotkey);
   // Saude dos providers, ao nivel do Settings, para refazer quando uma chave muda (Bug C) e
@@ -165,6 +168,24 @@ export function Settings({ initialTab = "providers" }: { initialTab?: string } =
     loadSettings();
   }, [loadSettings]);
 
+  /** O tamanho nao tem toast: e uma preferencia silenciosa, ao contrario do modo, que muda o
+   *  que o atalho principal faz e por isso se anuncia. */
+  const setLength = (length: Length) => {
+    const prev = s.length;
+    setS({ ...s, length });
+    ipc.setLength(length).catch(() => {
+      setS((cur) => ({ ...cur, length: prev }));
+      toast.error("Couldn't update the length.");
+    });
+  };
+
+  // Turning Developer tools off while standing on its tab would leave Radix pointing at a
+  // trigger that no longer exists, and the panel would render empty with no way back. Step to
+  // About, which is where the switch that just moved lives.
+  useEffect(() => {
+    if (!s.debugMode && tab === "dev") setTab("about");
+  }, [s.debugMode, tab]);
+
   const setMode = (mode: RefineMode) => {
     const prev = s.mode;
     setS({ ...s, mode });
@@ -240,7 +261,7 @@ export function Settings({ initialTab = "providers" }: { initialTab?: string } =
                 <div className="h-32 w-full animate-pulse rounded-lg bg-surface-1" />
               </div>
             ) : (
-              <Tabs defaultValue={initialTab} className="flex min-h-0 flex-1 flex-col">
+              <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
                 <TabsList className="shrink-0">
                   <TabsTrigger value="providers">
                     <Plugs size={16} /> Providers
@@ -263,6 +284,11 @@ export function Settings({ initialTab = "providers" }: { initialTab?: string } =
                   <TabsTrigger value="about">
                     <Sparkle size={16} /> About
                   </TabsTrigger>
+                  {s.debugMode && (
+                    <TabsTrigger value="dev">
+                      <Terminal size={16} /> Dev
+                    </TabsTrigger>
+                  )}
                 </TabsList>
 
                 <TabsContent value="providers">
@@ -280,7 +306,7 @@ export function Settings({ initialTab = "providers" }: { initialTab?: string } =
                 </TabsContent>
 
                 <TabsContent value="refining">
-                  <RefiningTab s={s} setS={setS} setMode={setMode} setThinking={setThinking} />
+                  <RefiningTab s={s} setS={setS} setMode={setMode} setLength={setLength} setThinking={setThinking} />
                 </TabsContent>
 
                 <TabsContent value="hotkey">
@@ -307,6 +333,12 @@ export function Settings({ initialTab = "providers" }: { initialTab?: string } =
                 <TabsContent value="about">
                   <AboutTab s={s} setS={setS} />
                 </TabsContent>
+
+                {s.debugMode && (
+                  <TabsContent value="dev">
+                    <DevTab s={s} />
+                  </TabsContent>
+                )}
               </Tabs>
             )}
           </SettingsViewport>

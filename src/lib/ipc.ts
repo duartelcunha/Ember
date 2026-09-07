@@ -15,7 +15,12 @@ export type OpenAiAuth = "api_key" | "chat_gpt";
  *  OpenAI-COMPATIBLE: a consola depende do endpoint escolhido, nao do provider. */
 export type KeyConsole = "gemini" | "groq" | "openai" | "openrouter" | "anthropic";
 export type ProfileSource = "claude_md" | "user_edited" | "default";
-export type RefineMode = "adaptive" | "polish" | "turbo";
+export type RefineMode = "adaptive" | "polish" | "turbo" | "reply";
+/** Os tres modos que a comparacao poe lado a lado. O Reply produz outra coisa a partir de outro
+ *  tipo de input, por isso nao entra numa grelha que existe para comparar o MESMO texto. */
+export type ComparedMode = Exclude<RefineMode, "reply">;
+/** Quanto o refine pode mexer no tamanho. Ortogonal ao modo: aplica-se aos quatro. */
+export type Length = "shorter" | "same" | "longer";
 export type ThinkingLevel = "minimal" | "low" | "medium" | "high";
 export type Theme = "dark" | "cream";
 /** Resultado do probe de chave: distingue "chave recusada" de "sem rede agora". */
@@ -32,7 +37,7 @@ export interface ProviderHealth {
 }
 
 /** Qual dos tres atalhos. O "main" usa o modo escolhido nas settings; os outros fixam o seu. */
-export type HotkeySlot = "main" | "polish" | "turbo" | "picker";
+export type HotkeySlot = "main" | "polish" | "turbo" | "reply" | "picker";
 
 /** Veredicto sobre uma combinacao ANTES de a gravar. Espelha `ember_core::hotkey`. */
 export type HotkeyVerdict =
@@ -147,6 +152,8 @@ export interface EmberSettings {
   /** Atalhos que fixam um modo. String vazia = nao registado. */
   hotkeyPolish: string;
   hotkeyTurbo: string;
+  /** Atalho do modo Reply. String vazia = nao registado. */
+  hotkeyReply: string;
   /** Atalho do picker de projetos. String vazia = nao registado. */
   hotkeyPicker: string;
   autostart: boolean;
@@ -163,6 +170,7 @@ export interface EmberSettings {
   profileSources: ProfileProvenance[];
   legacyAutoProfileDisabled: boolean;
   mode: RefineMode;
+  length: Length;
   thinkingEnabled: boolean;
   thinkingLevel: ThinkingLevel;
   terminalHandling: boolean;
@@ -209,6 +217,7 @@ export const DEFAULT_SETTINGS: EmberSettings = {
   hotkey: "CmdOrCtrl+Shift+E",
   hotkeyPolish: "",
   hotkeyTurbo: "",
+  hotkeyReply: "",
   hotkeyPicker: "",
   autostart: false,
   hasGeminiKey: false,
@@ -221,6 +230,7 @@ export const DEFAULT_SETTINGS: EmberSettings = {
   profileSources: [],
   legacyAutoProfileDisabled: false,
   mode: "adaptive",
+  length: "same",
   thinkingEnabled: true,
   thinkingLevel: "high",
   terminalHandling: true,
@@ -289,6 +299,7 @@ export const ipc = {
   listModels: (provider: ProviderKind) => invoke<ModelCatalog>("list_models", { provider }),
   setAutostart: (enabled: boolean) => invoke<void>("set_autostart", { enabled }),
   setMode: (mode: RefineMode) => invoke<void>("set_mode", { mode }),
+  setLength: (length: Length) => invoke<void>("set_length", { length }),
   setTheme: (theme: Theme) => invoke<void>("set_theme", { theme }),
   setThinking: (enabled: boolean, level: ThinkingLevel) =>
     invoke<void>("set_thinking", { enabled, level }),

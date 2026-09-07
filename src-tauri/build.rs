@@ -27,6 +27,7 @@ fn main() {
         "set_hotkey",
         "set_autostart",
         "set_mode",
+        "set_length",
         "set_theme",
         "set_thinking",
         "set_terminal_handling",

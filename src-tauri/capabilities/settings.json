@@ -23,6 +23,7 @@
     "allow-set-hotkey",
     "allow-set-autostart",
     "allow-set-mode",
+    "allow-set-length",
     "allow-set-theme",
     "allow-set-thinking",
     "allow-set-terminal-handling",

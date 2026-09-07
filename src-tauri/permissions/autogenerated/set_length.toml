@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-length"
+description = "Enables the set_length command without any pre-configured scope."
+commands.allow = ["set_length"]
+
+[[permission]]
+identifier = "deny-set-length"
+description = "Denies the set_length command without any pre-configured scope."
+commands.deny = ["set_length"]

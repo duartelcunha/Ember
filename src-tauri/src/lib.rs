@@ -418,7 +418,7 @@ pub(crate) enum HotkeyAction {
 pub(crate) fn register_hotkeys(app: &AppHandle, cfg: &config::Config) -> Result<(), String> {
     let gs = app.global_shortcut();
     let _ = gs.unregister_all();
-    let wanted: [(&str, HotkeyAction); 4] = [
+    let wanted: [(&str, HotkeyAction); 5] = [
         (cfg.hotkey.as_str(), HotkeyAction::Refine(None)),
         (
             cfg.hotkey_polish.as_str(),
@@ -427,6 +427,10 @@ pub(crate) fn register_hotkeys(app: &AppHandle, cfg: &config::Config) -> Result<
         (
             cfg.hotkey_turbo.as_str(),
             HotkeyAction::Refine(Some(RefineMode::Turbo)),
+        ),
+        (
+            cfg.hotkey_reply.as_str(),
+            HotkeyAction::Refine(Some(RefineMode::Reply)),
         ),
         (cfg.hotkey_picker.as_str(), HotkeyAction::Picker),
     ];
@@ -639,6 +643,7 @@ pub fn run() {
             commands::set_hotkey,
             commands::set_autostart,
             commands::set_mode,
+            commands::set_length,
             commands::set_theme,
             commands::set_thinking,
             commands::set_terminal_handling,
@@ -839,6 +844,7 @@ pub fn run() {
                 let mut only_main = cfg.clone();
                 only_main.hotkey_polish.clear();
                 only_main.hotkey_turbo.clear();
+                only_main.hotkey_reply.clear();
                 match register_hotkeys(&handle, &only_main) {
                     Ok(()) => {
                         log::warn!("main hotkey is up; the per-mode ones are off until fixed");

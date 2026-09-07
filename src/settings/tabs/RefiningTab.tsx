@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Blueprint, Check, MagicWand, PencilSimple, type Icon } from "@phosphor-icons/react";
+import { ArrowBendUpLeft, Blueprint, Check, MagicWand, PencilSimple, type Icon } from "@phosphor-icons/react";
+import { motion, useReducedMotion } from "motion/react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,7 +17,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Section, SwitchRow } from "../Section";
-import { ipc, type EmberSettings, type RefineMode, type ThinkingLevel } from "@/lib/ipc";
+import { ipc, type ComparedMode, type EmberSettings, type Length, type RefineMode, type ThinkingLevel } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 
 // Os nomes visiveis sao VERBOS, nao adjetivos. "Adaptive", "Polish" e "Turbo" descreviam o
@@ -39,7 +40,16 @@ export const MODE_COPY: Record<RefineMode, { title: string; hint: string }> = {
     title: "Rebuild",
     hint: "Turns it into a full prompt: role, context, requirements, output format.",
   },
+  reply: {
+    title: "Reply",
+    hint: "Answers the message instead of rewriting it.",
+  },
 };
+
+/** Os modos que a grelha compara. O Reply fica de fora de proposito: a comparacao existe para
+ *  ver o MESMO texto tratado de tres maneiras, e o Reply parte de outro tipo de input e produz
+ *  outra coisa. Postos lado a lado, os quatro deixavam de comparar coisa nenhuma. */
+const COMPARED: ComparedMode[] = ["polish", "adaptive", "turbo"];
 
 /** O mesmo texto refinado pelos tres modos, para a diferenca se VER em vez de se ler. E um
  *  exemplo escrito a mao, nao um refine ao vivo, e a UI diz isso: mostrar uma amostra colada
@@ -56,7 +66,15 @@ const MODE_EXAMPLE = {
         "When: Tomorrow, time to be confirmed.",
         "Output: Ready-to-send invite and note.",
       ].join("\n"),
-  } as Record<RefineMode, string>,
+  } as Record<ComparedMode, string>,
+};
+
+/** O Reply tem exemplo proprio porque parte de outro input: uma mensagem recebida, nao um
+ *  rascunho do utilizador. Mostra as duas coisas que o distinguem: escreve na primeira pessoa,
+ *  e deixa um marcador visivel onde a mensagem nao deu o facto, em vez de o inventar. */
+const REPLY_EXAMPLE = {
+  input: "Hi, can you confirm the meeting time and who is joining?",
+  output: "The meeting is at {time}. {names} are joining. Tell me if that does not work for you.",
 };
 
 /**
@@ -81,7 +99,7 @@ function ModeComparison({ mode, onPick }: { mode: RefineMode; onPick: (mode: Ref
     // would break.
     <fieldset data-scroll-pane="" className="mode-compare min-h-0 flex-auto">
       <legend className="sr-only">Refine mode</legend>
-      {(Object.keys(MODE_COPY) as RefineMode[]).map((m) => {
+      {COMPARED.map((m) => {
         const on = mode === m;
         const ModeIcon = MODE_ICON[m];
         return (
@@ -139,7 +157,116 @@ function ModeComparison({ mode, onPick }: { mode: RefineMode; onPick: (mode: Ref
 }
 
 /** One glyph per mode, so the three panels read at a glance before the titles do. */
-const MODE_ICON: Record<RefineMode, Icon> = { polish: PencilSimple, adaptive: MagicWand, turbo: Blueprint };
+const MODE_ICON: Record<RefineMode, Icon> = {
+  polish: PencilSimple,
+  adaptive: MagicWand,
+  turbo: Blueprint,
+  reply: ArrowBendUpLeft,
+};
+
+const LENGTHS: { value: Length; label: string }[] = [
+  { value: "shorter", label: "Shorter" },
+  { value: "same", label: "Same" },
+  { value: "longer", label: "Longer" },
+];
+
+/** Quick and settled: the thumb explains a move, it does not perform. */
+const THUMB_SPRING = { type: "spring" as const, stiffness: 520, damping: 40 };
+
+/**
+ * O tamanho, no cabecalho do cartao dos modos.
+ *
+ * No cabecalho e nao por baixo da grelha por uma razao medida: a grelha e a regiao elastica
+ * deste separador, e qualquer linha nova por baixo dela sai-lhe da altura. Um controlo na barra
+ * do titulo custa zero pixeis verticais.
+ *
+ * Nao e um quarto modo nem uma quarta coluna: aplica-se aos quatro modos, incluindo o Reply.
+ * Radios nativos escondidos, o mesmo padrao da comparacao e do segmento de tema, para as setas,
+ * o Space e uma unica paragem de tab virem de graca.
+ */
+function LengthSegment({ value, onChange }: { value: Length; onChange: (length: Length) => void }) {
+  const still = useReducedMotion();
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Length"
+      className="inline-flex shrink-0 rounded-full border border-[color:var(--border-subtle)] bg-surface-2 p-0.5"
+    >
+      {LENGTHS.map((l) => {
+        const on = value === l.value;
+        return (
+          <label
+            key={l.value}
+            className={cn(
+              "relative cursor-pointer rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors",
+              "focus-within:outline-none focus-within:ring-2 focus-within:ring-[color:var(--border-accent)]",
+              on ? "text-fg" : "text-fg-muted hover:text-fg",
+            )}
+          >
+            {on && (
+              <motion.span
+                layoutId="length-thumb"
+                transition={still ? { duration: 0 } : THUMB_SPRING}
+                aria-hidden="true"
+                className="absolute inset-0 rounded-full border border-[color:var(--border-default)] bg-surface-3 shadow-[inset_0_1px_0_var(--sheen)]"
+              />
+            )}
+            <input
+              type="radio"
+              name="refine-length"
+              value={l.value}
+              className="sr-only"
+              checked={on}
+              onChange={() => onChange(l.value)}
+            />
+            <span className="relative z-10">{l.label}</span>
+          </label>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * O Reply, no seu proprio cartao.
+ *
+ * Diz a condicao antes de alguem a descobrir a mal: o Ember so escreve sobre campos que se
+ * possam editar (o `SelectionGuard` recusa os outros antes de haver chamada ao modelo), por isso
+ * selecionar o email no painel de leitura nunca funciona. A frase esta aqui, e nao escondida
+ * numa mensagem de erro depois do facto.
+ */
+function ReplyCard() {
+  const Icon = MODE_ICON.reply;
+  return (
+    <Section
+      title="Reply"
+      hint="Answers the message you selected, instead of rewriting it."
+      detail={
+        <p>
+          Ember only writes into fields you can edit, so selecting a message in a reading pane
+          will not work: paste it into your reply box, select it there, then press the Reply
+          shortcut. It answers in the first person, in the message&apos;s language, and it never
+          accepts, declines or promises anything for you. Where the message did not give a
+          detail, it leaves a visible placeholder instead of inventing one.
+        </p>
+      }
+      action={
+        <Icon size={16} weight="fill" aria-hidden="true" className="shrink-0 text-accent" />
+      }
+    >
+      <p className="text-xs text-fg-muted [display:var(--mode-input,block)]">
+        <span className="mr-1.5 font-medium text-fg">Message</span>
+        <span className="font-mono">{REPLY_EXAMPLE.input}</span>
+      </p>
+      <span className="block rounded-xs border-l-2 border-l-[color:var(--color-accent)] bg-bg/70 px-2.5 py-2">
+        <span className="mode-example font-mono text-xs text-fg">{REPLY_EXAMPLE.output}</span>
+      </span>
+      <p className="text-xs text-fg-muted [display:var(--mode-hint,block)]">
+        Give it a shortcut under Shortcut to use it.
+      </p>
+    </Section>
+  );
+}
 
 const THINKING_LEVELS: ThinkingLevel[] = ["minimal", "low", "medium", "high"];
 
@@ -248,11 +375,13 @@ export function RefiningTab({
   s,
   setS,
   setMode,
+  setLength,
   setThinking,
 }: {
   s: EmberSettings;
   setS: React.Dispatch<React.SetStateAction<EmberSettings>>;
   setMode: (mode: RefineMode) => void;
+  setLength: (length: Length) => void;
   setThinking: (enabled: boolean, level: ThinkingLevel) => void;
 }) {
   /** Optimistic toggle with rollback, the pattern every switch here follows. */
@@ -273,10 +402,12 @@ export function RefiningTab({
         detail={
           <p>
             The three examples are the same sentence refined by each mode, written by hand to
-            show the difference, not live refines. Bind a shortcut to Fix or Rebuild under
-            Shortcut to switch as you press.
+            show the difference, not live refines. Length applies on top of whichever mode is
+            running, Reply included. Bind a shortcut to Fix or Rebuild under Shortcut to switch
+            as you press.
           </p>
         }
+        action={<LengthSegment value={s.length} onChange={setLength} />}
       >
         <div className="flex min-h-0 flex-1 flex-col gap-1.5">
           <p className="shrink-0 text-xs text-fg-muted [display:var(--mode-input,block)]">
@@ -286,6 +417,7 @@ export function RefiningTab({
           <ModeComparison mode={s.mode} onPick={setMode} />
         </div>
       </Section>
+      <ReplyCard />
       </div>
 
       <div data-settings-col="" className="settings-col">

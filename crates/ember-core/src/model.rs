@@ -42,6 +42,25 @@ pub enum RefineMode {
     Polish,
     /// Reescreve e estrutura ao maximo.
     Turbo,
+    /// Escreve a RESPOSTA a mensagem selecionada, em vez de a reescrever. Base de prompt
+    /// propria: a base dos outros modos proibe explicitamente responder ao input.
+    Reply,
+}
+
+/// Quanto o refine pode mexer no tamanho do texto. Ortogonal ao modo: um Fix mais curto e um
+/// Rebuild mais curto sao pedidos diferentes, e nenhum dos dois cabia numa quarta escolha de
+/// modo. `Same` e o default e nao acrescenta regra nenhuma ao prompt: o modo ja diz o que fazer,
+/// e uma frase a pedir "mantem o tamanho" so gasta contexto para repetir o silencio.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Length {
+    /// Sai mais curto do que entrou, sem perder factos.
+    Shorter,
+    /// Sem instrucao de tamanho: o modo decide.
+    #[default]
+    Same,
+    /// Desenvolve o que o input comprime, sem acrescentar afirmacoes novas.
+    Longer,
 }
 
 /// De onde veio o perfil de personalizacao.

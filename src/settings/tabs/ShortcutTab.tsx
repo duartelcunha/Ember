@@ -8,10 +8,10 @@ import { ipc, type EmberSettings, type HotkeySlot } from "@/lib/ipc";
  *  nao existe (o RegisterHotKey do Windows recusa mesmo os conflitos). */
 const IS_MAC = /Mac|iPhone|iPad/.test(navigator.userAgent);
 
-type SlotKey = "hotkey" | "hotkeyPolish" | "hotkeyTurbo" | "hotkeyPicker";
+type SlotKey = "hotkey" | "hotkeyPolish" | "hotkeyTurbo" | "hotkeyReply" | "hotkeyPicker";
 
 /**
- * All four shortcuts, in one list, each saying what it does.
+ * All five shortcuts, in one list, each saying what it does.
  *
  * They used to be split one card of one capture beside another of three, which was both
  * unbalanced and quietly wrong: the split implied the main shortcut was a different kind of
@@ -29,6 +29,7 @@ const SHORTCUTS: { slot: HotkeySlot; key: SlotKey; label: string; description: s
   },
   { slot: "polish", key: "hotkeyPolish", label: "Fix", description: MODE_COPY.polish.hint, clearable: true },
   { slot: "turbo", key: "hotkeyTurbo", label: "Rebuild", description: MODE_COPY.turbo.hint, clearable: true },
+  { slot: "reply", key: "hotkeyReply", label: "Reply", description: MODE_COPY.reply.hint, clearable: true },
   {
     slot: "picker",
     key: "hotkeyPicker",

@@ -1,6 +1,6 @@
 //! Comandos Tauri das settings + o helper de refinamento usado pelo loop nativo.
 
-use ember_core::model::{ProfileSource, Provider, RefineMode};
+use ember_core::model::{Length, ProfileSource, Provider, RefineMode};
 use ember_core::prompt::build_llm_request;
 use ember_core::retry::RetryConfig;
 use serde::Serialize;
@@ -23,6 +23,7 @@ pub struct SettingsDto {
     hotkey: String,
     hotkey_polish: String,
     hotkey_turbo: String,
+    hotkey_reply: String,
     hotkey_picker: String,
     autostart: bool,
     has_gemini_key: bool,
@@ -104,6 +105,7 @@ fn mode_str(m: RefineMode) -> &'static str {
         RefineMode::Adaptive => "adaptive",
         RefineMode::Polish => "polish",
         RefineMode::Turbo => "turbo",
+        RefineMode::Reply => "reply",
     }
 }
 
@@ -112,7 +114,25 @@ fn parse_mode(s: &str) -> Result<RefineMode, String> {
         "adaptive" => Ok(RefineMode::Adaptive),
         "polish" => Ok(RefineMode::Polish),
         "turbo" => Ok(RefineMode::Turbo),
+        "reply" => Ok(RefineMode::Reply),
         _ => Err(format!("invalid mode: {s}")),
+    }
+}
+
+fn length_str(l: Length) -> &'static str {
+    match l {
+        Length::Shorter => "shorter",
+        Length::Same => "same",
+        Length::Longer => "longer",
+    }
+}
+
+fn parse_length(s: &str) -> Result<Length, String> {
+    match s {
+        "shorter" => Ok(Length::Shorter),
+        "same" => Ok(Length::Same),
+        "longer" => Ok(Length::Longer),
+        _ => Err(format!("invalid length: {s}")),
     }
 }
 
@@ -145,6 +165,7 @@ fn build_dto(_app: &AppHandle, cfg: &config::Config) -> SettingsDto {
         hotkey: cfg.hotkey.clone(),
         hotkey_polish: cfg.hotkey_polish.clone(),
         hotkey_turbo: cfg.hotkey_turbo.clone(),
+        hotkey_reply: cfg.hotkey_reply.clone(),
         hotkey_picker: cfg.hotkey_picker.clone(),
         autostart: cfg.autostart,
         has_gemini_key: has_g,
@@ -327,6 +348,7 @@ fn other_slots(cfg: &config::Config, editing: &str) -> Vec<(String, String)> {
         ("main", &cfg.hotkey),
         ("polish", &cfg.hotkey_polish),
         ("turbo", &cfg.hotkey_turbo),
+        ("reply", &cfg.hotkey_reply),
         ("picker", &cfg.hotkey_picker),
     ]
     .into_iter()
@@ -349,7 +371,10 @@ pub fn check_hotkey(
     hotkey: String,
 ) -> Result<ember_core::hotkey::HotkeyVerdict, String> {
     use ember_core::hotkey::{self, HotkeyVerdict};
-    if !matches!(which.as_str(), "main" | "polish" | "turbo" | "picker") {
+    if !matches!(
+        which.as_str(),
+        "main" | "polish" | "turbo" | "reply" | "picker"
+    ) {
         return Err(format!("invalid hotkey slot: {which}"));
     }
     let cfg = config::load(&app);
@@ -369,6 +394,7 @@ pub fn check_hotkey(
     let current = match which.as_str() {
         "main" => &cfg.hotkey,
         "polish" => &cfg.hotkey_polish,
+        "reply" => &cfg.hotkey_reply,
         "picker" => &cfg.hotkey_picker,
         _ => &cfg.hotkey_turbo,
     };
@@ -438,6 +464,7 @@ pub fn set_hotkey(app: AppHandle, which: String, hotkey: String) -> Result<(), S
         "main" => cfg.hotkey = hotkey,
         "polish" => cfg.hotkey_polish = hotkey,
         "turbo" => cfg.hotkey_turbo = hotkey,
+        "reply" => cfg.hotkey_reply = hotkey,
         "picker" => cfg.hotkey_picker = hotkey,
         _ => return Err(format!("invalid hotkey slot: {which}")),
     }
@@ -486,6 +513,13 @@ pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
 pub fn set_mode(app: AppHandle, mode: String) -> Result<(), String> {
     let mut cfg = config::load(&app);
     cfg.mode = parse_mode(&mode)?;
+    config::save(&app, &cfg).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_length(app: AppHandle, length: String) -> Result<(), String> {
+    let mut cfg = config::load(&app);
+    cfg.length = parse_length(&length)?;
     config::save(&app, &cfg).map_err(|e| e.to_string())
 }
 
@@ -1303,12 +1337,13 @@ pub fn get_diagnostics(app: AppHandle) -> String {
         }
     };
     format!(
-        "Ember {version}\nLast feedback: {feedback}\nOS: {} ({})\nGemini key: {}\nFallback key: {}\nMode: {}  Thinking: {} ({})  Debug: {}\nFallback endpoint: {}\nHotkeys: main={} polish={} turbo={}\nProcess: {elevation}\nSelect-all fallback: {}{legacy}\nLog: {log_path}",
+        "Ember {version}\nLast feedback: {feedback}\nOS: {} ({})\nGemini key: {}\nFallback key: {}\nMode: {} ({})  Thinking: {} ({})  Debug: {}\nFallback endpoint: {}\nHotkeys: main={} polish={} turbo={} reply={} picker={}\nProcess: {elevation}\nSelect-all fallback: {}{legacy}\nLog: {log_path}",
         std::env::consts::OS,
         std::env::consts::ARCH,
         key_state(Provider::Gemini, &cfg.openai_base_url),
         key_state(Provider::OpenAi, &cfg.openai_base_url),
         mode_str(cfg.mode),
+        length_str(cfg.length),
         cfg.thinking_enabled,
         cfg.thinking_level,
         cfg.debug_mode,
@@ -1316,6 +1351,8 @@ pub fn get_diagnostics(app: AppHandle) -> String {
         slot(&cfg.hotkey),
         slot(&cfg.hotkey_polish),
         slot(&cfg.hotkey_turbo),
+        slot(&cfg.hotkey_reply),
+        slot(&cfg.hotkey_picker),
         if !cfg.select_all_fallback {
             "off".to_string()
         } else if crate::foreground::select_all_is_safe_here() {
@@ -1658,6 +1695,7 @@ pub(crate) async fn prepare_refine(
         &resolved.profile,
         &cfg.gemini_model,
         mode,
+        cfg.length,
         cfg.thinking_enabled,
         &cfg.thinking_level,
         project_block.as_deref(),
