@@ -12,7 +12,9 @@ export async function settingsRegressions(page, origin, capture) {
     await save.click();
     await page.waitForFunction(() => window.__settingsFixture.keyPending);
     const during = await save.boundingBox();
-    assert.equal(during.width, before.width);
+    // Half a pixel of tolerance: the width must not jump when the label gives way to the
+    // spinner, but two layouts of the same text can differ by a subpixel between runs.
+    assert.ok(Math.abs(during.width - before.width) < 0.5, `${during.width} vs ${before.width}`);
     assert.equal(await save.evaluate(e => e.getAttribute('aria-busy')), 'true');
     assert.equal(await save.evaluate(e => e.innerText.trim()), 'Save');
     await page.evaluate(() => window.__settingsFixture.resolveKey());

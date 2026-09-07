@@ -92,20 +92,28 @@ test("settings surfaces fit the window and keep their behaviour", (t) => withBro
       };
       await open();
       assert.equal(await page.$eval('.ember-dialog', e => getComputedStyle(e).animationName), 'ember-layer-in');
-      // Read from `animationstart` rather than by polling the DOM: the exit lasts 140ms and a
-      // round trip could land after Radix has already unmounted, which would make this pass or
-      // fail on timing instead of on behaviour.
+      // The contract, read from inside the page the moment the state flips: Radix keeps the
+      // layer mounted with data-state=closed, and the cascade gives that state the exit
+      // animation. Polled with setTimeout rather than proven by `animationstart`, because a
+      // headless macOS runner did not deliver that event inside a second while the CSS was
+      // right; and not read on the next round trip, because the exit is 140ms and a slow runner
+      // can unmount before the reply lands.
       const leaving = await page.evaluate(() => new Promise((resolve) => {
-        const seen = {};
-        document.addEventListener('animationstart', (event) => {
-          if (event.animationName === 'ember-layer-out') seen.layer = event.target.dataset.state;
-          if (event.animationName === 'ember-fade-out') seen.scrim = event.target.dataset.state;
-          if (seen.layer && seen.scrim) resolve(seen);
-        }, true);
         Array.from(document.querySelectorAll('button')).find(e => e.textContent === 'Use as draft').click();
-        setTimeout(() => resolve(seen), 1000);
+        const started = performance.now();
+        const poll = () => {
+          const layer = document.querySelector('.ember-dialog');
+          const scrim = document.querySelector('.ember-dialog-overlay');
+          if (!layer) return resolve('unmounted before a closed state was seen');
+          if (layer.dataset.state === 'closed') {
+            return resolve({ layer: getComputedStyle(layer).animationName, scrim: scrim && getComputedStyle(scrim).animationName });
+          }
+          if (performance.now() - started > 3000) return resolve('still open after 3s');
+          setTimeout(poll, 5);
+        };
+        poll();
       }));
-      assert.deepEqual(leaving, { layer: 'closed', scrim: 'closed' });
+      assert.deepEqual(leaving, { layer: 'ember-layer-out', scrim: 'ember-fade-out' });
       await page.waitForFunction(() => !document.querySelector('[role=dialog]'));
       // With the preference set nothing is deferred. The kill switch has to stay at least as
       // specific as the per-state rules; written as a bare class it loses to them silently.
