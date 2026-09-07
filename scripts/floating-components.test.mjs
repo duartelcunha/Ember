@@ -267,10 +267,16 @@ test("UI components preserve geometry and asynchronous ownership", (t) => withBr
       await page.keyboard.press('Escape');
       await page.waitForFunction(() => window.__trayActions.at(-1) === 'close');
       // Rust answers a close by flipping `open`; the surface folds before the window hides, and
-      // nothing chosen during the fold reaches Rust.
+      // nothing chosen during the fold reaches Rust. The fold is 140ms, shorter than a slow
+      // runner's round trip, so the proof is the animation START seen from inside the page.
+      const folding = page.evaluate(() => new Promise((resolve) => {
+        document.addEventListener('animationstart', (event) => {
+          if (event.animationName === 'ember-surface-close') resolve(event.target.hasAttribute('data-leave'));
+        }, true);
+        setTimeout(() => resolve('never started'), 2000);
+      }));
       await send('ember://tray', { open: false });
-      await presented();
-      assert.equal(await page.$eval('[data-leave]', e => getComputedStyle(e).animationName), 'ember-surface-close');
+      assert.equal(await folding, true);
       await page.keyboard.press('Enter');
       await page.waitForFunction(() => !document.querySelector('[role=menu]'));
       assert.equal(await page.evaluate(() => window.__trayActions.at(-1)), 'close');

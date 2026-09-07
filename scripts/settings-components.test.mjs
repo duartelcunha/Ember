@@ -131,7 +131,10 @@ test("settings surfaces fit the window and keep their behaviour", (t) => withBro
       await capture('dialog-context-details');
       await page.keyboard.press('Escape');
       await page.waitForFunction(() => !document.querySelector('[role=dialog]'));
-      assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Context details');
+      // Radix hands focus back to the trigger in a setTimeout(0) after the unmount, so reading
+      // activeElement on the very next frame raced it: green here, red on every CI runner.
+      // Waiting asserts the same thing (focus returns) without betting on the runner's clock.
+      await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Context details');
       await page.click('button[aria-label="Refresh context"]');
       await page.waitForFunction(() => window.__contextFixture.pending.length === 1);
       await page.evaluate(value => window.__contextFixture.pending.shift()(value), { ...snapshot, runId: 10, project: 'Obsolete', delivery: 'sent' });
