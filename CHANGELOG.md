@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.2.0-rc.2](https://github.com/duartelcunha/Ember/compare/v1.1.0-rc.2...v1.2.0-rc.2) (2026-09-07)
+## [1.2.0-rc.3](https://github.com/duartelcunha/Ember/compare/v1.1.0-rc.2...v1.2.0-rc.3) (2026-09-07)
 
 
 ### Features
@@ -11,6 +11,8 @@
 ### Bug Fixes
 
 * **about:** label the release notes with the version that will ship them ([#36](https://github.com/duartelcunha/Ember/issues/36)) ([d177403](https://github.com/duartelcunha/Ember/commit/d1774030d13aae474d1c620246c6c0f1e401dca7))
+* **ci:** carry the version bump into Cargo.lock before the locked build ([#38](https://github.com/duartelcunha/Ember/issues/38)) ([3b5e8d5](https://github.com/duartelcunha/Ember/commit/3b5e8d5))
+* **release:** publish prereleases instead of leaving them as drafts ([#39](https://github.com/duartelcunha/Ember/issues/39)) ([c2877d6](https://github.com/duartelcunha/Ember/commit/c2877d6))
 
 ## 1.1.0-rc.1 (2026-09-05)
 

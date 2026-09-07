@@ -49,6 +49,12 @@ jobs:
       - name: Verify package.json and Cargo.toml versions are in sync
         run: npm run version:check
 
+      # A release PR bumps the workspace version in Cargo.toml and not in Cargo.lock, so every
+      # --locked command below would refuse to run on it. This updates the two workspace members
+      # and nothing else; on any other branch the versions already agree and it does nothing.
+      - name: Carry any version bump into Cargo.lock
+        run: cargo update --workspace
+
       - name: Rust tests
         run: cargo test --workspace --locked
 
