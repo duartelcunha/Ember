@@ -144,9 +144,12 @@ export async function appearanceRegressions(page, origin, capture) {
   await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 500)));
   const orb = await page.$eval('[data-overlay-preview] [data-orb-skin]', e => {
     const box = e.getBoundingClientRect();
-    return { opacity: getComputedStyle(e.parentElement).opacity, width: box.width, height: box.height };
+    return { opacity: Number(getComputedStyle(e.parentElement).opacity), width: box.width, height: box.height };
   });
-  assert.equal(orb.opacity, '1', 'the orb needs a LazyMotion ancestor or it never fades in');
+  // Visible, not finished: without a LazyMotion ancestor the mark mounts at 0 and stays there,
+  // which is the bug. Demanding exactly 1 after half a second was demanding that the runner's
+  // rAF clock keep up, and one of them does not.
+  assert.ok(orb.opacity > 0, `the orb needs a LazyMotion ancestor or it never fades in: ${orb.opacity}`);
   assert.ok(orb.width > 0 && orb.height > 0, `the orb has no box: ${JSON.stringify(orb)}`);
   await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
 }

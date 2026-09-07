@@ -130,18 +130,21 @@ test("UI components preserve geometry and asynchronous ownership", (t) => withBr
         near(ring.y, 180 + CURSOR_GAP.y - ORB_INK.height / 2);
       }
     });
-    // Does this runner run CSS animations at all? The headless macOS one does not: no
-    // `animationstart` ever fires, on any element, however correct the CSS is. Asked once, with
-    // a throwaway keyframe, so the two runtime proofs below can say "the animation did not run
-    // here" instead of waiting thirty seconds and reporting a broken app. The wiring itself is
-    // still asserted everywhere; only the moving picture is conditional.
+    // Does this runner actually play CSS animations? The headless macOS one does not: it fires
+    // `animationstart` and then applies nothing, and some animations never start at all, however
+    // correct the CSS is. Asked once with a throwaway keyframe, and asked properly, because
+    // "it started" was the answer that misled the first attempt: the probe reads the animated
+    // property two frames in and only says yes if the value moved. Where the answer is no, the
+    // two runtime proofs below say so instead of reporting a broken app; the wiring itself is
+    // still asserted on every platform.
     const animates = await page.evaluate(() => new Promise((resolve) => {
       const sheet = document.createElement('style');
-      sheet.textContent = '@keyframes ember-probe{from{opacity:.2}to{opacity:1}}';
+      sheet.textContent = '@keyframes ember-probe{from{clip-path:inset(50% 0 0 0)}to{clip-path:inset(0 0 0 0)}}';
       const probe = document.createElement('div');
-      probe.style.cssText = 'position:fixed;left:-9999px;top:0;width:8px;height:8px;animation:ember-probe 300ms linear';
+      probe.style.cssText = 'position:fixed;left:-9999px;top:0;width:8px;height:8px;animation:ember-probe 600ms linear';
       const done = (answer) => { probe.remove(); sheet.remove(); resolve(answer); };
-      probe.addEventListener('animationstart', () => done(true));
+      probe.addEventListener('animationstart', () => requestAnimationFrame(() => requestAnimationFrame(() =>
+        done(getComputedStyle(probe).clipPath.startsWith('inset(')))));
       document.head.append(sheet);
       document.body.append(probe);
       setTimeout(() => done(false), 2000);
@@ -198,7 +201,7 @@ test("UI components preserve geometry and asynchronous ownership", (t) => withBr
         await send('ember://state', { sequence: sequence++, runId: 6, phase: 'preview', confirmationScope: 'selection' });
         const morph = await morphing;
         assert.equal(await page.$$eval('.ember-orb-row', nodes => nodes.length), 0);
-        if (morph) {
+        if (animates && morph) {
           assert.equal(morph.opacity, '1');
           assert.equal(morph.transform, 'none');
           assert.equal(morph.side, x === 300 ? 'right' : 'left');
@@ -215,7 +218,7 @@ test("UI components preserve geometry and asynchronous ownership", (t) => withBr
           assert.ok(morph.clip.startsWith('inset('), morph.clip);
           assert.deepEqual(morph.later, morph.bounds, 'the anchor must not move while the surface changes shape');
         } else {
-          assert.ok(!animates, 'the morph never started on a runner that does run animations');
+          assert.ok(!animates, 'the morph did not run on a runner that does play animations');
           assert.equal(await page.$eval('[data-morph-from-orb]', e => getComputedStyle(e).animationName), 'ember-surface-morph');
         }
         await capture(x === 300 ? 'morph-right' : 'morph-left');
