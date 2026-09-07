@@ -349,9 +349,10 @@
 /* And back again. Hiding the window on the frame after the last visible pill made the morph
    one-way: a shape grew out of the ring and then simply ceased. This is the same gesture in
    reverse, on the leaving curve (fast at the start): the surface rolls back to the ring's width,
-   then closes to its height and goes out. `forwards` holds the last frame until the native hide
-   a frame later. Declared after the morph so it wins the `animation` shorthand on a surface that
-   already carries one. */
+   then closes to its height and goes out. `forwards` holds the last frame until the native hide.
+   The 200ms is mirrored by `CLOSE_MS` in `src-tauri/src/flow.rs`, which waits that long plus a
+   frame before hiding the window; change one, change the other. Declared after the morph so it
+   wins the `animation` shorthand on a surface that already carries one. */
 [data-leave] {
   --ember-leave-swell: inset(-6px calc(100% - 30px) -6px 0 round 12px);
   --ember-leave-end: inset(calc(50% - 7.5px) calc(100% - 15px) calc(50% - 7.5px) 0 round 7.5px);

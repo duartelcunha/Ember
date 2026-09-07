@@ -9,7 +9,7 @@ use crate::state::AppState;
 use crate::{commands, hide_orb, show_settings};
 use ember_core::cycle::RunPhase;
 use ember_core::model::{Provider, RefineMode};
-use ember_core::overlay::{feedback_for, FlowOutcome};
+use ember_core::overlay::{feedback_for, FlowOutcome, OverlayFeedback};
 use ember_core::selection as seq;
 
 const STATE_EVENT: &str = "ember://state";
@@ -110,7 +110,22 @@ fn emit(
     message: Option<String>,
     provider: Option<String>,
 ) {
-    emit_payload(app, run_id, phase, message, provider, None);
+    emit_payload(app, run_id, phase, message, provider, None, false);
+}
+
+/// Reemite a fase atual marcada como a fechar. Fase, texto e provider iguais de proposito: a
+/// `key` do wrapper no DOM e a fase, portanto mudar qualquer um deles remontava a pilula e o
+/// fecho passava a ser um corte seco a seguir a outro.
+fn emit_closing(app: &AppHandle, run_id: u64, fb: &OverlayFeedback) {
+    emit_payload(
+        app,
+        run_id,
+        fb.phase,
+        fb.message.clone(),
+        fb.provider.clone(),
+        None,
+        true,
+    );
 }
 
 fn emit_payload(
@@ -120,6 +135,7 @@ fn emit_payload(
     message: Option<String>,
     provider: Option<String>,
     confirmation_scope: Option<ember_core::preview::ConfirmationScope>,
+    closing: bool,
 ) {
     let state = app.state::<AppState>();
     if state.hide_gen.load(Ordering::SeqCst) != run_id {
@@ -157,7 +173,7 @@ fn emit_payload(
     let payload = serde_json::json!({
         "runId": run_id, "sequence": state.event_seq.fetch_add(1, Ordering::SeqCst) + 1,
         "confirmationScope": confirmation_scope, "phase": phase, "message": message, "provider": provider,
-        "accent": accent, "project": project
+        "accent": accent, "project": project, "closing": closing
     });
     if let Ok(mut slot) = state.last_state.lock() {
         *slot = Some(payload.clone());
@@ -368,11 +384,11 @@ fn now_ms() -> u64 {
 /// em vez de cada chamador embutir a sua propria string e o seu proprio numero magico.
 async fn finish(app: &AppHandle, run_id: u64, outcome: FlowOutcome) {
     let fb = feedback_for(outcome);
-    emit(app, run_id, fb.phase, fb.message, fb.provider);
+    emit(app, run_id, fb.phase, fb.message.clone(), fb.provider.clone());
     // Feedback may outlive its run. Only this run's ownership is released, so late cleanup
     // cannot admit a third interaction while a newer run is capturing or applying text.
     app.state::<AppState>().complete_run(run_id);
-    hide_after(app, run_id, fb.hide_after_ms).await;
+    hide_after(app, run_id, fb).await;
 }
 
 /// Restaura o clipboard (texto ou imagem) e mostra "Cancelled" brevemente. Usado nos ramos
@@ -1073,10 +1089,27 @@ pub async fn reapply_last(app: AppHandle) {
     }
 }
 
-async fn hide_after(app: &AppHandle, run_id: u64, ms: u64) {
-    tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+/// Quanto tempo a superficie tem para se recolher no anel antes de a janela desaparecer.
+/// Espelha `ember-surface-close` em `src/styles/globals.css` (200ms), com um frame de folga
+/// para o ultimo fotograma chegar a ser apresentado. Muda um, muda o outro.
+const CLOSE_MS: u64 = 220;
+
+async fn hide_after(app: &AppHandle, run_id: u64, fb: OverlayFeedback) {
+    tokio::time::sleep(std::time::Duration::from_millis(fb.hide_after_ms)).await;
     // Um ciclo novo comecou entretanto: a orb que esta no ecra e dele, nao a nossa pilula.
     // Esconde-la aqui apagava o feedback do ciclo em curso a meio.
+    let current = app.state::<AppState>().hide_gen.load(Ordering::SeqCst);
+    if !ember_core::may_hide(current, run_id) {
+        return;
+    }
+    // A superficie recolhe-se no anel de onde cresceu, e so depois a janela desaparece. Esconder
+    // no fotograma seguinte a ultima pilula era o unico sitio onde o morph era so de ida: a forma
+    // crescia do anel e depois simplesmente deixava de existir. O picker ja espera assim.
+    emit_closing(app, run_id, &fb);
+    tokio::time::sleep(std::time::Duration::from_millis(CLOSE_MS)).await;
+    // Reconfirmado: um ciclo novo pode ter arrancado durante o recolher, e a orb dele nao pode
+    // ser escondida por nos. Sem esta segunda verificacao, alargar a janela de espera alargava
+    // exatamente a janela em que isso acontece.
     let current = app.state::<AppState>().hide_gen.load(Ordering::SeqCst);
     if !ember_core::may_hide(current, run_id) {
         return;
@@ -1090,7 +1123,7 @@ async fn hide_after(app: &AppHandle, run_id: u64, ms: u64) {
 }
 
 fn emit_confirmation(app: &AppHandle, run_id: u64, scope: ember_core::preview::ConfirmationScope) {
-    emit_payload(app, run_id, "preview", None, None, Some(scope));
+    emit_payload(app, run_id, "preview", None, None, Some(scope), false);
 }
 
 #[tauri::command]

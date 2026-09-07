@@ -192,6 +192,23 @@ test("UI components preserve geometry and asynchronous ownership", (t) => withBr
         await presented();
         assert.equal(await page.$$eval('[data-morph-from-orb], .ember-confirmation, .ember-orb-row', nodes => nodes.length), 0);
       }
+      // Closing is the same gesture backwards, on the surface that is already there. It arrives
+      // on the SAME phase on purpose: a different phase would remount the wrapper and the pill
+      // would be replaced rather than collapse. The box must not move while it does, for the
+      // same reason the morph must not: the cursor anchor is measured from it.
+      const settled = await bounds();
+      await send('ember://state', { sequence: sequence++, runId: 6, phase: 'success', message: 'Sent', closing: true });
+      await presented();
+      const leaving = await page.$eval('[data-leave]', e => {
+        const style = getComputedStyle(e);
+        return { name: style.animationName, transform: style.transform, fill: style.animationFillMode };
+      });
+      assert.equal(leaving.name, 'ember-surface-close');
+      assert.equal(leaving.transform, 'none');
+      // Without `forwards` the surface snaps back to full size for the frames between the end of
+      // the animation and the native hide.
+      assert.equal(leaving.fill, 'forwards');
+      assert.deepEqual(await bounds(), settled);
       await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
       await send('ember://state', { sequence: sequence++, runId: 6, phase: 'refining' });
       await presented();
@@ -206,17 +223,36 @@ test("UI components preserve geometry and asynchronous ownership", (t) => withBr
       await presented();
       assert.equal(await page.$eval('[data-enter]', e => getComputedStyle(e).animationName), 'none');
       assert.equal(await page.$$eval('.ember-chip > *', nodes => nodes.every(e => getComputedStyle(e).animationName === 'none')), true);
+      await send('ember://state', { sequence: sequence++, runId: 6, phase: 'hint', message: 'Select text first', closing: true });
+      await presented();
+      assert.equal(await page.$eval('[data-leave]', e => getComputedStyle(e).animationName), 'none');
     });
+    await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'no-preference' }]);
     await page.goto(`${origin}/__ember-test/picker`);
     await page.waitForFunction(() => window.__pickerReady === true && document.querySelector('.ember-floating'));
     await send('ember://picker', { sequence: 20, rows: Array.from({ length: 20 }, (_, i) => ({ id: `${i}`, name: `Project ${i}`, color: '#fd8c3c', icon: 'sparkle' })), index: 19, open: true, chosen: null });
     await page.waitForSelector('[role=option][aria-selected=true]');
     assert.equal(await page.$eval('[role=option][aria-selected=true]', e => e.textContent.trim()), 'Project 19');
+    // The list opens like every other surface anchored to the cursor, and it TRAVELS: all twenty
+    // rows stay mounted and the column slides, instead of a nine-row slice being recut under a
+    // selection pill that was the only thing animating.
+    assert.equal(await page.$eval('.ember-bubble[data-enter]', e => getComputedStyle(e).animationName), 'ember-surface-open');
+    assert.equal(await page.$$eval('[role=option]', nodes => nodes.length), 20);
+    const framed = await page.evaluate(() => {
+      const row = document.querySelector('[role=option][aria-selected=true]').getBoundingClientRect();
+      const window_ = document.querySelector('[data-rows]').getBoundingClientRect();
+      return { above: row.top - window_.top, below: window_.bottom - row.bottom };
+    });
+    assert.ok(framed.above >= -1 && framed.below >= -1, JSON.stringify(framed));
     await send('ember://picker', { sequence: 19, rows: [], index: 0, open: false, chosen: null });
     await page.evaluate(() => new Promise(requestAnimationFrame));
     assert.equal(await page.$$eval('[role=option][aria-selected=true]', e => e.length), 1);
     await capture("picker");
     await t.test('static startup branding still completes its native lifecycle', async () => {
+      // Declared here rather than inherited from whatever ran before: this asserts the REDUCED
+      // branding, and it read as an intermittent failure whenever an earlier block left the
+      // preference at no-preference.
+      await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
       await page.goto(`${origin}/__ember-test/splash?mode=startup`);
       await page.waitForFunction(() => window.__closed === 'close_splash');
       assert.equal(await page.$eval('img', e => getComputedStyle(e).transform), 'none');

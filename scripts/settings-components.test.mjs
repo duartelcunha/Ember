@@ -78,6 +78,41 @@ test("settings surfaces fit the window and keep their behaviour", (t) => withBro
       // Restoring is a draft, never a save.
       assert.equal(await page.evaluate(() => window.__profileFixture.saved.length), 1);
     });
+    await t.test("layers leave the way they arrived", async () => {
+      // Every page in this harness runs with reduced motion, which is also the state in which a
+      // missing exit is invisible. Radix only defers the unmount while an animation is declared
+      // for the closed state, so this is what proves the exit exists at all: before it, every
+      // dialog, popover and scrim in the settings vanished between two frames.
+      await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'no-preference' }]);
+      const open = async () => {
+        await page.goto(`${origin}/__ember-test/profile-migration`);
+        await page.waitForFunction(() => document.body.textContent.includes('Review imported instructions'));
+        await page.evaluate(() => Array.from(document.querySelectorAll('button')).find(e => e.textContent.startsWith('Review imported instructions')).click());
+        await page.waitForSelector('[role=dialog]');
+      };
+      await open();
+      assert.equal(await page.$eval('.ember-dialog', e => getComputedStyle(e).animationName), 'ember-layer-in');
+      // Read from `animationstart` rather than by polling the DOM: the exit lasts 140ms and a
+      // round trip could land after Radix has already unmounted, which would make this pass or
+      // fail on timing instead of on behaviour.
+      const leaving = await page.evaluate(() => new Promise((resolve) => {
+        const seen = {};
+        document.addEventListener('animationstart', (event) => {
+          if (event.animationName === 'ember-layer-out') seen.layer = event.target.dataset.state;
+          if (event.animationName === 'ember-fade-out') seen.scrim = event.target.dataset.state;
+          if (seen.layer && seen.scrim) resolve(seen);
+        }, true);
+        Array.from(document.querySelectorAll('button')).find(e => e.textContent === 'Use as draft').click();
+        setTimeout(() => resolve(seen), 1000);
+      }));
+      assert.deepEqual(leaving, { layer: 'closed', scrim: 'closed' });
+      await page.waitForFunction(() => !document.querySelector('[role=dialog]'));
+      // With the preference set nothing is deferred. The kill switch has to stay at least as
+      // specific as the per-state rules; written as a bare class it loses to them silently.
+      await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
+      await open();
+      assert.equal(await page.$eval('.ember-dialog', e => getComputedStyle(e).animationName), 'none');
+    });
     await t.test("context inspector stays concise and rejects obsolete snapshots", async () => {
       await page.setViewport({ width: 640, height: 540, deviceScaleFactor: 1 });
       await page.goto(`${origin}/__ember-test/context`);
