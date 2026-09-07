@@ -60,6 +60,8 @@ mockIPC((command, args) => {
     fixture.diagnosticsReads++;
     return DIAGNOSTICS;
   }
+  if (command === "set_primary_provider")
+    return { ...DEFAULT_SETTINGS, primaryProvider: (args as { provider: string }).provider };
   if (command === "set_mode") {
     fixture.modes.push(String((args as { mode?: unknown }).mode));
     return null;

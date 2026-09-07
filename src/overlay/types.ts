@@ -9,6 +9,13 @@ export interface OverlayState {
   runId?: number;
   sequence?: number;
   confirmationScope?: ConfirmationScope | null;
+  /**
+   * A fase atual esta a fechar: a superficie recolhe-se no anel de onde cresceu e so depois a
+   * janela desaparece. Vem no mesmo evento e com a mesma fase de proposito. Mudar a fase aqui
+   * remontava a pilula (a `key` do wrapper e a fase), e o fecho passava a ser um corte seco
+   * seguido de outro.
+   */
+  closing?: boolean;
   /** Mensagem (fase error/hint). */
   message?: string | null;
   /** Provider usado ("Gemini"/"OpenAI-compatible"), fase success. */

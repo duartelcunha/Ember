@@ -40,8 +40,14 @@ export function Overlay() {
     if (previousPhase.current === "refining" && s.phase !== "refining") {
       surface?.setAttribute("data-morph-from-orb", "true");
     }
+    // The closing state arrives on the same phase, so this node is the one that grew out of the
+    // ring and it is still here to collapse back into it. Removed again when it is not closing:
+    // two runs of the same phase in a row reuse the node, and a stale attribute would leave the
+    // second one already shut.
+    if (s.closing) surface?.setAttribute("data-leave", "");
+    else surface?.removeAttribute("data-leave");
     previousPhase.current = s.phase;
-  }, [s.phase, floating]);
+  }, [s.phase, s.closing, floating]);
   const status = announcement(s);
   return (
     <LazyMotion features={domAnimation} strict>

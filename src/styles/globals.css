@@ -346,6 +346,27 @@
   to { clip-path: inset(-6px -6px -6px -6px round 8px); }
 }
 
+/* And back again. Hiding the window on the frame after the last visible pill made the morph
+   one-way: a shape grew out of the ring and then simply ceased. This is the same gesture in
+   reverse, on the leaving curve (fast at the start): the surface rolls back to the ring's width,
+   then closes to its height and goes out. `forwards` holds the last frame until the native hide
+   a frame later. Declared after the morph so it wins the `animation` shorthand on a surface that
+   already carries one. */
+[data-leave] {
+  --ember-leave-swell: inset(-6px calc(100% - 30px) -6px 0 round 12px);
+  --ember-leave-end: inset(calc(50% - 7.5px) calc(100% - 15px) calc(50% - 7.5px) 0 round 7.5px);
+  animation: ember-surface-close 200ms cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+.ember-floating[data-side="left"] [data-leave] {
+  --ember-leave-swell: inset(-6px 0 -6px calc(100% - 30px) round 12px);
+  --ember-leave-end: inset(calc(50% - 7.5px) 0 calc(50% - 7.5px) calc(100% - 15px) round 7.5px);
+}
+@keyframes ember-surface-close {
+  from { clip-path: inset(-6px -6px -6px -6px round 8px); opacity: 1; }
+  58% { clip-path: var(--ember-leave-swell); opacity: 1; }
+  to { clip-path: var(--ember-leave-end); opacity: 0; }
+}
+
 /* The surface opening is the box; this is what happens inside it. Without it the clip reveals
    text that is already finished, which reads as a cut-out rather than a surface filling up.
    Transform on a CHILD never changes the chip's own box, so the measured geometry the cursor
@@ -361,7 +382,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  [data-morph-from-orb], [data-enter], .ember-chip > *, .ember-label-in { animation: none; }
+  [data-morph-from-orb], [data-enter], [data-leave], .ember-chip > *, .ember-label-in { animation: none; }
 }
 
 
@@ -450,18 +471,13 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--border-accent);
 /* The column carrying the tab's evidence earns more width when there are two. */
 @container settings (min-width: 48rem) { .settings-two-col > .settings-col-wide { flex-grow: 1.6; } }
 
-/* A column of cards, top-aligned. Centring happens on the BLOCK (see `.settings-fit`), never per
-   column: two columns each centring their own cards stagger the tops of objects that are
-   obviously the same kind of thing, which reads as misaligned rather than as roomy. Measured on
-   About at 1000x640, where a 150px card and a 300px card ended up 75px out of line. */
+/* A column of cards, top-aligned. Never centred: a centred block leaves a gap above it that
+   reads as broken rather than roomy, and two columns each centring their own cards stagger the
+   tops of objects that are obviously the same kind of thing. Content starts at the top and one
+   card per column may grow; padding at the bottom inside a card is acceptable, a gap above the
+   block is not. */
 .settings-col { display: flex; flex-direction: column; gap: var(--card-gap, 1rem); min-height: 0; }
 
-/* For a tab whose content is forms and genuinely cannot grow (Providers, Shortcut): the whole
-   block of columns is centred, card tops level, so the leftover height is symmetric above and
-   below instead of pooling at the bottom. `safe` degrades to `start` on overflow, so a card
-   title is never what gets clipped, and the per-element scan catches the overflow instead. */
-.settings-fit { display: flex; flex-direction: column; justify-content: safe center; min-height: 0; }
-.settings-fit > .settings-two-col { align-items: start; }
 
 /* The three modes, compared. Capped rather than stretched: at 1400x900 three panels each
    holding one line of text in 240px of air reads worse than three tidy ones centred. One column
@@ -490,12 +506,33 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--border-accent);
 @container settings (min-width: 48rem) { .settings-density { --shortcut-cols: 2; } }
 @container settings (max-height: 560px) { .settings-density { --shortcut-cols: 2; } }
 
+/* The two provider forms: side by side from 56rem (two forms at 48rem squeeze the key input to
+   70px), stacked below that. Both cards are elastic and top-aligned, so together they take the
+   height in either direction. The seam between them is a flex child that IS the gap, with the
+   swap button centred on it: no positioning arithmetic in either direction, and it is last in
+   the DOM so it never remounts and keyboard focus survives a press. The columns carry a CSS
+   `order` (0 and 2, seam at 1) but their DOM order is the real try order, which is what screen
+   readers and the tests read. */
+.provider-pair { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.provider-pair > [data-settings-col] { flex: 1 1 auto; min-width: 0; min-height: 0; }
+.provider-seam { position: relative; flex: 0 0 var(--card-gap, 1rem); display: grid; place-items: center; z-index: 1; }
+.provider-swap { position: absolute; inset: 0; margin: auto; }
+.provider-swap .glyph-row { display: none; }
+@container settings (min-width: 56rem) {
+  .provider-pair { flex-direction: row; }
+  .provider-pair > [data-settings-col] { flex-basis: 0%; }
+  .provider-swap .glyph-row { display: block; }
+  .provider-swap .glyph-col { display: none; }
+}
+
 /* Provider cards fold into a summary row only when there is neither the width for two columns
-   nor the height for two stacked cards. Elsewhere both stay expanded. */
+   nor the height for two stacked cards. Elsewhere both stay expanded. A collapsed column stops
+   growing, so the summary row hugs the expanded card instead of floating at the bottom. */
 .provider-summary { display: none; }
 @container settings (max-height: 560px) and (max-width: 56rem) {
   .provider-card[data-collapsed] .provider-config { display: none; }
   .provider-card[data-collapsed] .provider-summary { display: flex; }
+  .provider-pair > [data-collapsed] { flex-grow: 0; }
 }
 
 /* Dialogs and popovers enter with the shell's own ease, on opacity and the individual `scale`
@@ -508,8 +545,29 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--border-accent);
   from { opacity: 0; }
   to { opacity: 1; }
 }
-.ember-dialog, .ember-popover { animation: ember-layer-in 180ms cubic-bezier(0.22, 1, 0.36, 1); }
-.ember-dialog-overlay { animation: ember-fade-in 180ms ease-out; }
+@keyframes ember-layer-out {
+  from { opacity: 1; scale: 1; }
+  to { opacity: 0; scale: 0.985; }
+}
+@keyframes ember-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+.ember-dialog[data-state="open"], .ember-popover[data-state="open"] {
+  animation: ember-layer-in 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.ember-dialog-overlay[data-state="open"] { animation: ember-fade-in 180ms ease-out; }
+/* Radix keeps a layer mounted until the animation declared for its closed state ends, so an
+   exit costs nothing but these three rules. Without them every dialog, popover and scrim in the
+   settings vanished between two frames: they arrived as objects and left as if switched off. */
+.ember-dialog[data-state="closed"], .ember-popover[data-state="closed"] {
+  animation: ember-layer-out 140ms cubic-bezier(0.4, 0, 1, 1);
+}
+.ember-dialog-overlay[data-state="closed"] { animation: ember-fade-out 140ms ease-in; }
 @media (prefers-reduced-motion: reduce) {
-  .ember-dialog, .ember-popover, .ember-dialog-overlay { animation: none; }
+  /* Matched on [data-state] so this stays at least as specific as the rules above; a bare class
+     selector loses to them and the kill switch silently does nothing. */
+  .ember-dialog[data-state], .ember-popover[data-state], .ember-dialog-overlay[data-state] {
+    animation: none;
+  }
 }

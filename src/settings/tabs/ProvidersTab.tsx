@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { toast } from "sonner";
-import { ArrowRight, ArrowSquareOut, ArrowUp, Atom, CaretDown, Lightning } from "@phosphor-icons/react";
+import { ArrowRight, ArrowSquareOut, ArrowsDownUp, ArrowsLeftRight, Atom, CaretDown, Lightning } from "@phosphor-icons/react";
 import { Feedback } from "@/components/Feedback";
 import { BrandIcon } from "@/components/BrandIcon";
 import { Button } from "@/components/ui/button";
@@ -147,33 +147,67 @@ function GetKeyButton({ console: target }: { console: KeyConsole }) {
   );
 }
 
-/** Puts this provider first in the try order. Replaces the arrow that used to float beside the
- *  card: that arrow needed 64px of gutter outside the cards, which a two-column layout does not
- *  have. A labelled button also reads on its own; the arrow only explained itself on hover. */
-function TryFirstButton({ kind, onClick }: { kind: ProviderKind; onClick: () => void }) {
+const PILL_CLASS =
+  "shrink-0 whitespace-nowrap rounded-full border border-[color:var(--border-accent)] px-2 py-1 text-[10px] font-semibold uppercase leading-none tracking-wider text-accent";
+
+/**
+ * The PRIMARY badge. On the expanded card it is a shared-layout element: when the order swaps,
+ * one pill unmounts in the card that lost the role and another mounts in the card that gained
+ * it, in the same commit, and motion slides it across. `layoutId` is global here (no
+ * LayoutGroup in the settings tree), and `position` keeps the text from scale-distorting. The
+ * collapsed summary row keeps a plain span: two mounted elements with one id would fight.
+ */
+function PrimaryPill({ shared = false }: { shared?: boolean }) {
+  const still = useReducedMotion();
+  if (!shared) return <span className={PILL_CLASS}>Primary</span>;
   return (
-    <Button
-      variant="ghost"
-      size="sm"
-      className="gap-1.5 text-xs"
-      onClick={onClick}
-      title={
-        kind === "gemini"
-          ? "Try Gemini first for every refine; the other service becomes the fallback"
-          : "Try this service first for every refine; Gemini becomes the fallback"
-      }
+    <motion.span
+      layoutId="primary-pill"
+      layout="position"
+      transition={still ? { duration: 0 } : SWAP_SPRING}
+      className={PILL_CLASS}
     >
-      <ArrowUp size={12} weight="bold" aria-hidden="true" />
-      Try first
-    </Button>
+      Primary
+    </motion.span>
   );
 }
 
-function PrimaryPill() {
+/**
+ * The swap, on the seam between the two cards. One press flips the try order: the cards FLIP
+ * past each other, the PRIMARY pill slides to the other card, the strip reorders, and the
+ * glyph turns half a turn. `whileTap` and not a CSS `active:scale`: motion owns this element's
+ * transform, and a CSS transform would fight the inline one. Under reduced motion the button
+ * rule in globals.css forces `transform: none`; the glyph is symmetric, so nothing is lost.
+ */
+function SwapButton({
+  first,
+  second,
+  flipped,
+  onSwap,
+}: {
+  /** The service that would be tried first AFTER the press. */
+  first: string;
+  second: string;
+  flipped: boolean;
+  onSwap: () => void;
+}) {
+  const still = useReducedMotion();
+  const label = `Try ${first} first, then ${second}`;
   return (
-    <span className="shrink-0 whitespace-nowrap rounded-full border border-[color:var(--border-accent)] px-2 py-1 text-[10px] font-semibold uppercase leading-none tracking-wider text-accent">
-      Primary
-    </span>
+    <motion.button
+      type="button"
+      data-provider-swap=""
+      aria-label={label}
+      title={label}
+      onClick={onSwap}
+      animate={{ rotate: flipped ? 180 : 0 }}
+      whileTap={still ? undefined : { scale: 0.92 }}
+      transition={still ? { duration: 0 } : SWAP_SPRING}
+      className="provider-swap ember-btn-ghost flex h-8 w-8 items-center justify-center rounded-full border border-[color:var(--border-default)] bg-surface-2 text-fg-muted shadow-[var(--shadow-pop)] hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--border-accent)]"
+    >
+      <ArrowsLeftRight size={14} weight="bold" className="glyph-row" aria-hidden="true" />
+      <ArrowsDownUp size={14} weight="bold" className="glyph-col" aria-hidden="true" />
+    </motion.button>
   );
 }
 
@@ -309,7 +343,6 @@ function ProviderConfig({
   account,
   onSettings,
   isPrimary,
-  onMakePrimary,
 }: {
   kind: ProviderKind;
   title: string;
@@ -333,7 +366,6 @@ function ProviderConfig({
   onSettings?: (s: EmberSettings) => void;
   /** Este é o provider tentado primeiro? O outro é o fallback. */
   isPrimary?: boolean;
-  onMakePrimary?: () => void;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [key, setKey] = useState("");
@@ -481,16 +513,16 @@ function ProviderConfig({
   const keyConsole: KeyConsole | undefined =
     kind === "openai" ? (subscription ? undefined : endpoint?.id) : (kind as KeyConsole);
 
-  const actions =
-    keyConsole || (onMakePrimary && !isPrimary) ? (
-      <div className="flex flex-wrap items-center justify-end gap-1.5">
-        {onMakePrimary && !isPrimary && <TryFirstButton kind={kind} onClick={onMakePrimary} />}
-        {keyConsole && <GetKeyButton console={keyConsole} />}
-      </div>
-    ) : undefined;
-
   return (
-    <Section title={title} badge={isPrimary ? <PrimaryPill /> : undefined} hint={subtitle} action={actions}>
+    // Elastic: the card takes its column's height with the rows top-aligned. Padding at the
+    // bottom inside a card is fine; a gap above the block was the thing that read as broken.
+    <Section
+      title={title}
+      elastic
+      badge={isPrimary ? <PrimaryPill shared /> : undefined}
+      hint={subtitle}
+      action={keyConsole ? <GetKeyButton console={keyConsole} /> : undefined}
+    >
       {kind === "openai" && onCommitBaseUrl && (
         <ProviderRow
           label="Service"
@@ -613,18 +645,14 @@ function ProviderSummary({
   status,
   model,
   isPrimary,
-  kind,
   onExpand,
-  onMakePrimary,
   className,
 }: {
   title: string;
   status: string;
   model: string;
   isPrimary: boolean;
-  kind: ProviderKind;
   onExpand: () => void;
-  onMakePrimary?: () => void;
   className?: string;
 }) {
   return (
@@ -646,7 +674,6 @@ function ProviderSummary({
           {status} · <span className="font-mono">{model}</span>
         </span>
       </button>
-      {!isPrimary && onMakePrimary && <TryFirstButton kind={kind} onClick={onMakePrimary} />}
       <Button variant="ghost" size="sm" onClick={onExpand} aria-label={`Expand ${title}`}>
         <CaretDown size={14} aria-hidden="true" />
       </Button>
@@ -694,10 +721,13 @@ function TryOrderStep({
 function TryOrderStrip({
   health,
   steps,
+  primary,
 }: {
   health: ProviderHealth | null;
-  steps: { title: string; model: string; state: "ready" | "stale" | "missing" }[];
+  steps: { kind: ProviderKind; title: string; model: string; state: "ready" | "stale" | "missing" }[];
+  primary: ProviderKind;
 }) {
+  const still = useReducedMotion();
   // No verdict before the first health probe answers: an invented one would be worse than none.
   const verdict = !health
     ? null
@@ -712,11 +742,20 @@ function TryOrderStrip({
       className="flex h-9 shrink-0 items-center gap-2 overflow-hidden rounded-lg border border-[color:var(--border-subtle)] bg-surface-1 px-3 text-xs"
     >
       <span className="shrink-0 text-fg-muted">Tried in order</span>
-      {steps.map((step, i) => (
-        <span key={step.title} className="flex min-w-0 items-center gap-2">
+      {steps.map(({ kind, ...step }, i) => (
+        // Stable key per service, so a swap is a reorder and motion slides the two steps past
+        // each other instead of remounting them in place.
+        <motion.span
+          key={kind}
+          data-step={kind}
+          layout="position"
+          layoutDependency={primary}
+          transition={still ? { duration: 0 } : SWAP_SPRING}
+          className="flex min-w-0 items-center gap-2"
+        >
           {i > 0 && <ArrowRight size={12} aria-hidden="true" className="shrink-0 text-fg-muted" />}
           <TryOrderStep index={i + 1} {...step} />
-        </span>
+        </motion.span>
       ))}
       {verdict && (
         <span
@@ -826,7 +865,6 @@ export function ProvidersTab({
         <ProviderConfig
           kind="gemini"
           isPrimary={primary === "gemini"}
-          onMakePrimary={() => makePrimary("gemini")}
           title="Gemini"
           subtitle={
             primary === "gemini"
@@ -863,7 +901,6 @@ export function ProvidersTab({
         <ProviderConfig
           kind="openai"
           isPrimary={primary === "openai"}
-          onMakePrimary={() => makePrimary("openai")}
           title={openaiTitle}
           subtitle={
             primary === "openai"
@@ -913,27 +950,31 @@ export function ProvidersTab({
   const stepState = (kind: ProviderKind): "ready" | "stale" | "missing" =>
     !cards[kind].configured ? "missing" : health?.needsRevalidation.includes(kind) ? "stale" : "ready";
 
+  const fallback: ProviderKind = primary === "gemini" ? "openai" : "gemini";
+
   return (
-    // Two provider forms cannot grow: five labelled rows spread over 700px reads as a broken
-    // template, not as a spacious form. So this tab fills by centring its block, with the card
-    // tops level, rather than by stretching anything.
-    <div data-tab-body="" className="settings-fit min-h-0 flex-1">
-      <div data-settings-col="" className="settings-col">
+    // Top to bottom, no centring: notices, the try order, then the two cards taking the height.
+    <div data-tab-body="" className="settings-col min-h-0 flex-1">
       {s.keyStoreError && (
         <NoticeRow text="Ember couldn't read your saved keys (the credential vault may be locked). Reopen the app or unlock the vault, then re-enter your keys." />
       )}
       <ProviderHealthNotice health={health} dismissed={healthDismissed} onDismiss={onDismissHealth} />
       <TryOrderStrip
         health={health}
-        steps={order.map((kind) => ({ title: cards[kind].title, model: cards[kind].model, state: stepState(kind) }))}
+        primary={primary}
+        steps={order.map((kind) => ({ kind, title: cards[kind].title, model: cards[kind].model, state: stepState(kind) }))}
       />
       {/* Os dois cartões existem sempre; só a ORDEM muda. Cada um vai dentro de um `motion.div`
           com `layout`, e é isso que faz o cartão promovido subir de facto em vez de a lista
           trocar de conteúdo num piscar de olhos: a animação mostra o que aconteceu, que é
           exatamente a informação que o utilizador precisa. `layoutDependency` limits the
-          measurement to the swap; without it every window resize would animate the cards. */}
-      <div className="grid grid-cols-1 items-start gap-[var(--card-gap,1rem)] @4xl/settings:grid-cols-2">
-        {order.map((kind) => {
+          measurement to the swap; without it every window resize would animate the cards.
+
+          The DOM order is the try order (screen readers and the tests read it); the CSS `order`
+          only makes room for the seam, which sits last in the DOM so the swap button never
+          remounts and keeps keyboard focus across a press. */}
+      <div className="provider-pair">
+        {order.map((kind, i) => {
           const card = cards[kind];
           const isExpanded = expanded === kind;
           return (
@@ -942,26 +983,33 @@ export function ProvidersTab({
               layout
               layoutDependency={primary}
               transition={still ? { duration: 0 } : SWAP_SPRING}
-              className="provider-card min-w-0"
+              data-settings-col=""
+              className="settings-col provider-card"
+              style={{ order: i * 2 }}
               // The collapse only applies when the container is short AND narrow (globals.css):
               // a tall narrow window has room for both cards, a wide one shows them side by side.
               data-collapsed={isExpanded ? undefined : ""}
             >
-              <div className="provider-config">{card.config}</div>
+              <div className="provider-config flex min-h-0 flex-1 flex-col">{card.config}</div>
               <ProviderSummary
                 className="provider-summary"
                 title={card.title}
                 status={card.status}
                 model={card.model}
                 isPrimary={primary === kind}
-                kind={kind}
                 onExpand={() => setOverride(kind)}
-                onMakePrimary={() => makePrimary(kind)}
               />
             </motion.div>
           );
         })}
-      </div>
+        <div className="provider-seam" style={{ order: 1 }}>
+          <SwapButton
+            first={cards[fallback].title}
+            second={cards[primary].title}
+            flipped={primary !== "gemini"}
+            onSwap={() => makePrimary(fallback)}
+          />
+        </div>
       </div>
     </div>
   );

@@ -128,6 +128,14 @@ export async function tabContentRegressions(page, origin) {
   const strip = await page.$eval('[data-try-order]', e => e.textContent);
   assert.match(strip, /Gemini/, `the strip should name the primary first: ${strip}`);
   assert.match(strip, /No pre-validated fallback/, `the strip should carry the health verdict: ${strip}`);
+  const firstCard = () => page.$eval('.provider-pair [data-settings-col]:first-child h3', e => e.textContent.trim());
+  assert.equal(await firstCard(), 'Gemini');
+  await page.click('[data-provider-swap]');
+  await page.waitForFunction(() => document.querySelector('[data-try-order] [data-step]').textContent.includes('Groq'));
+  assert.equal(await firstCard(), 'Groq', 'the cards must reorder with the strip (DOM order, not CSS order)');
+  assert.match(await page.$eval('[data-provider-swap]', e => e.getAttribute('aria-label')), /Gemini first/);
+  await page.click('[data-provider-swap]');
+  await page.waitForFunction(() => document.querySelector('.provider-pair [data-settings-col]:first-child h3').textContent.trim() === 'Gemini');
 
   // Refining: three radios, all three outputs on screen, arrows move the selection.
   await open(1, 'input[name="refine-mode"]');
