@@ -587,7 +587,7 @@ function ProjectEditor({
         </ChoiceGrid>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-1.5">
+      <div className="flex min-h-[7.5rem] flex-1 flex-col gap-1.5">
         <div className="flex items-baseline justify-between gap-2">
           <div className="flex items-center gap-1.5">
             <Label htmlFor={`brief-${id}`}>Brief</Label>
@@ -624,7 +624,7 @@ function ProjectEditor({
         />
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 text-xs">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 text-xs">
         <span className="text-fg-muted">
           Automatic context · {applications} {applications === 1 ? "app" : "apps"} · {sourceCount} {sourceCount === 1 ? "source" : "sources"}
         </span>
@@ -992,8 +992,9 @@ export function ProjectsTab({
         {editing && (
           <section
             aria-label="Project editor"
+            data-scroll-pane=""
             className={cn(
-              "flex min-h-0 flex-col overflow-hidden rounded-lg border bg-surface-1",
+              "flex min-h-0 flex-col overflow-y-auto rounded-lg border bg-surface-1",
               isNew ? "border-[color:var(--border-accent)]" : "border-[color:var(--border-subtle)]",
             )}
           >

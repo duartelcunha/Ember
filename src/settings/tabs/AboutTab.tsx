@@ -71,22 +71,14 @@ export function AboutTab({
     <div data-tab-body="" className="settings-col min-h-0 flex-1">
       <Section title="Ember" elastic hint="Refines the text you select in any app: prompts, emails, messages, docs.">
         <div className="flex min-h-0 flex-1 flex-col gap-4">
-          {/* The band takes the slack, which is the whole point: the mark centred in a tall
-              warm field reads as composition, while the same emptiness sitting between the notes
-              and the version line reads as a page that ran out of things to say. */}
-          <div className="relative flex min-h-[9rem] flex-1 flex-col items-center justify-center gap-3 overflow-hidden p-5 text-center">
-            <span
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-0"
-              style={{
-                background:
-                  "radial-gradient(60% 70% at 50% 42%, color-mix(in oklab, var(--color-accent) 20%, transparent), transparent 72%)",
-              }}
-            />
-            <span className="relative shrink-0">
+          {/* The mark takes the slack, which is the whole point: centred with room around it it
+              reads as composition, while the same emptiness sitting between the notes and the
+              version line reads as a page that ran out of things to say. */}
+          <div className="flex min-h-[9rem] flex-1 flex-col items-center justify-center gap-3 p-5 text-center">
+            <span className="shrink-0">
               <Logo size={88} />
             </span>
-            <span className="relative min-w-0">
+            <span className="min-w-0">
               <span className="block text-xl font-semibold text-fg">Ember</span>
               <span className="mt-1 block text-xs text-fg-muted">
                 Gemini first, one fallback of your choosing, guided by your profile.

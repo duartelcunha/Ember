@@ -24,9 +24,21 @@ export async function settingsRegressions(page, origin, capture) {
         const channels = rgb.match(/[\d.]+/g).slice(0, 3).map(Number).map(n => n / 255).map(n => n <= .04045 ? n / 12.92 : ((n + .055) / 1.055) ** 2.4);
         return channels[0] * .2126 + channels[1] * .7152 + channels[2] * .0722;
       };
+      // The background a reader actually sees, not the one the element declares. Most surfaces
+      // here paint nothing of their own and sit on the card, and reading `backgroundColor`
+      // straight gave a transparent black that flattered some pairs and failed others for the
+      // wrong reason.
+      const ground = el => {
+        for (let node = el; node; node = node.parentElement) {
+          const value = getComputedStyle(node).backgroundColor;
+          const alpha = value.match(/[\d.]+/g);
+          if (alpha && (alpha.length < 4 || Number(alpha[3]) > 0)) return value;
+        }
+        return 'rgb(255, 255, 255)';
+      };
       return ['[role=alert]', '#gemini-key + button'].map(selector => {
-        const style = getComputedStyle(document.querySelector(selector));
-        const a = lum(style.color), b = lum(style.backgroundColor);
+        const el = document.querySelector(selector);
+        const a = lum(getComputedStyle(el).color), b = lum(ground(el));
         return (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
       });
     });

@@ -512,6 +512,17 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--border-accent);
                align-items: center; gap: 0 1rem; flex: 1 1 auto; min-height: 2.25rem;
                max-block-size: 9.5rem; padding: 0.375rem 0.75rem; }
 .mode-option + .mode-option { border-top: 1px solid var(--border-subtle); }
+
+/* The hit area of one option in a segmented control.
+ *
+ * The input IS the hit area, covering the label, rather than a screen-reader-only node beside
+ * it. That is what lets `:focus-visible` decide when to draw the ring. The rings were hung on
+ * `focus-within`, which fires for a mouse click as well, so the button you had just pressed kept
+ * a bright ring around it: it read as a rendering fault, not as focus, and it was on screen far
+ * more often than the keyboard case it was meant for. */
+.ember-seg-hit { position: absolute; inset: 0; margin: 0; appearance: none; -webkit-appearance: none;
+                 background: transparent; border: 0; border-radius: inherit; cursor: pointer; }
+.ember-seg-hit:focus-visible { outline: 2px solid var(--border-accent); outline-offset: 1px; }
 /* Only ever set in the 520px tier, where four full examples cannot fit whatever we do. Unset
    everywhere else, so `-webkit-line-clamp: none` leaves the text alone. */
 .mode-example { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden;

@@ -183,7 +183,6 @@ function LengthSegment({ value, onChange }: { value: Length; onChange: (length: 
             key={l.value}
             className={cn(
               "relative cursor-pointer rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors",
-              "focus-within:outline-none focus-within:ring-2 focus-within:ring-[color:var(--border-accent)]",
               on ? "text-fg" : "text-fg-muted hover:text-fg",
             )}
           >
@@ -192,14 +191,19 @@ function LengthSegment({ value, onChange }: { value: Length; onChange: (length: 
                 layoutId="length-thumb"
                 transition={still ? { duration: 0 } : THUMB_SPRING}
                 aria-hidden="true"
-                className="absolute inset-0 rounded-full border border-[color:var(--border-default)] bg-surface-3 shadow-[inset_0_1px_0_var(--sheen)]"
+                style={{
+                  borderRadius: 9999,
+                  boxShadow: "inset 0 0 0 1px var(--border-default), inset 0 1px 0 var(--sheen)",
+                }}
+                className="absolute inset-0 bg-surface-3"
               />
             )}
             <input
               type="radio"
               name="refine-length"
               value={l.value}
-              className="sr-only"
+              className="ember-seg-hit"
+              aria-label={l.label}
               checked={on}
               onChange={() => onChange(l.value)}
             />
