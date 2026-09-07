@@ -64,11 +64,10 @@ const MODE_EXAMPLE = {
     turbo:
       [
         "You are my scheduling assistant.",
-        "Goal: Schedule a meeting with John.",
-        "When: Tomorrow, time to be confirmed.",
-        "Output: Ready-to-send invite and note.",
+        "Goal: schedule a meeting with John, time to confirm.",
+        "Output: a ready-to-send invite.",
       ].join("\n"),
-    reply: "The meeting is at {time}. {names} are joining. Tell me if that does not work for you.",
+    reply: "The meeting is at {time}. {names} are joining.",
   } as Record<RefineMode, string>,
 };
 
@@ -95,7 +94,7 @@ function ModeComparison({ mode, onPick }: { mode: RefineMode; onPick: (mode: Ref
   return (
     // The safety valve, not the plan: the four rows fit at every size in the matrix. Scrolling a
     // little beats budgeting pixels that the next copy change would break.
-    <fieldset data-scroll-pane="" className="mode-compare min-h-0 flex-auto">
+    <fieldset data-scroll-pane="" className="mode-compare">
       <legend className="sr-only">Refine mode</legend>
       {MODES.map((m) => {
         const on = mode === m;
@@ -126,11 +125,11 @@ function ModeComparison({ mode, onPick }: { mode: RefineMode; onPick: (mode: Ref
               {MODE_COPY[m].title}
             </span>
             <span className="min-w-0">
-              <span className="truncate text-xs text-fg-muted [display:var(--mode-hint,block)]">
+              <span className="text-xs leading-snug text-fg-muted [display:var(--mode-hint,block)]">
                 {MODE_COPY[m].hint}
               </span>
               {m === "reply" && (
-                <span className="truncate font-mono text-xs text-fg-muted line-through decoration-1 [display:var(--mode-input,block)]">
+                <span className="font-mono text-xs text-fg-muted line-through decoration-1 [display:var(--mode-input,block)]">
                   {MODE_EXAMPLE.replyInput}
                 </span>
               )}

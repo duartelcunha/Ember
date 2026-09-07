@@ -507,22 +507,21 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--border-accent);
  * The rows share the height rather than a cap sitting under a void: four roomy rows at 1400x900
  * read as a generous list, where four tidy ones over 300px of nothing read as a page that
  * stopped early. */
-.mode-compare { display: flex; flex-direction: column; min-height: 0; overflow: auto; }
+.mode-compare { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; overflow: auto; }
 .mode-option { display: grid; grid-template-columns: minmax(0, 7.5rem) minmax(0, 1fr);
-               align-items: center; gap: 0 1rem; flex: 1 1 auto; min-height: 2.75rem;
-               max-block-size: 7rem; padding: 0.5rem 0.75rem; }
+               align-items: center; gap: 0 1rem; flex: 1 1 auto; min-height: 2.25rem;
+               max-block-size: 9.5rem; padding: 0.375rem 0.75rem; }
 .mode-option + .mode-option { border-top: 1px solid var(--border-subtle); }
+/* Only ever set in the 520px tier, where four full examples cannot fit whatever we do. Unset
+   everywhere else, so `-webkit-line-clamp: none` leaves the text alone. */
+.mode-example { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden;
+                -webkit-line-clamp: var(--example-lines, none); }
 /* Narrow, the per-mode hint goes: with the example on the same row, it is the more redundant of
    the two, and the name plus the output is still a comparison you read top to bottom. */
 @container settings (max-width: 48rem) {
-  .settings-density { --example-lines: 1; --mode-hint: none; --mode-input: none; }
+  .settings-density { --mode-hint: none; --mode-input: none; }
   .mode-option { grid-template-columns: minmax(0, 6rem) minmax(0, 1fr); padding-inline: 0.5rem; }
 }
-/* The example clamps instead of scrolling: a comparison you have to scroll is not a comparison.
-   The full text stays in the title attribute. */
-.mode-example { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden;
-                -webkit-line-clamp: var(--example-lines, 6); }
-
 /* The four shortcut rows. Two-up when there is width for it, and also in short windows whatever
    the width, because four stacked capture rows do not fit a 520px-tall panel. */
 .shortcut-rows { display: grid; grid-template-columns: repeat(var(--shortcut-cols, 1), minmax(0, 1fr));
