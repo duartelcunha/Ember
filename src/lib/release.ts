@@ -6,15 +6,14 @@
  * and useless to anyone who is not reading the repository. These lines are written by hand when
  * a release is cut, which is the only moment anyone knows what the release actually means.
  *
- * Newest first. When you cut a release, add an entry at the top with the version string exactly
- * as `getVersion()` reports it, and three lines at most: About shows the entry for the running
- * version and NOTHING when there is no match, so a stale list can never describe a build it was
- * not written for.
+ * Newest first, keyed by the RELEASE, not by the build: an entry for 1.2.0 covers 1.2.0-rc.3,
+ * 1.2.0-rc.4 and 1.2.0 itself, because candidates of a version are that version being tried.
+ * Writing the full build string here meant a new entry with every candidate, and the two times
+ * it was missed the About card went blank on the release that had the work in it.
  *
- * That cuts both ways, and it caught one out already: this list carried the settings release
- * under 1.1.0-rc.2, a version that shipped months of work earlier and never had any of it, and
- * the release that did have it would have shown an empty About. The version here is the one
- * release-please is about to publish, not the one you happen to be running while you write it.
+ * About shows the entry whose release matches and NOTHING when none does, so a stale list still
+ * cannot describe a version it was not written for. Three lines at most, in plain words: this is
+ * the only place the app tells someone what changed.
  */
 export interface Release {
   version: string;
@@ -23,7 +22,7 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
-    version: "1.2.0-rc.3",
+    version: "1.2.0",
     lines: [
       "Every settings tab fits the window now, and the window remembers where you left it.",
       "A Reply mode that answers the message you selected, on a shortcut of its own.",
@@ -31,7 +30,7 @@ export const RELEASES: Release[] = [
     ],
   },
   {
-    version: "1.1.0-rc.1",
+    version: "1.1.0",
     lines: [
       "The ember follows the cursor without drifting, and project pills sit where you expect.",
       "Protected text and accented characters survive a refine untouched.",
@@ -40,8 +39,14 @@ export const RELEASES: Release[] = [
   },
 ];
 
+/** The release a version belongs to: 1.2.0-rc.4 and 1.2.0 are the same release being tried. */
+function releaseOf(version: string) {
+  return version.split("-")[0];
+}
+
 /** The entry for the build that is running, or null when this list has nothing to say about it. */
 export function releaseFor(version: string | null): Release | null {
   if (!version) return null;
-  return RELEASES.find(r => r.version === version) ?? null;
+  const release = releaseOf(version);
+  return RELEASES.find(r => releaseOf(r.version) === release) ?? null;
 }

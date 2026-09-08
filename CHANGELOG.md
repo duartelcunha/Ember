@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.0-rc.4](https://github.com/duartelcunha/Ember/compare/v1.2.0-rc.3...v1.2.0-rc.4) (2026-09-08)
+
+
+### Bug Fixes
+
+* **release:** let a candidate increment its own number ([#43](https://github.com/duartelcunha/Ember/issues/43)) ([98cad88](https://github.com/duartelcunha/Ember/commit/98cad883aef25cfcd282f9df2099535e7cd67cf3))
+* **settings:** sentences wrap, they never stop mid-word ([#41](https://github.com/duartelcunha/Ember/issues/41)) ([8a894bd](https://github.com/duartelcunha/Ember/commit/8a894bd57f126deeeec33c6c08ef08e4d57681c7))
+
 ## [1.2.0-rc.3](https://github.com/duartelcunha/Ember/compare/v1.1.0-rc.2...v1.2.0-rc.3) (2026-09-07)
 
 
