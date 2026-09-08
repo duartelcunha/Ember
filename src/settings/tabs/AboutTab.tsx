@@ -75,7 +75,9 @@ export function AboutTab({
               reads as composition, while the same emptiness sitting between the notes and the
               version line reads as a page that ran out of things to say. */}
           <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-5 text-center">
-            <span className="flex max-h-[88px] min-h-0 flex-1 items-center justify-center">
+            {/* Floor at 48px: the band gives up height to whatever grows below it, and a mark
+                that can shrink to zero eventually does. Past the floor the card clips instead. */}
+            <span className="flex max-h-[88px] min-h-12 flex-1 items-center justify-center">
               <Logo size={88} className="h-full max-h-[88px] w-auto" />
             </span>
             <span className="min-w-0">
