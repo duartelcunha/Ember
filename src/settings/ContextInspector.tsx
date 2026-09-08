@@ -78,7 +78,7 @@ export function ContextInspector() {
       <span className="shrink-0 text-sm font-medium text-fg">{title}</span>
       <span
         role={error ? "alert" : undefined}
-        className={`min-w-0 flex-1 truncate ${error ? "text-error" : "text-fg-muted"}`}
+        className={`min-w-0 flex-1 leading-snug ${error ? "text-error" : "text-fg-muted"}`}
         title={attention ? `${status}. ${attention}` : status}
       >
         {status}

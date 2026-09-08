@@ -225,6 +225,14 @@ export async function tabContentRegressions(page, origin) {
   assert.equal(await page.$$eval('input[name="refine-mode"]', e => e.length), 4);
   assert.ok(await page.$('input[name="refine-mode"][value="reply"]'), 'Reply must be pickable as the main mode');
   assert.equal(await page.$$eval('input[name="refine-length"]', e => e.length), 3);
+  // No row may be drawn over the one below it. This has regressed twice, each time because a
+  // row was allowed to shrink under its own text while the text stayed where it was.
+  const overlaps = await page.$$eval('.mode-option', rows => rows.slice(1).map((row, i) => {
+    const above = rows[i].getBoundingClientRect(), here = row.getBoundingClientRect();
+    return here.top + 0.5 < above.bottom ? `${rows[i].innerText.split('\n')[0]} overlaps ${row.innerText.split('\n')[0]}` : null;
+  }).filter(Boolean));
+  assert.deepEqual(overlaps, [], 'mode rows must not be drawn on top of each other');
+
   const outputs = await page.$$eval('.mode-example', e => e.map(x => x.textContent).join(' | '));
   for (const expected of ['Set up a meeting', 'Schedule a meeting', 'scheduling assistant', 'The meeting is at {time}']) {
     assert.ok(outputs.includes(expected), `every mode's example should be on screen: ${outputs}`);

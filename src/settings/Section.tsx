@@ -73,7 +73,7 @@ export function Section({
       <div className={cn("flex items-start justify-between gap-4", elastic && "shrink-0")}>
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
-            <h3 id={titleId} className="truncate text-sm font-semibold text-fg">{title}</h3>
+            <h3 id={titleId} className="text-sm font-semibold text-fg">{title}</h3>
             {badge}
             {detail && <InfoPopover title={title}>{detail}</InfoPopover>}
           </div>
@@ -144,21 +144,22 @@ export function SwitchRow({
   onCheckedChange: (checked: boolean) => void;
   disabled?: boolean;
 }) {
+  // The name and its controls on one line, the sentence on its own underneath with the whole
+  // width to itself. Sharing the line with the switch left the sentence a third of the card in a
+  // narrow column, where it either wrapped four times or, before that, stopped mid-word.
   return (
-    <div className="flex items-center gap-3">
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5">
-          <Label htmlFor={id} className="truncate">{label}</Label>
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          <Label htmlFor={id}>{label}</Label>
           {detail && <InfoPopover title={label}>{detail}</InfoPopover>}
         </div>
-        {hint && (
-          <p className="mt-0.5 truncate text-xs text-fg-muted [display:var(--hint,block)]" title={hint}>
-            {hint}
-          </p>
-        )}
+        {extra}
+        <Switch id={id} checked={checked} onCheckedChange={onCheckedChange} disabled={disabled} />
       </div>
-      {extra}
-      <Switch id={id} checked={checked} onCheckedChange={onCheckedChange} disabled={disabled} />
+      {hint && (
+        <p className="text-xs leading-snug text-fg-muted [display:var(--hint,block)]">{hint}</p>
+      )}
     </div>
   );
 }

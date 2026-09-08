@@ -566,7 +566,7 @@ function ProviderConfig({
           <>
             {signedIn ? (
               <>
-                <p className="min-w-0 flex-1 truncate text-sm text-fg-muted">
+                <p className="min-w-0 flex-1 text-sm leading-snug text-fg-muted">
                   {account ? `Signed in as ${account}.` : "Signed in."}
                 </p>
                 <Button variant="ghost" onClick={signOut} loading={busy}>
@@ -575,7 +575,7 @@ function ProviderConfig({
               </>
             ) : (
               <>
-                <p className="min-w-0 flex-1 truncate text-sm text-fg-muted">
+                <p className="min-w-0 flex-1 text-sm leading-snug text-fg-muted">
                   Opens your browser to sign in. No key to paste.
                 </p>
                 <Button variant="primary" onClick={signIn} loading={busy}>

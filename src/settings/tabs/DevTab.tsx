@@ -93,7 +93,7 @@ function DiagnosticsSection({ savePrompts, keepResults }: { savePrompts: boolean
       {legacyResults && (
         <div className="flex items-center gap-3 text-xs">
           <span
-            className="min-w-0 flex-1 truncate text-fg-muted"
+            className="min-w-0 flex-1 leading-snug text-fg-muted"
             title="An older version left plaintext results in refine_cache.json. They are preserved and are not loaded automatically."
           >
             An older version left plaintext results in refine_cache.json. They are kept but never loaded.
