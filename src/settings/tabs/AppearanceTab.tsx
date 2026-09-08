@@ -105,7 +105,7 @@ function Segment<T extends string>({
 function StyleRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex shrink-0 items-center justify-between gap-3">
-      <span className="min-w-0 truncate text-xs text-fg-muted">{label}</span>
+      <span className="min-w-0 text-xs text-fg-muted">{label}</span>
       {children}
     </div>
   );

@@ -112,7 +112,7 @@ export function ProfileEditor({ settings, onSaved }: { settings: EmberSettings; 
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h2 id="profile-heading" className="text-sm font-semibold">Personalization profile</h2>
-          <p className="mt-0.5 truncate text-xs text-fg-muted" title={`Writing preferences and technical context, included in every refinement. Files are used only after you import, review and save a snapshot. Current source: ${source}.`}>
+          <p className="mt-0.5 text-xs leading-snug text-fg-muted" title={`Writing preferences and technical context, included in every refinement. Files are used only after you import, review and save a snapshot. Current source: ${source}.`}>
             Included in every refinement. Current source: {source}.
           </p>
         </div>
@@ -192,7 +192,7 @@ export function ProfileEditor({ settings, onSaved }: { settings: EmberSettings; 
         </div>
       </div>
       {settings.legacyAutoProfileDisabled && (
-        <p role="status" className="truncate text-xs text-fg-muted" title="Automatic agent-profile loading has been disabled. Import the files you want to use, or keep Ember's default profile.">
+        <p role="status" className="text-xs leading-snug text-fg-muted" title="Automatic agent-profile loading has been disabled. Import the files you want to use, or keep Ember's default profile.">
           Automatic agent-profile loading has been disabled. Import the files you want to use, or keep Ember's default profile.
         </p>
       )}
@@ -204,9 +204,9 @@ export function ProfileEditor({ settings, onSaved }: { settings: EmberSettings; 
         <p className="shrink-0 text-xs text-fg-muted" title="This profile is included in every refinement.">
           {profileBytes.toLocaleString()} / {settings.profileLimitBytes.toLocaleString()} bytes
         </p>
-        {tooLong && <p role="alert" className="min-w-0 flex-1 truncate text-xs text-error" title="This profile is too long. Shorten it before saving. The imported draft has not been truncated.">This profile is too long. Shorten it before saving. The imported draft has not been truncated.</p>}
+        {tooLong && <p role="alert" className="min-w-0 flex-1 text-xs leading-snug text-error" title="This profile is too long. Shorten it before saving. The imported draft has not been truncated.">This profile is too long. Shorten it before saving. The imported draft has not been truncated.</p>}
         {!tooLong && warnings.length > 0 && (
-          <p role="status" className="min-w-0 flex-1 truncate text-xs text-fg-muted" title={warnings.join(" ")}>{warnings.join(" ")}</p>
+          <p role="status" className="min-w-0 flex-1 text-xs leading-snug text-fg-muted" title={warnings.join(" ")}>{warnings.join(" ")}</p>
         )}
         <div className="ml-auto flex flex-wrap gap-2">
           <Button variant="ghost" size="sm" loading={importing} disabled={saving || importing} onClick={() => void importFiles()}>Import files...</Button>
