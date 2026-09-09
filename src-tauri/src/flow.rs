@@ -94,13 +94,33 @@ struct ApplyTarget {
 }
 
 impl ApplyTarget {
+    /// The run still owns the apply phase and the focused window is still the capture's.
+    /// Checked on both paths: a terminal handoff after a cancel or a window change would still
+    /// overwrite the user's clipboard, and the accessibility part below has nothing to say for
+    /// a terminal (no selection guard is taken there).
+    fn owns_window(&self) -> bool {
+        self.lease.may_apply() && crate::foreground::same_target(self.window)
+    }
+
     fn matches(&self) -> bool {
-        self.lease.may_apply()
-            && crate::foreground::same_target(self.window)
+        self.owns_window()
             && self.selection.as_ref().is_some_and(|guard| guard.matches())
             && crate::foreground::same_target(self.window)
             && self.lease.may_apply()
     }
+}
+
+/// What `blocking_replace` did with the refined text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Applied {
+    /// Ctrl+V was sent to the target. This does not prove the target accepted it.
+    Pasted,
+    /// Terminal: the flattened result was left on the clipboard and no keys were sent.
+    HandedOff,
+    /// Another writer took the clipboard between arming and the paste; nothing was sent.
+    ClipboardTakenOver,
+    /// Nothing was sent and nothing of the user's changed.
+    Refused,
 }
 
 fn emit(
@@ -310,22 +330,34 @@ fn blocking_replace(
     settle_ms: u64,
     target: ApplyTarget,
     expected_selection: String,
-) -> Result<bool, String> {
+) -> Result<Applied, String> {
     use seq::SelectionIo;
     let _input_owner = crate::preview_hook::input_lease();
-    // Terminal line editing is shell-specific; a generic Ctrl+U can destroy unrelated input.
-    if terminal || !target.matches() {
-        return Ok(false);
+    if !target.owns_window() {
+        return Ok(Applied::Refused);
     }
-    let mut io = RealIo::new(false)?;
+    let mut io = RealIo::new(terminal)?;
     if io.has_unpreservable_content() {
-        return Ok(false);
+        return Ok(Applied::Refused);
+    }
+    if terminal {
+        // Terminal line editing is shell-specific: the old generic Ctrl+U destroyed unrelated
+        // input, and a generic Ctrl+V lands in whatever the shell is doing. The result goes to
+        // the clipboard and the user pastes it; see `seq::hand_off`.
+        return Ok(if seq::hand_off(&mut io, &refined) {
+            Applied::HandedOff
+        } else {
+            Applied::Refused
+        });
+    }
+    if !target.matches() {
+        return Ok(Applied::Refused);
     }
     let saved = io.clip_get();
     let image = io.snapshot_image();
     #[cfg(windows)]
     if image.is_none() {
-        return Ok(false);
+        return Ok(Applied::Refused);
     }
     let captured = seq::capture(
         &mut io,
@@ -339,20 +371,42 @@ fn blocking_replace(
     let owned = captured.text.as_deref().unwrap_or(SENTINEL);
     if captured.text.as_deref() != Some(expected_selection.as_str()) || !target.matches() {
         restore_snapshot(&mut io, &saved, image.as_ref(), owned);
-        return Ok(false);
+        return Ok(Applied::Refused);
     }
     io.clip_set(&refined);
     let revision = io.clip_revision();
     if io.clip_get().as_deref() != Some(refined.as_str()) || !target.matches() {
         restore_snapshot(&mut io, &saved, image.as_ref(), &refined);
-        return Ok(false);
+        return Ok(Applied::Refused);
+    }
+    // Between arming and injection another writer can take the clipboard (a bridge, a sync
+    // tool, any app) and Ctrl+V would insert its content into the document. Check the content
+    // and the sequence number again, then the target once more, so that the accessibility
+    // check stays the last thing before the keys go out. Logged on every run, not only on
+    // refusal: a false-refusal rate has to be measurable from the log before a release.
+    let armed = seq::still_armed(&mut io, &refined, revision);
+    log::info!(
+        "paste: clipboard guard revision {revision:?} -> {:?}, armed={armed}",
+        io.clip_revision()
+    );
+    if !armed {
+        restore_snapshot(&mut io, &saved, image.as_ref(), &refined);
+        return Ok(Applied::ClipboardTakenOver);
+    }
+    if !target.matches() {
+        restore_snapshot(&mut io, &saved, image.as_ref(), &refined);
+        return Ok(Applied::Refused);
     }
     io.send_paste();
     io.sleep_ms(settle_ms);
     if io.clip_revision() == revision {
         restore_snapshot(&mut io, &saved, image.as_ref(), &refined);
     }
-    Ok(io.input_succeeded())
+    Ok(if io.input_succeeded() {
+        Applied::Pasted
+    } else {
+        Applied::Refused
+    })
 }
 
 /// Bloqueante: restaura o clipboard original (ramos de erro/hint): texto se havia, senao a
@@ -650,13 +704,13 @@ pub async fn run(app: AppHandle, opts: RunOpts, lease: RunLease) {
                         selection: selection_guard,
                         lease: lease.clone(),
                     };
-                    let pasted = tauri::async_runtime::spawn_blocking(move || {
+                    let applied = tauri::async_runtime::spawn_blocking(move || {
                         blocking_replace(refined, terminal, settle_ms, target, expected_selection)
                     })
                     .await;
-                    log::info!("[run {run_id}] paste: done (armed={pasted:?})");
-                    match pasted {
-                        Ok(Ok(true)) => {
+                    log::info!("[run {run_id}] paste: done (applied={applied:?})");
+                    match applied {
+                        Ok(Ok(Applied::Pasted)) => {
                             let outcome = if matches!(from_cache, Reuse::Fresh) {
                                 FlowOutcome::Success { provider }
                             } else {
@@ -664,10 +718,15 @@ pub async fn run(app: AppHandle, opts: RunOpts, lease: RunLease) {
                             };
                             finish(&app, run_id, outcome).await;
                         }
+                        Ok(Ok(Applied::HandedOff)) => {
+                            finish(&app, run_id, FlowOutcome::TerminalHandoff).await;
+                        }
+                        Ok(Ok(Applied::ClipboardTakenOver)) => {
+                            finish(&app, run_id, FlowOutcome::ClipboardChanged).await;
+                        }
                         _ => {
-                            // O refinado nao chegou a ser armado no clipboard (ocupado). A
-                            // seleccao ficou intacta: nao reportar "Refined" falso. O refinado
-                            // esta guardado, portanto o atalho seguinte nao volta a pagar.
+                            // Nothing was armed or sent and the selection is intact, so no false
+                            // "Refined". The result is cached: the next shortcut does not pay again.
                             finish(&app, run_id, FlowOutcome::PasteFailed).await;
                         }
                     }

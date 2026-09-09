@@ -73,9 +73,15 @@ export function UpdateChecker() {
           </Button>
         )}
       </div>
-      {status === "up-to-date" && (
-        <Feedback tone="success">No newer release is available on this update channel.</Feedback>
-      )}
+      {/* The status line always owns its row, even when it has nothing to say. The mark above is
+          the tab's only elastic region, so a row that appears on click is paid for entirely by
+          the mark: it shrank to a dot the moment "up to date" came back. */}
+      <div className="min-h-5">
+        {status === "up-to-date" && (
+          <Feedback tone="success">No newer release is available on this update channel.</Feedback>
+        )}
+        {status === "error" && <Feedback tone="error">{errorMsg}</Feedback>}
+      </div>
       {status === "downloading" && (
         <div className="flex flex-col gap-1.5">
           <p className="text-xs text-fg-muted">
@@ -104,7 +110,6 @@ export function UpdateChecker() {
           </Button>
         </div>
       )}
-      {status === "error" && <Feedback tone="error">{errorMsg}</Feedback>}
     </div>
   );
 }

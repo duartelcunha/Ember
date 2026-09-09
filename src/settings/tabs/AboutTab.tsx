@@ -69,19 +69,26 @@ export function AboutTab({
 
   return (
     <div data-tab-body="" className="settings-col min-h-0 flex-1">
-      <Section title="Ember" elastic hint="Refines the text you select in any app: prompts, emails, messages, docs.">
+      <Section title="About" elastic>
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
           {/* The mark takes the slack, which is the whole point: centred with room around it it
               reads as composition, while the same emptiness sitting between the notes and the
               version line reads as a page that ran out of things to say. */}
           <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-5 text-center">
-            <span className="flex max-h-[88px] min-h-0 flex-1 items-center justify-center">
+            {/* Floor at 48px: the band gives up height to whatever grows below it, and a mark
+                that can shrink to zero eventually does. Past the floor the card clips instead. */}
+            <span className="flex max-h-[88px] min-h-12 flex-1 items-center justify-center">
               <Logo size={88} className="h-full max-h-[88px] w-auto" />
             </span>
+            {/* One name and one line, the same line the README opens with. The card used to say
+                "Ember" twice with two different taglines, and the second one listed which
+                provider answers first: that is Providers-tab material, and on the page meant to
+                introduce the product it read like a config dump. The version lives in the
+                update row below, so it is not repeated here either. */}
             <span className="min-w-0">
               <span className="block text-xl font-semibold text-fg">Ember</span>
               <span className="mt-1 block text-xs text-fg-muted">
-                Gemini first, one fallback of your choosing, guided by your profile.
+                Refine any text, in the moment, in any desktop app.
               </span>
             </span>
           </div>
