@@ -281,6 +281,17 @@ const SETTINGS_CLOSE_MS: u64 = 160;
 /// one later hide rather than two.
 fn begin_settings_close(win: &WebviewWindow) {
     let app = win.app_handle().clone();
+    // The window-state plugin only writes its file on process exit, and a tray app can run for
+    // weeks. A crash or a forced shutdown in between would lose the geometry the user just
+    // chose, so every close saves it. Saved HERE, on the main thread inside the close request,
+    // and not on the timer below: the plugin holds its cache lock while it asks the main thread
+    // for each window's geometry, and when the main thread is inside one of the plugin's own
+    // event handlers waiting for that same lock, both wait forever. Saving from the timer's
+    // thread hung the app on the first close (Windows Application log, event 1002, 2026-09-09
+    // 04:37:50). The window does not move during the fade, so this is the state at the hide.
+    if let Err(e) = app.save_window_state(window_state_flags()) {
+        log::warn!("settings: window state not saved: {e}");
+    }
     let generation = app
         .state::<state::AppState>()
         .settings_close_gen
@@ -299,14 +310,12 @@ fn begin_settings_close(win: &WebviewWindow) {
             log::debug!("settings: close superseded before the hide");
             return;
         }
-        // The window-state plugin only writes its file on process exit, and a tray app can run
-        // for weeks. A crash or a forced shutdown in between would lose the geometry the user
-        // just chose, so every hide saves it.
-        if let Err(e) = app.save_window_state(window_state_flags()) {
-            log::warn!("settings: window state not saved: {e}");
-        }
-        let _ = win.hide();
-        log::info!("settings: hidden after the fade");
+        // The hide goes back to the main thread too: every native window call in this module
+        // ran there before the fade existed, and the timer's thread only ever owns the wait.
+        let _ = app.run_on_main_thread(move || {
+            let _ = win.hide();
+            log::info!("settings: hidden after the fade");
+        });
     });
 }
 
