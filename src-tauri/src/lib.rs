@@ -347,6 +347,13 @@ pub(crate) fn show_settings(app: &AppHandle) {
                 log::warn!("settings: center failed: {e}");
             }
         }
+        // A minimised window stays minimised through show() and set_focus(): choosing Settings
+        // in the tray after minimising the window did nothing visible. Restore it first.
+        if w.is_minimized().unwrap_or(false) {
+            if let Err(e) = w.unminimize() {
+                log::warn!("settings: unminimize failed: {e}");
+            }
+        }
         if let Err(e) = w.show() {
             log::error!("settings: show failed: {e}");
         }
