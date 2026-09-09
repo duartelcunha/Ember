@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.1-rc.1](https://github.com/duartelcunha/Ember/compare/v1.2.0...v1.2.1-rc.1) (2026-09-09)
+
+
+### Bug Fixes
+
+* **settings:** keep window-state saves and the delayed hide on the main thread ([#52](https://github.com/duartelcunha/Ember/issues/52)) ([864ebf3](https://github.com/duartelcunha/Ember/commit/864ebf36dff13482c758bf8ce5a2f975f3fca8fd))
+* **settings:** the window fades out before it hides and in after it shows ([#49](https://github.com/duartelcunha/Ember/issues/49)) ([baa16d4](https://github.com/duartelcunha/Ember/commit/baa16d4703b6997917e1953febb31f389350cc7e))
+
+
+### Documentation
+
+* **release:** number the first candidate after a full release ([#51](https://github.com/duartelcunha/Ember/issues/51)) ([d2d808e](https://github.com/duartelcunha/Ember/commit/d2d808ee253f59ec25260392864c3a48ca3eeed4))
+
 ## [1.2.0](https://github.com/duartelcunha/Ember/compare/v1.2.0-rc.4...v1.2.0) (2026-09-09)
 
 
