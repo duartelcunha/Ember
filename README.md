@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/duartelcunha/Ember/releases/latest"><img src="https://img.shields.io/github/v/release/duartelcunha/Ember?style=for-the-badge&color=fd8c3c&labelColor=1a0e03&label=release" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/Windows-2e2519?style=for-the-badge&logo=windows&logoColor=ffffff" alt="Windows">
-  <img src="https://img.shields.io/badge/macOS-in%20progress-6f6353?style=for-the-badge&labelColor=2e2519&logo=apple&logoColor=ffffff" alt="macOS in progress">
+  <img src="https://img.shields.io/badge/macOS-next-6f6353?style=for-the-badge&labelColor=2e2519&logo=apple&logoColor=ffffff" alt="macOS next">
   <a href="https://tauri.app/"><img src="https://img.shields.io/badge/Tauri%202-2e2519?style=for-the-badge&logo=tauri&logoColor=24C8DB" alt="Tauri 2"></a>
   <img src="https://img.shields.io/badge/Rust-2e2519?style=for-the-badge&logo=rust&logoColor=f46623" alt="Rust">
   <img src="https://img.shields.io/badge/React%2019-2e2519?style=for-the-badge&logo=react&logoColor=61DAFB" alt="React 19">
@@ -27,11 +27,9 @@
 
 You know that clumsy message, that rambling prompt you keep editing, or that rough commit note? Select it, hit your shortcut, and Ember cleans it up directly where your cursor is.
 
-[Windows evaluation candidate 1.1.0-rc.2](https://github.com/duartelcunha/Ember/releases/tag/v1.1.0-rc.2) is available with a verified updater signature. Existing installations should use `/UPDATE` and preserve a configuration backup; do not run the old uninstaller first. See the [native test and installation evidence](docs/native-qualification.md).
+[Ember 1.2.0](https://github.com/duartelcunha/Ember/releases/latest) is the stable release for Windows. Installed copies of 1.0.0 are offered it by the updater. For a manual upgrade run the installer with `/UPDATE` and keep a backup of `%APPDATA%\com.deleg8lab.ember\config.json`; do not run the old uninstaller first. The installer carries Ember's updater signature but no Windows publisher certificate, so SmartScreen may warn on first run.
 
-The next [floating-surface and context changes](docs/floating-context-refinement.md) are under qualification. They introduce visible-pixel cursor anchoring, compact comparison cards and explicitly authorized project sources. They are not included in the published rc.2 installer.
-
-This checkout is undergoing production hardening. Windows native qualification remains open; macOS and Linux do not yet meet the required functional parity. See the [implementation ledger and release blockers](docs/production-readiness.md). Historical recordings below do not establish the current native behavior.
+Windows is the only supported platform in 1.2.0. macOS is the next track; no Mac was available to qualify it, so its native behaviour stays unproven until one is. Linux follows macOS. What is proven, what is deferred and with which residual risk is in the [production readiness record](docs/production-readiness.md); the hands-on evidence per release is in [native qualification](docs/native-qualification.md). Historical recordings below show earlier behaviour, not proof of the current build.
 
 ---
 
@@ -70,10 +68,12 @@ Switch project-specific tone, guidelines, and vocabulary on the fly without poll
   <img src="docs/media/refine-terminal-claude-code.gif" width="100%" alt="Ember refining a prompt in Claude Code terminal">
 </p>
 
-Generic terminal replacement is disabled in this hardening checkout. The old clipboard fallback
-and generic line-clearing shortcut were unsafe. Terminal capture can still obtain a result,
-but safe replacement requires a tested adapter for the terminal and editor in use. The recording
-above shows historical behavior. This limitation blocks the agreed production experience.
+In a terminal Ember never types. It captures the selection, refines it, and leaves the result
+on your clipboard flattened to one line, with a note that says so; you paste it with the
+terminal's own paste, and your previous clipboard content is replaced by the result. The old
+generic replacement cleared the line with a shortcut that could destroy unrelated input, and
+pasting into a shell blindly runs whatever is on the line, so typed replacement waits for a
+tested adapter per terminal. The recording above shows the older behaviour.
 
 ---
 

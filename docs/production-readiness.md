@@ -1,12 +1,68 @@
 # Production readiness
 
-The audit at `179e397` is the baseline. Production approval requires native evidence on
-Windows, macOS and Linux, in addition to automated checks. A successful local build is
-not production approval.
+## Scope decision, 2026-09-09
+
+Release 1.2.0 is a stable release for Windows only. The audit record below this section was
+written for a three-platform product; it stays as the record of what was examined, but the
+release decision is now taken against the Windows scope. macOS is the next track, planned on
+its own; no Mac hardware is available at the time of writing, so its native qualification
+stays open until one exists. Linux follows macOS.
+
+What blocks a Windows stable release is anything that can still corrupt the user's text. Two
+such paths were found in the rc.4 code and closed in 1.2.0:
+
+- **Clipboard takeover before the paste.** Between arming the refined text and sending Ctrl+V,
+  another writer (a clipboard bridge, a sync tool, any application) could replace the clipboard
+  and the paste would insert its content into the document. `ember_core::selection::still_armed`
+  re-reads content and sequence number right before injection, the accessibility check runs once
+  more after it so that it stays the last operation before the keys go out, and a takeover ends
+  in its own outcome (`ClipboardChanged`) with nothing sent. The guard decision is logged on
+  every run, so a false-refusal rate can be read from `Ember.log`.
+- **Terminals paid for a result nobody could reach.** Generic terminal replacement stays
+  disabled. A terminal refine now leaves the flattened result on the clipboard and says so
+  (`TerminalHandoff`), after the same run-lease, window and clipboard-content checks as a paste.
+  No keys are ever sent to a terminal.
+
+Deferred, with the residual risk in 1.2.0 stated:
+
+| Item | Residual risk in 1.2.0 |
+| --- | --- |
+| macOS and Linux adapters, parity, notarization | Not shipped. The macOS track starts after 1.2.0 and covers CI builds only until a Mac exists |
+| Windows Authenticode signing | SmartScreen warns first-time installers. No publisher certificate exists; stated in README and release notes |
+| Root-to-active-file scope hierarchy and precedence editor | Feature gap. Reviewed sources stay a flat, explicit list |
+| Terminal and editor adapters | Feature gap. Handoff instead of replacement; no destructive shortcuts |
+| Persistence fault harness (logout, retention toggle, vault failure, interrupted writes) | Untested in code. Two manual checks belong to every release: retention off deletes the retained file, logout removes the credential |
+| Mixed-DPI, multi-monitor, hotplug and remote-session matrix | Not proven for 1.2.0. Evidence comes from one machine with one monitor at 100% |
+| Continuous input epoch | Input between the last accessibility check and `SendInput` is not detectable without a hook. The window is milliseconds and that check is the last operation before injection |
+| Shell wiring of the two fixes (`src-tauri/src/flow.rs`) | No unit tests, as for the rest of that file. The pure pieces are tested; the wiring is proven by the logged hands-on runs below |
+
+Evidence contract for 1.2.0: real use of the installed build on the actual applications, by
+hand, read back from `Ember.log` (capture with lease, request, guard decision with both
+revisions, paste sent or handoff, outcome, zero error lines) and recorded in
+[native qualification](native-qualification.md). Injected input does not exercise Ember
+(empty captures, clicks off target), so no fixture stands in for a person here.
+
+Automated checks on the release branch, Windows checkout: `cargo test --workspace --locked`
+55 shell and 379 core tests passed; `cargo clippy --workspace --all-targets --locked -- -D warnings`
+exit 0; `npx tsc --noEmit` exit 0; `npm test` 29 passed; `npm run build` 5,151 modules;
+publication guards 9 passed with GitHub and git mocked; `git diff --check` clean.
+
+Release mechanics: release-please flags a GitHub release as a prerelease only when the version
+string has a prerelease part, so a stable tag would be born as the full release that
+`/releases/latest` serves, with no assets yet. The build job now flips it to a prerelease as its
+first step and promotion is `scripts/verify-prerelease.ps1 -Promote`, which verifies the
+installer, manifest and updater signature against the checkout before the one edit that makes
+the release the stable channel. The guards are pinned in `scripts/publication-guards.test.ps1`.
+
+## Audit record (three-platform bar)
+
+The audit at `179e397` is the baseline. Production approval on that bar requires native evidence
+on Windows, macOS and Linux, in addition to automated checks. A successful local build is not
+production approval. The scope decision above supersedes this bar for 1.2.0.
 
 ## Implementation ledger
 
-The approved six-stage plan is **partially implemented**. Production release approval remains blocked. Windows evaluation candidate 1.1.0-rc.2 is published and installed locally; its signature, migration and version-specific native limitations are recorded in [native qualification evidence](native-qualification.md). The two-monitor picker pass belongs to rc.1. This ledger supersedes production claims in older audits
+The approved six-stage plan is **partially implemented**. Production release approval on the three-platform bar remains blocked; see the scope decision above for 1.2.0. Windows evaluation candidate 1.1.0-rc.2 is published and installed locally; its signature, migration and version-specific native limitations are recorded in [native qualification evidence](native-qualification.md). The two-monitor picker pass belongs to rc.1. This ledger supersedes production claims in older audits
 and demonstration recordings. Baseline: `179e397`, `feat/picker-follows-the-pointer`.
 
 The subsequent [floating and context implementation](floating-context-refinement.md) adds
