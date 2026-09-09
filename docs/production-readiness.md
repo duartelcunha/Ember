@@ -54,6 +54,14 @@ first step and promotion is `scripts/verify-prerelease.ps1 -Promote`, which veri
 installer, manifest and updater signature against the checkout before the one edit that makes
 the release the stable channel. The guards are pinned in `scripts/publication-guards.test.ps1`.
 
+After a full release, release-please proposes the next candidate as `X.Y.Z-rc` with no number
+(observed after 1.2.0: PR #50 read `1.2.1-rc`), and only the candidates after it count up. The
+candidate workflow and `verify-prerelease.ps1` refuse that form on purpose, since every guard
+and tag pattern expects `-rc.N`. The first candidate of a train is therefore given its number
+with a `Release-As: X.Y.Z-rc.1` footer on a commit to `main`, the way #43 gave rc.4 its number;
+release-please rewrites the open release PR to that version on its next run, and the following
+candidates increment on their own.
+
 ## 1.2.0 delivery, 2026-09-09
 
 PR #45 was squash-merged into `main` as `ab44b25` with `Release-As: 1.2.0` in its footer (the
