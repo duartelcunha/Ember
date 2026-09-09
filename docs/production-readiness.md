@@ -71,9 +71,13 @@ local build of the same code; configuration, projects, credentials and the reten
 preserved. Details are in [native qualification](native-qualification.md).
 
 The hands-on smoke before the merge was skipped by decision (the log showed no runs on the local
-build) in favour of one hands-on pass on the CI artifact. That pass is still pending, so `v1.2.0`
-remains a prerelease and promotion (`scripts/verify-prerelease.ps1 -Tag v1.2.0 -Promote`, from a
-checkout of the release commit) waits for it. The README says the same.
+build) in favour of one hands-on pass on the CI artifact. That pass happened on 2026-09-09: three
+runs on the installed build (Notepad and a Brave text field pasted with the clipboard guard armed,
+Windows Terminal handed the result to the clipboard), zero error lines, recorded in
+[native qualification](native-qualification.md). Promotion then ran from the release commit
+(`scripts/verify-prerelease.ps1 -Tag v1.2.0 -Promote`), re-verified the artifacts, uploaded the
+checksums and made v1.2.0 the full release; the updater endpoint reports 1.2.0. What that pass did
+not exercise stays listed as unproven in the same record.
 
 ## Audit record (three-platform bar)
 
