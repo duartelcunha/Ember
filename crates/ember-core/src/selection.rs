@@ -167,8 +167,8 @@ pub fn capture(
 /// Substitui a seleccao: poe o refinado no clipboard, simula Ctrl+V, espera o paste
 /// assentar e restaura o clipboard original. Devolve `true` se o texto refinado foi mesmo
 /// colocado no clipboard antes do paste (confirmado por leitura). Se `false` (clipboard
-/// ocupado), NAO simula o paste (evita colar conteudo errado por cima da seleccao) e
-/// restaura o original; o caller deve degradar em vez de reportar sucesso.
+/// ocupado, ou tomado por outra app antes do paste), NAO simula o paste (evita colar conteudo
+/// errado por cima da seleccao); o caller deve degradar em vez de reportar sucesso.
 #[must_use]
 pub fn replace(
     io: &mut impl SelectionIo,
@@ -177,14 +177,34 @@ pub fn replace(
     settle_ms: u64,
 ) -> bool {
     io.clip_set(refined);
-    let armed = io.clip_get().as_deref() == Some(refined);
-    if armed {
-        let revision = io.clip_revision();
-        io.send_paste();
-        io.sleep_ms(settle_ms);
-        restore_owned(io, saved, refined, revision);
+    if io.clip_get().as_deref() != Some(refined) {
+        return false;
     }
-    armed
+    let revision = io.clip_revision();
+    // The last look before the keys go out; `still_armed` says what can happen in between.
+    if !still_armed(io, refined, revision) {
+        return false;
+    }
+    io.send_paste();
+    io.sleep_ms(settle_ms);
+    restore_owned(io, saved, refined, revision);
+    true
+}
+
+/// Is the clipboard still holding exactly what Ember armed, untouched by anyone else?
+///
+/// Between arming the refined text and sending Ctrl+V another writer can replace it: a
+/// clipboard bridge, a sync tool, any application. The paste would then insert that content
+/// into the user's document (production-readiness audit, A03: clipboard ownership across all
+/// reads and writes). Content equality catches a different text; the sequence number (Windows
+/// `GetClipboardSequenceNumber`, exposed as `clip_revision`) also catches a rewrite of the same
+/// text under different formats. `None` means the platform has no sequence number and only the
+/// content counts. Reads only; the caller decides what to do with a `false`.
+pub fn still_armed(io: &mut impl SelectionIo, refined: &str, revision: Option<u64>) -> bool {
+    if io.clip_get().as_deref() != Some(refined) {
+        return false;
+    }
+    revision.is_none() || io.clip_revision() == revision
 }
 
 /// Restore only a value still owned by this transaction, including an initially empty clipboard.
@@ -233,6 +253,19 @@ pub fn flatten_for_terminal(text: &str) -> String {
         }
     }
     out.trim().to_string()
+}
+
+/// Terminal handoff: leave the flattened result on the clipboard and send no keys at all.
+///
+/// Terminal line editing is shell-specific. The old generic replacement cleared the line with
+/// Ctrl+U and destroyed unrelated input, and a generic Ctrl+V lands in whatever the shell is
+/// doing. Until a terminal has its own tested adapter the user pastes by hand, so the clipboard
+/// deliberately keeps the result instead of being restored. `false` means the clipboard refused
+/// the write (held by another application) and nothing changed.
+pub fn hand_off(io: &mut impl SelectionIo, refined: &str) -> bool {
+    let flat = flatten_for_terminal(refined);
+    io.clip_set(&flat);
+    io.clip_get().as_deref() == Some(flat.as_str())
 }
 
 /// A janela em foco ainda e o alvo deste refine? `(hwnd, pid)` de cada lado.
@@ -340,21 +373,49 @@ mod tests {
         held: ModifierState,
         /// `true` depois de `release_modifiers` ser chamado (force-release).
         force_released: bool,
+        /// Clipboard sequence number the way Windows reports it: moves on every write by
+        /// anyone. `None` models a platform without one, which is also the trait's default.
+        revision: Option<u64>,
+        /// Number of `clip_get` calls so far, so a test can place a foreign write precisely.
+        reads: usize,
+        /// A foreign writer (clipboard bridge, sync tool, another app) that strikes just before
+        /// the n-th read: `(n, text)`. This is the gap between arming the text and the paste.
+        hijack_on_read: Option<(usize, String)>,
+    }
+
+    impl FakeIo {
+        fn bump(&mut self) {
+            if let Some(revision) = self.revision.as_mut() {
+                *revision += 1;
+            }
+        }
     }
 
     impl SelectionIo for FakeIo {
         fn clip_get(&mut self) -> Option<String> {
+            self.reads += 1;
+            if let Some((at, text)) = &self.hijack_on_read {
+                if *at == self.reads {
+                    self.clipboard = Some(text.clone());
+                    self.bump();
+                }
+            }
             self.clipboard.clone()
         }
         fn clip_set(&mut self, s: &str) {
             if !self.frozen {
                 self.clipboard = Some(s.to_string());
+                self.bump();
             }
         }
         fn clip_clear(&mut self) {
             if !self.frozen {
                 self.clipboard = None;
+                self.bump();
             }
+        }
+        fn clip_revision(&self) -> Option<u64> {
+            self.revision
         }
         fn modifiers_held(&mut self) -> ModifierState {
             self.held
@@ -602,6 +663,108 @@ mod tests {
         let ok = replace(&mut io, "REFINED", &Some("old".into()), 1);
         assert!(!ok);
         assert_eq!(io.pasted, None);
+    }
+
+    #[test]
+    fn still_armed_when_nothing_touched_the_clipboard() {
+        let mut io = FakeIo {
+            revision: Some(7),
+            ..Default::default()
+        };
+        io.clip_set("REFINED");
+        let revision = io.clip_revision();
+        assert!(still_armed(&mut io, "REFINED", revision));
+    }
+
+    #[test]
+    fn a_foreign_write_between_arming_and_paste_disarms() {
+        // A clipboard bridge, a sync tool or another app wrote the clipboard after Ember armed
+        // it. Ctrl+V now would insert that content into the user's document.
+        let mut io = FakeIo {
+            revision: Some(0),
+            ..Default::default()
+        };
+        io.clip_set("REFINED");
+        let revision = io.clip_revision();
+        io.clip_set("something else");
+        assert!(!still_armed(&mut io, "REFINED", revision));
+    }
+
+    #[test]
+    fn a_rewrite_of_the_same_text_with_a_moved_revision_disarms() {
+        // Same text, different formats (a tool re-registering the clipboard) still moves the
+        // sequence number. Comparing content alone would miss it.
+        let mut io = FakeIo {
+            revision: Some(0),
+            ..Default::default()
+        };
+        io.clip_set("REFINED");
+        let revision = io.clip_revision();
+        io.clip_set("REFINED");
+        assert!(!still_armed(&mut io, "REFINED", revision));
+    }
+
+    #[test]
+    fn without_sequence_numbers_only_the_content_counts() {
+        // A platform without a clipboard sequence number reports None; the text still has to
+        // be what Ember armed.
+        let mut io = FakeIo::default();
+        io.clip_set("REFINED");
+        assert!(still_armed(&mut io, "REFINED", None));
+        io.clip_set("other");
+        assert!(!still_armed(&mut io, "REFINED", None));
+    }
+
+    #[test]
+    fn replace_sends_nothing_when_the_clipboard_is_taken_over_before_the_paste() {
+        // Armed and confirmed (read 1), then a foreign write lands right before the paste's
+        // own re-check (read 2). The old sequence sent Ctrl+V anyway.
+        let mut io = FakeIo {
+            clipboard: Some("old".into()),
+            revision: Some(0),
+            hijack_on_read: Some((2, "foreign".into())),
+            ..Default::default()
+        };
+        let ok = replace(&mut io, "REFINED", &Some("old".into()), 1);
+        assert!(!ok);
+        assert_eq!(io.pasted, None);
+        // The foreign content is not Ember's to restore over.
+        assert_eq!(io.clipboard, Some("foreign".into()));
+    }
+
+    #[test]
+    fn replace_with_sequence_numbers_pastes_and_restores() {
+        let mut io = FakeIo {
+            clipboard: Some("old".into()),
+            revision: Some(3),
+            ..Default::default()
+        };
+        assert!(replace(&mut io, "REFINED", &Some("old".into()), 1));
+        assert_eq!(io.pasted, Some("REFINED".into()));
+        assert_eq!(io.clipboard, Some("old".into()));
+    }
+
+    #[test]
+    fn hand_off_leaves_the_flattened_result_on_the_clipboard_and_sends_no_keys() {
+        let mut io = FakeIo {
+            clipboard: Some("old".into()),
+            ..Default::default()
+        };
+        assert!(hand_off(&mut io, "line one\nline two"));
+        assert_eq!(io.clipboard, Some("line one line two".into()));
+        assert_eq!(io.pasted, None);
+    }
+
+    #[test]
+    fn hand_off_reports_failure_when_the_clipboard_is_frozen() {
+        let mut io = FakeIo {
+            clipboard: Some("old".into()),
+            frozen: true,
+            ..Default::default()
+        };
+        assert!(!hand_off(&mut io, "result"));
+        assert_eq!(io.pasted, None);
+        assert_eq!(io.clipboard, Some("old".into()));
     }
 
     #[test]

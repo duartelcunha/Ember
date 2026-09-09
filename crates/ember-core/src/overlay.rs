@@ -50,6 +50,13 @@ pub enum FlowOutcome {
     ForegroundChanged,
     /// O refinado veio da cache: mesma seleccao ja refinada antes, sem nova chamada ao modelo.
     ReusedFromCache,
+    /// Another writer took the clipboard between arming the result and the paste (a bridge, a
+    /// sync tool, any app). Nothing was sent: Ctrl+V would have inserted that content into the
+    /// document. The result is cached, so the retry costs nothing.
+    ClipboardChanged,
+    /// Terminal: the flattened result was left on the clipboard and no keys were sent. Terminal
+    /// line editing is shell-specific; until a terminal has a tested adapter the user pastes it.
+    TerminalHandoff,
 }
 
 /// A overlay segue o cursor nesta fase?
@@ -206,6 +213,20 @@ pub fn feedback_for(outcome: FlowOutcome) -> OverlayFeedback {
             provider: None,
             hide_after_ms: 900,
         },
+        FlowOutcome::ClipboardChanged => OverlayFeedback {
+            phase: "error",
+            message: Some("Another app changed the clipboard. Nothing pasted. Try again.".into()),
+            provider: None,
+            // Long message; the retry is free, so the time to read it is the only cost.
+            hide_after_ms: 2200,
+        },
+        FlowOutcome::TerminalHandoff => OverlayFeedback {
+            phase: "hint",
+            message: Some("Terminal: the result is on your clipboard. Paste it yourself.".into()),
+            provider: None,
+            // The longest hint: it says where the result went and what to do next.
+            hide_after_ms: 3500,
+        },
     }
 }
 
@@ -280,6 +301,27 @@ mod tests {
         assert_eq!(busy.hide_after_ms, 1600);
         assert_eq!(paste.hide_after_ms, 1600);
         assert_ne!(busy.message, paste.message);
+    }
+
+    #[test]
+    fn a_clipboard_taken_over_before_the_paste_is_its_own_error() {
+        // "Try again" is honest here: the result is cached, so the retry costs nothing and the
+        // foreign writer is usually gone. It must not read like the generic paste failure.
+        let fb = feedback_for(FlowOutcome::ClipboardChanged);
+        assert_eq!(fb.phase, "error");
+        let message = fb.message.as_deref().unwrap();
+        assert!(message.contains("changed the clipboard"));
+        assert_ne!(fb.message, feedback_for(FlowOutcome::PasteFailed).message);
+    }
+
+    #[test]
+    fn a_terminal_handoff_is_a_hint_that_says_where_the_result_went() {
+        // Nothing failed: the result is on the clipboard and the user pastes it. Long message,
+        // so it stays as long as the longest hint.
+        let fb = feedback_for(FlowOutcome::TerminalHandoff);
+        assert_eq!(fb.phase, "hint");
+        assert!(fb.message.as_deref().unwrap().contains("clipboard"));
+        assert_eq!(fb.hide_after_ms, 3500);
     }
 
     #[test]
