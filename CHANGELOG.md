@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/duartelcunha/Ember/compare/v1.2.0-rc.4...v1.2.0) (2026-09-09)
+
+
+### Bug Fixes
+
+* **paste:** re-check the clipboard before Ctrl+V and hand terminals the result ([#45](https://github.com/duartelcunha/Ember/issues/45)) ([ab44b25](https://github.com/duartelcunha/Ember/commit/ab44b2558669d1cbccf59907a43fe0296d42cad4))
+
 ## [1.2.0-rc.4](https://github.com/duartelcunha/Ember/compare/v1.2.0-rc.3...v1.2.0-rc.4) (2026-09-08)
 
 
