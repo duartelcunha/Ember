@@ -27,7 +27,7 @@
 
 You know that clumsy message, that rambling prompt you keep editing, or that rough commit note? Select it, hit your shortcut, and Ember cleans it up directly where your cursor is.
 
-[Ember 1.2.0](https://github.com/duartelcunha/Ember/releases/tag/v1.2.0) is the Windows release. It is published as a prerelease until its hands-on evidence is recorded in the repository; at that point it becomes the stable channel and installed copies of 1.0.0 are offered it by the updater. For a manual upgrade run the installer with `/UPDATE` and keep a backup of `%APPDATA%\com.deleg8lab.ember\config.json`; do not run the old uninstaller first. The installer carries Ember's updater signature but no Windows publisher certificate, so SmartScreen may warn on first run.
+[Ember 1.2.0](https://github.com/duartelcunha/Ember/releases/latest) is the stable release for Windows. Installed copies of 1.0.0 are offered it by the updater. For a manual upgrade run the installer with `/UPDATE` and keep a backup of `%APPDATA%\com.deleg8lab.ember\config.json`; do not run the old uninstaller first. The installer carries Ember's updater signature but no Windows publisher certificate, so SmartScreen may warn on first run.
 
 Windows is the only supported platform in 1.2.0. macOS is the next track; no Mac was available to qualify it, so its native behaviour stays unproven until one is. Linux follows macOS. What is proven, what is deferred and with which residual risk is in the [production readiness record](docs/production-readiness.md); the hands-on evidence per release is in [native qualification](docs/native-qualification.md). Historical recordings below show earlier behaviour, not proof of the current build.
 

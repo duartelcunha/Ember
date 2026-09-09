@@ -114,13 +114,31 @@ kept its 37 keys, the two projects, the four Credential Manager entries and the 
 error-level lines.
 
 Environment: Windows 11 23H2 (build 22631), two displays, primary 2560 by 1440 at 100% scaling.
-Applications available for the hands-on runs: Microsoft Edge 152.0.4191.66, Word and Outlook
-16.0.20326.20132, Windows Terminal 1.24.11911.0, Notepad 11.2607.14.0.
+Applications on the machine: Microsoft Edge 152.0.4191.66, Word and Outlook 16.0.20326.20132,
+Windows Terminal 1.24.11911.0, Notepad 11.2607.14.0, Brave (version not recorded by the log).
 
-Hands-on runs by a person on this installed build, read back from `Ember.log`: PENDING. Until
-they are recorded here the release stays a prerelease and the stable channel stays on v1.0.0.
-Injected input is not used for this evidence: it gives Ember empty captures and clicks beside the
-target, so it proves nothing about real use.
+Hands-on runs by Duarte on this installed build, 03:46 to 03:49 local time on 2026-09-09, read
+back from `Ember.log` (32 lines since the 1.2.0 start, zero error or warning lines). Preview
+before paste was on, so every run went through the confirmation and its Enter was consumed by
+the hook:
+
+| Run | Application | What the log recorded |
+| --- | --- | --- |
+| 1 | Notepad 11.2607.14.0 | capture armed (5 chars); OpenAI-compatible `gpt-5.6-terra` answered in 2035 ms; gate ACCEPT; clipboard guard revision 271 -> 271, armed; `Pasted` |
+| 2 | Brave, web text field | capture armed (5 chars); exact cache hit, no model call; gate ACCEPT; clipboard guard revision 310 -> 310, armed; `Pasted` |
+| 3 | Windows Terminal 1.24.11911.0 | detected as terminal; capture armed (5 chars); exact cache hit; gate ACCEPT; `HandedOff`; the clipboard held the five-character result with no newline afterwards |
+
+Clipboard guard over the pastes: 2 armed, 0 refusals. The same five characters were used in all
+three runs on purpose: runs 2 and 3 show a paid result served twice more without a second call.
+Not exercised in this pass, and therefore still unproven for 1.2.0: Word and Outlook, clipboard
+history switched on, preview off, the retention toggle and logout. Injected input was not used
+for any of this evidence: it gives Ember empty captures and clicks beside the target.
+
+Promotion followed the runs, on 2026-09-09, with
+`scripts/verify-prerelease.ps1 -Tag v1.2.0 -Promote -NotesFile docs/release-notes/1.2.0.md`
+from the release commit: the artifacts were verified again, `SHA256SUMS.txt` was uploaded and one
+edit made v1.2.0 the full release. `/releases/latest/download/latest.json` then reported version
+1.2.0 with the expected installer URL, so installed copies of 1.0.0 are offered it by the updater.
 
 Not proven by this record in any case: mixed-DPI and hotplug behaviour, remote sessions,
 applications other than those listed, and any macOS or Linux behaviour.
