@@ -192,7 +192,11 @@ pub fn tray_action(app: AppHandle, action: String) -> bool {
             let app = app.clone();
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(CLOSE_MS)).await;
-                crate::show_settings(&app);
+                // Back on the main thread, where show_settings always ran before this delay
+                // existed: it reads and saves window state, and that class of call deadlocked
+                // the settings close once when made from a timer's thread.
+                let shown = app.clone();
+                let _ = app.run_on_main_thread(move || crate::show_settings(&shown));
             });
             false
         }
