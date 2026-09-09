@@ -29,6 +29,20 @@ jobs:
     if: ${{ needs.release-please.outputs.release_created }}
     runs-on: windows-latest
     steps:
+      # release-please flags a GitHub release as a prerelease only when the version string has a
+      # prerelease part (its manifest.ts: `config.prerelease && version.preRelease`). A stable
+      # tag such as v1.2.0 is therefore created as a full, published release, and
+      # /releases/latest, the only endpoint the updater reads, points at it with zero assets.
+      # Flip it back before building. A candidate tag (-rc.N) is already a prerelease, so this
+      # is a no-op for it. Promotion happens by hand after the artifacts are verified
+      # (scripts/verify-prerelease.ps1 -Promote). Removing this step means serving an empty
+      # stable release to every installed copy that checks for updates during the build.
+      - name: Keep the release off the stable channel until its artifacts are verified
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: gh release edit $env:TAG --repo ${{ github.repository }} --prerelease --latest=false
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
@@ -90,10 +104,12 @@ jobs:
           releaseCommitish: ${{ github.sha }}
           releaseName: 'Ember ${{ needs.release-please.outputs.tag_name }}'
           releaseDraft: true
-          # Keep it a prerelease during upload (release-please created it as one). The updater
-          # endpoint /releases/latest skips prereleases, so users stay on the last full release
-          # until the installer + latest.json are actually attached below.
+          # Keep it a prerelease during upload (the first step of this job made sure it is one).
+          # The updater endpoint /releases/latest skips prereleases, so installed copies stay on
+          # the last full release until the installer + latest.json are actually attached.
           prerelease: true
 
-      # This channel remains a prerelease. Promotion requires recorded native qualification
-      # on all supported platforms and verification of installer and updater signatures.
+      # Every release leaves this job as a prerelease. A stable tag is promoted by hand with
+      # scripts/verify-prerelease.ps1 -Promote, after the installer and updater signature are
+      # verified against this checkout and native evidence for the platform in scope is
+      # recorded in docs/native-qualification.md.
