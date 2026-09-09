@@ -84,3 +84,43 @@ The harness now offers `-AllowSingleMonitor` for explicitly separate single-moni
 That attempt returned `Fixture did not obtain focus; no shortcut sent` before taking a picker
 screenshot. Its synthetic windows were closed by cleanup. The earlier successful two-monitor
 record remains valid for rc.1 only. Native qualification of rc.2 remains open.
+
+## Candidate 1.2.0 on 2026-09-09
+
+[Version 1.2.0](https://github.com/duartelcunha/Ember/releases/tag/v1.2.0) was built from
+`1db9d816910c7a0be1928bb061035f29e1c27951` (the squash of release PR #46) by release workflow run
+[34298979550](https://github.com/duartelcunha/Ember/actions/runs/34298979550). release-please
+created it as a full release, as it does for any version without a prerelease part, and the build
+job's first step marked it a prerelease before any artifact existed (step "Keep the release off
+the stable channel until its artifacts are verified": success). `/releases/latest` stayed on
+v1.0.0 throughout the build. The installer, detached signature and `latest.json` were attached
+by the same run.
+
+Local verification, from the release commit checked out and with `Cargo.lock` carried to 1.2.0
+the way the workflow does it:
+
+```text
+Updater signature valid. SHA256: 8845a4b11e3c5e2745852deab6587873808e3a117d93424ca9e04b4b464b3ac6
+manifest: version 1.2.0, url https://github.com/duartelcunha/Ember/releases/download/v1.2.0/Ember_1.2.0_x64-setup.exe
+manifest signature equals the published .sig
+Authenticode: NotSigned
+```
+
+Installed with `/S /UPDATE` over a locally built 1.2.0-rc.4 of the same code (itself installed
+over 1.2.0-rc.3 earlier the same night), with the configuration backed up before each install.
+Installer exit code 0; executable and uninstall registration both report 1.2.0. The configuration
+kept its 37 keys, the two projects, the four Credential Manager entries and the retention setting
+(off, no retained file). The startup log shows the version, a renewed OAuth token and no
+error-level lines.
+
+Environment: Windows 11 23H2 (build 22631), two displays, primary 2560 by 1440 at 100% scaling.
+Applications available for the hands-on runs: Microsoft Edge 152.0.4191.66, Word and Outlook
+16.0.20326.20132, Windows Terminal 1.24.11911.0, Notepad 11.2607.14.0.
+
+Hands-on runs by a person on this installed build, read back from `Ember.log`: PENDING. Until
+they are recorded here the release stays a prerelease and the stable channel stays on v1.0.0.
+Injected input is not used for this evidence: it gives Ember empty captures and clicks beside the
+target, so it proves nothing about real use.
+
+Not proven by this record in any case: mixed-DPI and hotplug behaviour, remote sessions,
+applications other than those listed, and any macOS or Linux behaviour.

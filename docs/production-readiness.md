@@ -54,6 +54,27 @@ first step and promotion is `scripts/verify-prerelease.ps1 -Promote`, which veri
 installer, manifest and updater signature against the checkout before the one edit that makes
 the release the stable channel. The guards are pinned in `scripts/publication-guards.test.ps1`.
 
+## 1.2.0 delivery, 2026-09-09
+
+PR #45 was squash-merged into `main` as `ab44b25` with `Release-As: 1.2.0` in its footer (the
+repository's squash setting drops the PR description, so the message was written explicitly).
+release-please opened PR #46 at 1.2.0 in the manifest, `Cargo.toml`, `package.json` and the
+CHANGELOG; its merge (`1db9d81`) produced tag `v1.2.0`. The release was created as a full release
+and the build job's first step marked it a prerelease before any artifact existed, so the updater
+channel never left v1.0.0. Workflow run 34298979550 attached the installer, its signature and
+`latest.json`.
+
+The artifacts were verified from the release commit: updater signature valid, SHA-256
+`8845a4b11e3c5e2745852deab6587873808e3a117d93424ca9e04b4b464b3ac6`, manifest version and URL as
+expected, Authenticode NotSigned. The CI-built installer was installed with `/S /UPDATE` over a
+local build of the same code; configuration, projects, credentials and the retention setting were
+preserved. Details are in [native qualification](native-qualification.md).
+
+The hands-on smoke before the merge was skipped by decision (the log showed no runs on the local
+build) in favour of one hands-on pass on the CI artifact. That pass is still pending, so `v1.2.0`
+remains a prerelease and promotion (`scripts/verify-prerelease.ps1 -Tag v1.2.0 -Promote`, from a
+checkout of the release commit) waits for it. The README says the same.
+
 ## Audit record (three-platform bar)
 
 The audit at `179e397` is the baseline. Production approval on that bar requires native evidence
