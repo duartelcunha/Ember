@@ -61,6 +61,11 @@ pub struct AppState {
     /// Ciclo dono da pilula que esta no ecra. Um `hide_after` de um ciclo antigo compara com
     /// isto e nao faz nada se ja houver um ciclo novo: senao escondia a orb do ciclo seguinte.
     pub hide_gen: AtomicU64,
+    /// Owner of the pending settings-window hide. A close fades the content and hides after a
+    /// timer; a reopen (or a second close) during that time bumps this, and the earlier timer
+    /// finds a newer generation and does nothing, so a window the user just reopened is never
+    /// hidden under them.
+    pub settings_close_gen: AtomicU64,
     /// Refinados ja pagos, por texto normalizado. E o que garante que uma interrupcao nao custa
     /// dinheiro: o resultado fica aqui e o atalho seguinte sobre o mesmo texto nao paga.
     pub store: Mutex<ember_core::RefineCache>,
@@ -272,6 +277,7 @@ impl AppState {
             follow_gen: AtomicU64::new(0),
             orb_labels: AtomicBool::new(false),
             hide_gen: AtomicU64::new(0),
+            settings_close_gen: AtomicU64::new(0),
             store: Mutex::new(ember_core::RefineCache::default()),
             persisted_store: Mutex::new(ember_core::RefineCache::default()),
             store_gen: tokio::sync::watch::channel(0).0,

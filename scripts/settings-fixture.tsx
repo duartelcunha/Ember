@@ -1,6 +1,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
+import { emit } from "@tauri-apps/api/event";
 import { DEFAULT_SETTINGS } from "../src/lib/ipc";
 import { RELEASES } from "../src/lib/release";
 import { Settings } from "../src/settings/Settings";
@@ -82,4 +83,7 @@ mockIPC((command, args) => {
   if (command === "plugin:updater|check") throw new Error("Offline fixture");
   return null;
 }, { shouldMockEvents: true });
+// The events Rust sends around show and hide (`settings-opened`, `settings-closing`), so the
+// test can drive the open and close phases the way the native window does.
+(window as unknown as { __emit: typeof emit }).__emit = emit;
 createRoot(document.getElementById("root")!).render(<React.StrictMode><Settings /></React.StrictMode>);

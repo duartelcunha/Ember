@@ -177,13 +177,7 @@ pub(crate) fn get_or_create_window(app: &AppHandle, label: &str) -> Option<Webvi
         w.on_window_event(move |event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
-                // The window-state plugin only writes its file on process exit, and a tray app
-                // can run for weeks. A crash or a forced shutdown in between would lose the
-                // geometry the user just chose, so every hide saves it.
-                if let Err(e) = win.app_handle().save_window_state(window_state_flags()) {
-                    log::warn!("settings: window state not saved: {e}");
-                }
-                let _ = win.hide();
+                begin_settings_close(&win);
             }
         });
     }
@@ -275,16 +269,60 @@ pub(crate) fn apply_window_theme(app: &AppHandle) {
     }
 }
 
+/// How long the settings content takes to fade out before the window hides. Mirrored by the
+/// leave transition in `src/settings/Settings.tsx`; change one, change the other.
+const SETTINGS_CLOSE_MS: u64 = 160;
+
+/// Close is a fade, then a hide. The window used to vanish on the frame the X was clicked, with
+/// its content at full opacity, which read as a glitch rather than a close. The webview is told
+/// `settings-closing` and fades; the hide happens here after that time whatever the webview did,
+/// so a hung or reloading page can never leave the window stuck on screen. The generation
+/// counter lets a reopen during the fade cancel the pending hide, and turns a second click into
+/// one later hide rather than two.
+fn begin_settings_close(win: &WebviewWindow) {
+    let app = win.app_handle().clone();
+    let generation = app
+        .state::<state::AppState>()
+        .settings_close_gen
+        .fetch_add(1, Ordering::SeqCst)
+        + 1;
+    let _ = win.emit("settings-closing", ());
+    let win = win.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(SETTINGS_CLOSE_MS)).await;
+        if app
+            .state::<state::AppState>()
+            .settings_close_gen
+            .load(Ordering::SeqCst)
+            != generation
+        {
+            log::debug!("settings: close superseded before the hide");
+            return;
+        }
+        // The window-state plugin only writes its file on process exit, and a tray app can run
+        // for weeks. A crash or a forced shutdown in between would lose the geometry the user
+        // just chose, so every hide saves it.
+        if let Err(e) = app.save_window_state(window_state_flags()) {
+            log::warn!("settings: window state not saved: {e}");
+        }
+        let _ = win.hide();
+        log::info!("settings: hidden after the fade");
+    });
+}
+
 pub(crate) fn show_settings(app: &AppHandle) {
-    // A janela ja existia? So nesse caso emitimos settings-opened, que faz o React re-animar a
-    // entrada (remount por `openKey`) E recarregar o estado do Rust. Se a estamos a criar agora,
-    // NAO emitimos: o React acabou de montar, ja anima sozinho e ja foi buscar os dados; um emit
-    // aqui dava um segundo remount (o conteudo aparecia, desaparecia e voltava) e chegaria antes
-    // de o webview ter listener.
+    // A janela ja existia? So nesse caso emitimos settings-opened, que faz o React trazer o
+    // conteudo de volta do estado esbatido E recarregar o estado do Rust. Se a estamos a criar
+    // agora, NAO emitimos: o React acabou de montar, ve a janela visivel e anima sozinho, e o
+    // emit chegaria antes de o webview ter listener.
     //
     // Com o pre-aquecimento no arranque, o caminho normal e este: a janela existe, esta escondida
     // e ja hidratada, portanto abrir e mostrar + recarregar.
     let existed = app.get_webview_window("settings").is_some();
+    // A close still fading out gives way to this open: its pending hide must not fire.
+    app.state::<state::AppState>()
+        .settings_close_gen
+        .fetch_add(1, Ordering::SeqCst);
     let Some(w) = get_or_create_window(app, "settings") else {
         // Never reported before: the window did not exist and could not be created. Silent, this
         // was indistinguishable from "it opened and you cannot see it".

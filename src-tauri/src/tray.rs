@@ -186,7 +186,14 @@ pub fn tray_action(app: AppHandle, action: String) -> bool {
         }
         "settings" => {
             close_menu(&app, ClosedBy::Request);
-            crate::show_settings(&app);
+            // The menu folds first and only then the window shows: both at once made two
+            // animations fight for the same frames, and the window's arrival was the one that
+            // stuttered.
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(CLOSE_MS)).await;
+                crate::show_settings(&app);
+            });
             false
         }
         "quit" => {
