@@ -6,7 +6,7 @@ import { appearanceRegressions, openTab, settingsLayoutRegressions, settingsRegr
 
 // Every settings surface: the profile editor, the context line, the projects tab and the full
 // settings shell. Browser evidence only, like the overlay test.
-test("settings surfaces fit the window and keep their behaviour", (t) => withBrowser(async ({ page, origin, capture, presented }) => {
+test("settings surfaces fit the window and keep their behaviour", (t) => withBrowser(async ({ page, origin, capture, presented, send }) => {
     await t.test("profile imports require review and discard obsolete responses", async () => {
     await page.goto(`${origin}/__ember-test/profile`);
     await page.waitForSelector('textarea');
@@ -184,5 +184,27 @@ test("settings surfaces fit the window and keep their behaviour", (t) => withBro
         await page.click('#debug-mode');
         await page.waitForSelector('[role=tab][data-state=active]');
       });
+    });
+
+    // Close is a fade and then a native hide, and the content stays faded while the window is
+    // hidden so a reopen never paints the previous content for a frame. The same node carries
+    // both phases: no remount, no skeleton in between. Reduced motion is emulated by the
+    // harness, so the fades are immediate here; what is checked is the phase and the opacity
+    // it lands on, not the curve.
+    await t.test("the settings content fades out on close and comes back on reopen, without a remount", async () => {
+      await page.goto(`${origin}/__ember-test/settings`);
+      await page.waitForSelector('#gemini-key');
+      // Outside Tauri the window cannot answer whether it is visible, so the content is open.
+      await page.waitForFunction(() => document.querySelector('main')?.dataset.phase === 'open');
+      const before = await page.evaluate(() => { const main = document.querySelector('main'); main.dataset.probe = 'same-node'; return getComputedStyle(main).opacity; });
+      assert.equal(Number(before), 1);
+      await send('settings-closing');
+      await page.waitForFunction(() => document.querySelector('main')?.dataset.phase === 'hidden');
+      await page.waitForFunction(() => Number(getComputedStyle(document.querySelector('main')).opacity) < 0.05);
+      await send('settings-opened');
+      await page.waitForFunction(() => document.querySelector('main')?.dataset.phase === 'open');
+      await page.waitForFunction(() => Number(getComputedStyle(document.querySelector('main')).opacity) > 0.95);
+      assert.equal(await page.$eval('main', main => main.dataset.probe), 'same-node');
+      assert.equal(await page.$$eval('[aria-busy="true"]', nodes => nodes.length), 0);
     });
 }));

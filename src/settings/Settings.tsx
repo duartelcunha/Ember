@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { motion, MotionConfig, useReducedMotion } from "motion/react";
 import { toast } from "sonner";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Cube, GearSix, Keyboard, Plugs, Sliders, Sparkle, Terminal, UserCircleGear } from "@phosphor-icons/react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TitleBar } from "@/components/TitleBar";
@@ -54,14 +55,18 @@ function useSettledToast(delayMs: number) {
  * clips, every tab fits it, and only editors, lists and dialog bodies scroll inside.
  */
 export function Settings({ initialTab = "providers" }: { initialTab?: string } = {}) {
-  // A janela e pintada escura pelo Rust (backgroundColor) e mostrada quando o componente monta,
-  // por isso o fade-in de entrada corre no mount e ja se ve. As reaberturas re-animam via
-  // `openKey` (remount do conteudo). O fecho esconde a janela no lado nativo (ver useEffect),
-  // sem fade-out (fragil numa janela nativa), por isso nao ha estado de "invisivel" no JS.
+  // The window is native and lives for the whole session, shown and hidden around this one
+  // component. `phase` is what the person sees: "open" is the content at full opacity, "hidden"
+  // is the content faded out. A close is a fade and then a native hide (Rust emits
+  // `settings-closing`, waits for the fade and hides whatever happened here), and the content
+  // stays faded out while hidden, so the next show never paints the previous content for a frame
+  // before the entrance runs. The old approach remounted everything on each open (`openKey`),
+  // which is exactly what produced that frame and the skeleton flash behind it.
   const still = useReducedMotion();
   const settledToast = useSettledToast(400);
   const announceMode = (mode: RefineMode) => settledToast(`Refine mode: ${MODE_COPY[mode].title}.`);
-  const [openKey, setOpenKey] = useState(0);
+  const [phase, setPhase] = useState<"hidden" | "open">("hidden");
+  const open = phase === "open";
   const [tab, setTab] = useState(initialTab);
   const [s, setS] = useState<EmberSettings>(DEFAULT_SETTINGS);
   const [hotkey, setHotkey] = useState(DEFAULT_SETTINGS.hotkey);
@@ -129,20 +134,44 @@ export function Settings({ initialTab = "providers" }: { initialTab?: string } =
   };
 
   useEffect(() => {
-    // O fecho (X / Alt+F4) e tratado NATIVAMENTE no Rust (get_or_create_window): esconde a
-    // janela, a app fica na tray. Nao ha handler de fecho no JS de proposito, o do webview era
-    // fragil e deixava a janela presa a preto quando falhava.
+    // Close (X / Alt+F4) is native: Rust prevents the destroy, emits `settings-closing`, waits
+    // for the fade below and hides the window itself; the app stays in the tray. No close
+    // handler in JS on purpose: the webview's own was fragile and left the window stuck black
+    // when it failed.
     //
-    // Reaberturas: a janela ja existe (so escondida), o Rust re-emite settings-opened. Incrementa
-    // a openKey: a key nova remonta o conteudo, por isso o fade-in de entrada volta a correr do
-    // zero a cada reabertura.
+    // Reopen: the window already exists (only hidden) and Rust emits `settings-opened`. The data
+    // is fetched again, because the window was created at startup and what it showed may be
+    // stale (a project switched from the picker, a key saved elsewhere), and the content comes
+    // back from the faded state. `hydrated` stays true, so no skeleton flashes in between.
     const unlistenOpen = listen("settings-opened", () => {
-      setOpenKey((k) => k + 1);
+      setPhase("open");
       loadSettings();
     });
+    const unlistenClose = listen("settings-closing", () => setPhase("hidden"));
+    // Safety nets for a window shown without the event: the on-demand path creates the window
+    // and shows it before this listener exists, and a lost event would otherwise leave a blank
+    // window. Visible at mount, or focused later, means open. Only an explicit `false` from the
+    // window keeps the content faded: outside Tauri (the browser fixtures) there is no answer,
+    // and the content must simply be there.
+    let unlistenFocus: (() => void) | undefined;
+    try {
+      const win = getCurrentWindow();
+      win
+        .isVisible()
+        .then((visible) => { if (visible !== false) setPhase("open"); })
+        .catch(() => setPhase("open"));
+      win
+        .onFocusChanged(({ payload: focused }) => { if (focused) setPhase("open"); })
+        .then((stop) => { unlistenFocus = stop; })
+        .catch(() => {});
+    } catch {
+      setPhase("open");
+    }
 
     return () => {
       unlistenOpen.then((f) => f());
+      unlistenClose.then((f) => f());
+      unlistenFocus?.();
     };
   }, []);
 
@@ -238,32 +267,47 @@ export function Settings({ initialTab = "providers" }: { initialTab?: string } =
 
   return (
     <MotionConfig reducedMotion="user">
-      {/* Sem AnimatePresence/exit de proposito: a `key` (openKey) troca o conteudo num so
-          commit (o antigo desmonta, o novo monta) e o novo corre initial->animate = fade-in
-          limpo. Um exit-then-enter fazia o conteudo antigo SAIR primeiro (desaparecer) antes
-          de o novo entrar, o "mostra, some, mostra" da reabertura. O fecho ja e nativo (Rust). */}
+      {/* No remount and no AnimatePresence: the same node fades between the two phases. A key
+          swap per open painted the old content, then nothing, then the entrance; an exit-then-
+          enter did the "shows, vanishes, shows" of the reopen. Here the content is already faded
+          out when the window shows, and the entrance is the only thing that moves. */}
       <motion.main
-        key={openKey}
         // `h-screen overflow-hidden`: the page is the viewport and nothing scrolls it. The
-        // entry animation only touches opacity and transform, so it never changes the layout
-        // the tabs measure themselves against.
+        // animation only touches opacity and transform, so it never changes the layout the
+        // tabs measure themselves against.
         className="flex h-screen flex-col overflow-hidden bg-panel text-fg"
-        // 280ms, e nao os 600 de antes: com a janela pre-aquecida no arranque, abrir e so
-        // mostrar, e uma entrada longa passa a ser a UNICA coisa que se sente lenta. A
-        // escala parte de 0.985 (era 0.97) para o texto nao chegar visivelmente a arrastar.
-        initial={still ? false : { opacity: 0, scale: 0.985 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: still ? 0 : 0.28, ease: [0.22, 1, 0.36, 1] }}
+        // No `initial`: the first render paints the phase as it is, so a pre-warmed window sits
+        // faded out until its first open and a window shown on the spot animates in from there.
+        // 240ms in, 140ms out. The out is mirrored by SETTINGS_CLOSE_MS in src-tauri/src/lib.rs,
+        // which hides the window after that time; change one, change the other. The scale
+        // starts at 0.985 so the text does not visibly drag.
+        initial={false}
+        animate={open ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.985 }}
+        transition={
+          still
+            ? { duration: 0 }
+            : open
+              ? { duration: 0.24, ease: [0.22, 1, 0.36, 1] }
+              : { duration: 0.14, ease: [0.4, 0, 1, 1] }
+        }
         style={{ transformOrigin: "center" }}
+        data-phase={phase}
       >
         <TitleBar />
         <motion.div
           className="flex min-h-0 flex-1 flex-col"
-          // Segue a de fora de perto (delay curto) em vez de somar mais meio segundo por cima:
-          // as duas encadeadas davam ~800ms ate a janela assentar.
-          initial={still ? false : { opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: still ? 0 : 0.32, ease: [0.22, 1, 0.36, 1], delay: still ? 0 : 0.06 }}
+          // Follows the outer one closely (short delay) instead of adding half a second on top:
+          // the two chained used to take about 800ms to settle. On the way out it simply goes
+          // with the outer fade.
+          initial={false}
+          animate={open ? { opacity: 1, y: 0 } : { opacity: 0, y: 6 }}
+          transition={
+            still
+              ? { duration: 0 }
+              : open
+                ? { duration: 0.3, ease: [0.22, 1, 0.36, 1], delay: 0.05 }
+                : { duration: 0.14, ease: [0.4, 0, 1, 1] }
+          }
         >
           <SettingsViewport>
             {!hydrated ? (
