@@ -214,6 +214,10 @@ pub fn tray_action(app: AppHandle, action: String) -> bool {
             if app.state::<AppState>().tray_open.load(Ordering::SeqCst) {
                 close_menu(&app, ClosedBy::Request);
                 crate::begin_quit(&app);
+            } else {
+                // The repeat this guard exists for, or a menu drawn while the flag says closed.
+                // Either way the user pressed Quit and nothing happened, so it gets a line.
+                log::info!("tray: quit ignored, the menu was already closed");
             }
             false
         }

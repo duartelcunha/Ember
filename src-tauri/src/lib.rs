@@ -399,10 +399,18 @@ async fn prevalidate_providers(app: AppHandle) {
 /// Marca `quitting` e sai, uma so vez (guarda `swap` para o comando e o fallback de timeout
 /// nao chamarem `exit` duas vezes). Chamado quando a animacao de quit termina, ou pelo fallback.
 pub(crate) fn finalize_quit_now(app: &AppHandle) {
-    if !app
+    if app
         .state::<state::AppState>()
         .quitting
         .swap(true, Ordering::SeqCst)
+    {
+        // A finalize already ran and the process is still here, so the graceful path did not
+        // take. This used to return, which made every Quit after a failed one a silent no-op:
+        // the menu folded, nothing happened, and nothing said why. The user has asked again.
+        log::warn!("quit: a finalize already ran and we are still alive; exiting now");
+        exit_now(app);
+        return;
+    }
     {
         // Se ha uma chamada ao modelo a decorrer, da-se-lhe um instante para acabar e gravar: ela
         // ja esta paga, e sair a meio deitava fora o resultado, que e precisamente o que este
@@ -432,7 +440,8 @@ pub(crate) fn finalize_quit_now(app: &AppHandle) {
                     started.elapsed().as_millis()
                 );
             }
-            app2.exit(0);
+            log::info!("quit: finalizing");
+            exit_now(&app2);
         });
     }
 }
@@ -635,18 +644,66 @@ fn register_one(app: &AppHandle, hotkey: &str, action: HotkeyAction) -> Result<(
 
 /// The way out, shared by everything that quits (today: the tray menu).
 pub(crate) fn begin_quit(app: &AppHandle) {
-    if let Some(quit_anim) = get_or_create_window(app, "quit_anim") {
-        let _ = quit_anim.set_ignore_cursor_events(true);
-        let _ = quit_anim.show();
-    }
-    // A animacao de quit chama `finalize_quit` quando termina: a saida acopla ao
-    // fim REAL da animacao, nao a um numero magico que podia divergir do duration.
-    // Fallback: se a webview nao completar (falhou a carregar), forca a saida ao
-    // fim de um tempo curto, para nunca ficar preso na tray sem sair.
-    let app = app.clone();
+    log::info!("quit: requested");
+    // The deadline that leaves is armed FIRST, and nothing before it touches a window.
+    //
+    // The quit died exactly here on 2026-09-17. `quit_anim` is the one window never created at
+    // startup, so choosing Quit built it on the spot: the native window appeared and the build
+    // never returned, because the webview behind it never finished attaching. Everything after
+    // that line, including this deadline, was never reached, and the app stayed in the tray with
+    // "quit: requested" as the last thing in the log. An animation is optional. Leaving is not.
+    let deadline = app.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
-        finalize_quit_now(&app);
+        log::info!("quit: animation deadline");
+        finalize_quit_now(&deadline);
+    });
+    // The animation is built on a worker and presented on the main thread. A build that stalls
+    // then costs a thread nobody is waiting on, instead of the one holding the way out.
+    let animating = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let building = animating.clone();
+        match tauri::async_runtime::spawn_blocking(move || {
+            get_or_create_window(&building, "quit_anim")
+        })
+        .await
+        {
+            Ok(Some(anim)) => {
+                let _ = animating.run_on_main_thread(move || {
+                    let _ = anim.set_ignore_cursor_events(true);
+                    match anim.show() {
+                        Ok(()) => log::info!("quit: animation shown"),
+                        Err(e) => log::warn!("quit: animation show failed ({e})"),
+                    }
+                });
+            }
+            Ok(None) => log::warn!("quit: no animation window; leaving on the deadline"),
+            Err(e) => log::warn!("quit: animation worker failed ({e}); leaving on the deadline"),
+        }
+    });
+    // The animation calls `finalize_quit` when it ends, so a quit the user watches finishes with
+    // it rather than on the deadline above.
+}
+
+/// Asks the process to end, and makes sure it actually does.
+///
+/// The request goes through the main thread, like every other native call in this module: the
+/// window-state save that hung the app (Windows Application log, event 1002) taught that lesson,
+/// and an exit asked for from a runtime thread is the same shape of call. If the loop does not
+/// take it, the process is still here two seconds later with the user having chosen Quit, and at
+/// that point leaving is more honest than staying: everything worth saving has already been
+/// waited for by the caller.
+fn exit_now(app: &AppHandle) {
+    log::info!("quit: exiting");
+    let exiting = app.clone();
+    if let Err(e) = app.run_on_main_thread(move || exiting.exit(0)) {
+        log::warn!("quit: main thread unavailable ({e}); exiting from here");
+        app.exit(0);
+    }
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        log::error!("quit: still running 2s after the exit was requested; leaving the hard way");
+        std::process::exit(0);
     });
 }
 
@@ -933,14 +990,16 @@ pub fn run() {
         .run(|app, event| {
             // Manter o processo vivo na tray quando se fecham janelas, MAS deixar sair
             // quando o utilizador pede Quit explicitamente.
-            if let tauri::RunEvent::ExitRequested { api, .. } = event {
-                if !app
-                    .state::<state::AppState>()
-                    .quitting
-                    .load(Ordering::SeqCst)
-                {
-                    api.prevent_exit();
+            match event {
+                tauri::RunEvent::ExitRequested { api, .. } => {
+                    let quitting = app.state::<state::AppState>().quitting.load(Ordering::SeqCst);
+                    log::info!("quit: exit requested (quitting={quitting})");
+                    if !quitting {
+                        api.prevent_exit();
+                    }
                 }
+                tauri::RunEvent::Exit => log::info!("quit: exiting the event loop"),
+                _ => {}
             }
         });
 }
