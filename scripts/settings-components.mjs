@@ -236,13 +236,13 @@ export async function tabContentRegressions(page, origin) {
   // The stage shows the CHOSEN mode at work: its example is on screen, the others are one
   // arrow key away. The fixture starts on Improve.
   const stageText = () => page.$eval('.mode-example', e => e.textContent);
-  assert.ok((await stageText()).includes('Could you review the revenue table'), 'the stage shows the chosen mode');
+  assert.ok((await stageText()).includes('flags every order with no delivery date'), 'the stage shows the chosen mode');
   await page.evaluate(() => window.__settingsFixture.modes.length = 0);
   await page.focus('input[name="refine-mode"]:checked');
   await page.keyboard.press('ArrowRight');
   await page.waitForFunction(() => window.__settingsFixture.modes.length >= 1);
   // The swap is animated; wait for the new text to be the one on the stage.
-  await page.waitForFunction(() => document.querySelector('.mode-example')?.textContent.includes('financial analyst'), { timeout: 3000 })
+  await page.waitForFunction(() => document.querySelector('.mode-example')?.textContent.includes('data engineer'), { timeout: 3000 })
     .catch(() => { throw new Error('the stage must follow the chosen mode'); });
   // The ground transitions over 150ms; wait for it to settle instead of reading mid-fade.
   await page.waitForFunction(() => {

@@ -50,36 +50,41 @@ export const MODE_COPY: Record<RefineMode, { title: string; hint: string }> = {
 const MODES: RefineMode[] = ["polish", "adaptive", "turbo", "reply"];
 
 /**
- * One real message through the four modes, so the difference is SEEN rather than read.
+ * One rough ask through the four modes, so the difference is SEEN rather than read.
  *
- * It is the kind of thing Ember is actually pointed at: a quick, lowercase, half-typed ask to a
- * colleague, with a concrete subject (a report, a table, a quarter) so the rewrites have
- * something to hold on to. The earlier example, "set up meeting tomorrow with john", was so
- * thin that the three rewrites had nothing to differ on. These are written by hand, not live
- * refines, and the card's (i) says so; a sample dressed up as real output would be a promise
- * the model does not make.
+ * The input is a half-typed request in a chat composer, which is where Ember is most often
+ * fired. It has to be a REQUEST, not a note to a colleague: Rebuild's job is to produce the
+ * prompt an engineer would have written for it, and a message to a person rewritten as a prompt
+ * comes out as nonsense with an invented role attached. That is exactly what the first pass
+ * here shipped, and it is why the example is chosen against the mode rules rather than for
+ * looking pretty.
  *
- * Reply starts from another kind of input (a message you received, not a draft of yours), so it
- * carries its own "before"; the other three share the one above.
+ * Each output follows the rule its mode actually sends to the model (`ember_core::prompt`):
+ * Fix keeps the shape and the length, Improve surfaces the structure the request already
+ * implies, Rebuild adds role, requirements and output format AND leaves a visible {placeholder}
+ * where the input never supplied a detail, because inventing one is forbidden. Reply answers a
+ * message instead, leading with the answer and matching its length.
+ *
+ * Written by hand, not live refines, and the card's (i) says so: a sample dressed as real
+ * output would be a promise the model does not make.
  */
 const MODE_EXAMPLE = {
   input:
-    "hey can u check the numbers in the q3 report i sent yesterday, something looks off in the revenue table",
+    "need a script that reads our csv exports and flags the orders with no delivery date, something i can run every monday",
   replyInput:
-    "Hi, could you check the numbers in the Q3 report I sent yesterday? Something looks off in the revenue table.",
+    "Hi, are you free Thursday afternoon to walk us through the new export format? Half an hour should be enough.",
   outputs: {
     polish:
-      "Hey, can you check the numbers in the Q3 report I sent yesterday? Something looks off in the revenue table.",
+      "I need a script that reads our CSV exports and flags the orders with no delivery date, something I can run every Monday.",
     adaptive:
-      "Could you review the revenue table in the Q3 report I sent yesterday? Some of the numbers look off, and I want them right before it goes out.",
+      "I need a script that reads our CSV exports and flags every order with no delivery date. It should run unattended every Monday and list what it flagged, so I can act on it.",
     turbo: [
-      "You are a financial analyst reviewing a quarterly report.",
-      "Check the revenue table in the attached Q3 report against its totals.",
-      "Flag every figure that does not reconcile and explain each one in a line.",
-      "Output: a short list, most material first.",
+      "You are a data engineer writing a small, dependable maintenance script.",
+      "Read every CSV export in {folder} and find the orders with no delivery date.",
+      "Requirements: skip malformed rows and report how many were skipped; run unattended on a weekly schedule.",
+      "Output: the script, then one line on how to schedule it.",
     ].join("\n"),
-    reply:
-      "Hi, I'll go through the revenue table today and get back to you by {time}. If you remember which rows looked off, send me the row numbers and I'll start there.",
+    reply: "Thursday afternoon works. {time} is best on my side, and half an hour is plenty.",
   } as Record<RefineMode, string>,
 };
 
@@ -162,7 +167,9 @@ function ModeStage({ mode }: { mode: RefineMode }) {
     <div data-scroll-pane="" className="mode-stage" aria-live="polite">
       <div className="mode-stage-grid">
         <div className="mode-stage-pane" data-before="">
-          <span className="mode-stage-label">Before</span>
+          {/* Reply does not rewrite a draft of yours, so "Before" would be a lie there: what it
+              starts from is a message somebody sent you. */}
+          <span className="mode-stage-label">{mode === "reply" ? "Their message" : "Before"}</span>
           <AnimatePresence mode="wait" initial={false}>
             <motion.p key={before} className="mode-clamp" transition={STAGE_TRANSITION} {...swap}>
               {before}
@@ -171,7 +178,13 @@ function ModeStage({ mode }: { mode: RefineMode }) {
         </div>
         <div className="mode-stage-pane" data-after="">
           <span className="mode-stage-label">
-            After <span aria-hidden="true">·</span> {MODE_COPY[mode].title}
+            {mode === "reply" ? (
+              "Your reply"
+            ) : (
+              <>
+                After <span aria-hidden="true">·</span> {MODE_COPY[mode].title}
+              </>
+            )}
           </span>
           <AnimatePresence mode="wait" initial={false}>
             <motion.p
