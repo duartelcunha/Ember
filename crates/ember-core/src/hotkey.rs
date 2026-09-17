@@ -220,6 +220,17 @@ pub fn evaluate(accel: &str, os: Os, taken: &[(&str, &str)]) -> HotkeyVerdict {
     if !canon.contains('+') && !is_safe_bare_key(&canon) {
         return HotkeyVerdict::NeedsModifier { key: canon };
     }
+    // Shift on its own is not a modifier for a typing key: `Shift+E` is how a capital E is typed,
+    // and `RegisterHotKey(MOD_SHIFT, 'E')` takes that letter from every app while Ember runs.
+    // This was saved for real (config revision 151, 2026-09-16): the recorder caught the tail of
+    // a Ctrl+Shift+E whose Ctrl had already gone up. Shift+F5 stays fine, like a bare F5.
+    if let Some(key) = canon.strip_prefix("shift+") {
+        if !key.contains('+') && !is_safe_bare_key(key) {
+            return HotkeyVerdict::NeedsModifier {
+                key: key.to_string(),
+            };
+        }
+    }
     let mine = for_comparison(&canon, os);
 
     let reserved = match os {
@@ -298,6 +309,33 @@ mod tests {
         assert_eq!(evaluate("F13", Os::Windows, &[]), HotkeyVerdict::Available);
         assert_eq!(evaluate("F5", Os::Windows, &[]), HotkeyVerdict::Available);
         assert_eq!(evaluate("F24", Os::MacOs, &[]), HotkeyVerdict::Available);
+    }
+
+    #[test]
+    fn shift_alone_is_not_a_modifier_for_a_typing_key() {
+        // Saved for real: `"hotkey": "Shift+E"`. Windows registers it happily and from then on
+        // every capital E in every app fires a refine instead of typing. Shift only counts when
+        // it sits on top of a real modifier, or on a key that is safe bare (the F-keys).
+        for accel in ["Shift+E", "Shift+1", "Shift+Space", "Shift+Enter", "Shift+Up", "Shift+-"] {
+            assert!(
+                matches!(
+                    evaluate(accel, Os::Windows, &[]),
+                    HotkeyVerdict::NeedsModifier { .. }
+                ),
+                "{accel} should have been refused"
+            );
+        }
+        assert_eq!(
+            evaluate("Shift+E", Os::Windows, &[]),
+            HotkeyVerdict::NeedsModifier { key: "e".into() }
+        );
+        for accel in ["Shift+F5", "CmdOrCtrl+Shift+E", "Alt+Shift+E", "Control+Shift+E", "Super+Shift+E"] {
+            assert_eq!(
+                evaluate(accel, Os::Windows, &[]),
+                HotkeyVerdict::Available,
+                "{accel} is a normal shortcut"
+            );
+        }
     }
 
     #[test]

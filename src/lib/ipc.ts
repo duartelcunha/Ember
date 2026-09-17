@@ -305,6 +305,9 @@ export const ipc = {
     invoke<void>("set_openai_base_url", { baseUrl }),
   setHotkey: (which: HotkeySlot, hotkey: string) =>
     invoke<void>("set_hotkey", { which, hotkey }),
+  /** Pauses every global shortcut while the box records one, and brings them back after.
+   *  Live, the registered shortcut ate the combination before the box saw it. */
+  setHotkeyCapture: (active: boolean) => invoke<void>("set_hotkey_capture", { active }),
   /** Pergunta se a combinacao pode ser gravada, sem a gravar. Junta a lista de atalhos que o
    *  SO reserva (a unica defesa no macOS, onde o registo passa e o sistema ganha depois) com um
    *  teste de registo real (a unica defesa contra outra app qualquer). */

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Keyboard, X } from "@phosphor-icons/react";
 import { Spinner } from "@/components/ui/spinner";
+import { listen } from "@tauri-apps/api/event";
 import { ipc, type HotkeySlot, type HotkeyVerdict } from "@/lib/ipc";
 
 /** O webview corre o mesmo JS nas duas plataformas, mas a tecla `Meta` nao e a mesma coisa:
@@ -90,7 +91,7 @@ function refusal(accel: string, v: HotkeyVerdict): string | null {
     case "incomplete":
       return "Hold your modifiers and press a key.";
     case "needs_modifier":
-      return `${accel} on its own would take that key from every app. Add Ctrl, Alt or Shift.`;
+      return `${accel} would take that key from every app. Add Ctrl or Alt.`;
     case "clashes_with_picker":
       return `The project picker uses ${v.key} to navigate, so ${accel} would close the list instead of moving in it. Pick a combination without it.`;
   }
@@ -135,6 +136,34 @@ export function HotkeyCapture({
   const [preview, setPreview] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
+
+  // The registered shortcuts go quiet for as long as the box listens. Live, the OS handed
+  // Ctrl+Shift+E to the shortcut itself (a refine fired from the settings window on every
+  // attempt) and the box saw only the tail, with Ctrl already up: `Shift+E` got saved. Its own
+  // effect, keyed on `capturing` alone: tied to the key listener it would pause and resume on
+  // every parent render, and each resume is a moment the shortcut is live again.
+  useEffect(() => {
+    if (!capturing) return;
+    ipc.setHotkeyCapture(true).catch(() => {});
+    // The window closing (X, Alt+F4) ends the capture, so the pause never outlives the box.
+    let unlistenClose: (() => void) | undefined;
+    let closed = false;
+    listen("settings-closing", () => {
+      setCapturing(false);
+      setPreview(null);
+      setError(null);
+    })
+      .then((f) => {
+        if (closed) f();
+        else unlistenClose = f;
+      })
+      .catch(() => {});
+    return () => {
+      closed = true;
+      unlistenClose?.();
+      ipc.setHotkeyCapture(false).catch(() => {});
+    };
+  }, [capturing]);
 
   useEffect(() => {
     if (!capturing) return;

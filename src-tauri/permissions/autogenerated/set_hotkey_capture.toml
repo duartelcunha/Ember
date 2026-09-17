@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-hotkey-capture"
+description = "Enables the set_hotkey_capture command without any pre-configured scope."
+commands.allow = ["set_hotkey_capture"]
+
+[[permission]]
+identifier = "deny-set-hotkey-capture"
+description = "Denies the set_hotkey_capture command without any pre-configured scope."
+commands.deny = ["set_hotkey_capture"]

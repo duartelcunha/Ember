@@ -695,6 +695,7 @@ pub fn run() {
             commands::set_model,
             commands::set_openai_base_url,
             commands::set_hotkey,
+            commands::set_hotkey_capture,
             commands::set_autostart,
             commands::set_mode,
             commands::set_length,

@@ -438,8 +438,7 @@ pub fn check_hotkey(
 /// vez de um "nao deu" generico.
 #[tauri::command]
 pub fn set_hotkey(app: AppHandle, which: String, hotkey: String) -> Result<(), String> {
-    static TRANSACTION: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let _transaction = TRANSACTION
+    let _transaction = HOTKEY_TRANSACTION
         .lock()
         .map_err(|_| "Hotkey settings unavailable")?;
 
@@ -482,6 +481,35 @@ pub fn set_hotkey(app: AppHandle, which: String, hotkey: String) -> Result<(), S
     if let Err(error) = config::save(&app, &cfg) {
         let _ = crate::register_hotkeys(&app, &config::load(&app));
         return Err(error.to_string());
+    }
+    Ok(())
+}
+
+/// One lock for everything that registers shortcuts: a save and a pause/resume that interleave
+/// would leave the registered set and the saved set disagreeing.
+static HOTKEY_TRANSACTION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Pauses the global shortcuts while one is being recorded, and brings them back after.
+///
+/// Two things went wrong with them live: the recorder never saw the key, because the OS handed
+/// the whole combination to the registered shortcut first (twelve refines fired from the
+/// settings window on 2026-09-16, one per attempt), and the tail the recorder did see, with Ctrl
+/// already up, was saved as `Shift+E`. The pause cannot outlive the box: `set_hotkey` registers
+/// everything it saves, and the window's close ends a capture from the webview side.
+#[tauri::command]
+pub fn set_hotkey_capture(app: AppHandle, active: bool) -> Result<(), String> {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+    let _transaction = HOTKEY_TRANSACTION
+        .lock()
+        .map_err(|_| "Hotkey settings unavailable")?;
+    if active {
+        app.global_shortcut()
+            .unregister_all()
+            .map_err(|e| e.to_string())?;
+        log::info!("hotkeys: paused while a shortcut is recorded");
+    } else {
+        crate::register_hotkeys(&app, &config::load(&app))?;
+        log::info!("hotkeys: resumed after recording");
     }
     Ok(())
 }
