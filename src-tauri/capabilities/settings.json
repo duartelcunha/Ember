@@ -21,6 +21,7 @@
     "allow-set-model",
     "allow-set-openai-base-url",
     "allow-set-hotkey",
+    "allow-set-hotkey-capture",
     "allow-set-autostart",
     "allow-set-mode",
     "allow-set-length",

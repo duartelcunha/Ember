@@ -25,6 +25,7 @@ fn main() {
         "set_model",
         "set_openai_base_url",
         "set_hotkey",
+        "set_hotkey_capture",
         "set_autostart",
         "set_mode",
         "set_length",
