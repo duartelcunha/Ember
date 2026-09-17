@@ -436,7 +436,6 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--border-accent);
   --row-gap: 1rem;
   --hint: block;
   --mode-hint: block;
-  --mode-input: block;
 }
 /* Tall windows breathe rather than stretch: more padding costs nothing and removes about 60px
    of leftover per tab without opening a void anywhere. */
@@ -496,22 +495,51 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--border-accent);
 .settings-col { display: flex; flex-direction: column; gap: var(--card-gap, 1rem); min-height: 0; }
 
 
-/* The modes, as one list drawn on the card's own surface.
+/* The modes: a compact list to choose from, and under it a stage where the chosen one shows its
+ * work. Nothing here draws a container inside the card.
  *
- * They used to be bordered panels, each holding a bordered block for its example, inside a
- * bordered card: three frames deep before a single word. That reads as packaging, not as a
- * comparison, and boxes inside boxes are out of this UI for good. What separates one mode from
- * the next is a hairline; what marks the chosen one is a rule down its left edge and its title
- * taking the accent. Nothing here draws a container.
- *
- * The rows share the height rather than a cap sitting under a void: four roomy rows at 1400x900
- * read as a generous list, where four tidy ones over 300px of nothing read as a page that
- * stopped early. */
-.mode-compare { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; overflow: auto; }
-.mode-option { display: grid; grid-template-columns: minmax(0, 7.5rem) minmax(0, 1fr);
-               align-items: center; gap: 0 1rem; flex: 1 0 auto; min-height: 2rem;
-               max-block-size: 9.5rem; padding: 0.3125rem 0.75rem; }
-.mode-option + .mode-option { border-top: 1px solid var(--border-subtle); }
+ * The rows used to hold the examples too, and to share the card's leftover height between them,
+ * so at 1000x640 four short rows sat 100px apart with their text floating in the middle. A
+ * choice is one line per row. The leftover goes to the stage, where a tall window means the two
+ * texts get room to be read and a short one clamps them to their first lines. The chosen row is
+ * marked by its ground and by its name taking the accent; the rows are otherwise plain, since
+ * hairlines between four one-line rows were more ink than text. */
+.mode-list { display: flex; flex-direction: column; flex: 0 0 auto; gap: 1px; }
+.mode-option { display: grid; grid-template-columns: minmax(0, 6.5rem) minmax(0, 1fr);
+               align-items: baseline; gap: 0 0.75rem; padding: 0.375rem 0.625rem;
+               border-radius: 0.375rem; }
+/* The stage is a size container of its own: before on the left and after on the right when the
+   STAGE has the width for two measures of text, one under the other otherwise. Sized on the
+   stage and not on the window because the two disagree: stacked at 720 wide the stage spans the
+   card, beside the Behaviour card at 1000 it has 560px. The texts sit centred in whatever
+   height the card has left, which is what makes a tall window read as a showcase rather than
+   as a list that stopped early. The pane may scroll (`data-scroll-pane`) as the last resort
+   below the minimum window, where clamped text can still exceed the height. */
+.mode-stage { flex: 1 1 0; min-height: 0; overflow: auto; margin-top: 0.75rem; padding-top: 0.75rem;
+              border-top: 1px solid var(--border-subtle); container-type: inline-size; }
+.mode-stage-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.75rem 1.5rem;
+                   min-height: 100%; align-content: center; }
+@container (min-width: 30rem) {
+  .mode-stage-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .mode-stage-pane[data-after] { border-left: 1px solid var(--border-subtle); padding-left: 1.5rem; }
+}
+.mode-stage-pane { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
+/* Short windows keep only the outcome: the message itself is one line away in the (i). */
+.mode-stage-pane[data-before] { display: var(--mode-before, flex); }
+.mode-stage-label { font-size: 0.6875rem; font-weight: 500; color: var(--color-fg-muted); }
+.mode-stage-pane p { margin: 0; max-width: 34rem; font-size: 0.875rem; line-height: 1.55;
+                     white-space: pre-line; overflow-wrap: anywhere; color: var(--color-fg-muted); }
+.mode-stage-pane[data-after] p { font-size: 0.9375rem; color: var(--color-fg); }
+@container settings (max-height: 560px) {
+  .settings-density { --mode-before: none; }
+  .mode-option { padding-block: 0.25rem; }
+  .mode-stage-pane p { font-size: 0.8125rem; line-height: 1.5; }
+}
+/* Stacked, the Behaviour card sits under the modes and every line it spends is a line the stage
+   loses; its one-line hints go (the (i) keeps the detail) and its rows close up. Scoped to this
+   tab's column, not to the density variables every tab reads. */
+@container settings (max-width: 48rem) { .refining-behaviour { --hint: none; --row-gap: 0.625rem; } }
+@container settings (max-width: 48rem) and (max-height: 720px) { .settings-density { --example-lines: 2; } }
 
 /* The hit area of one option in a segmented control.
  *
@@ -523,14 +551,14 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--border-accent);
 .ember-seg-hit { position: absolute; inset: 0; margin: 0; appearance: none; -webkit-appearance: none;
                  background: transparent; border: 0; border-radius: inherit; cursor: pointer; }
 .ember-seg-hit:focus-visible { outline: 2px solid var(--border-accent); outline-offset: 1px; }
-/* Only ever set in the 520px tier, where four full examples cannot fit whatever we do. Unset
+/* Only ever set in the 520px tier, where both texts in full cannot fit whatever we do. Unset
    everywhere else, so `-webkit-line-clamp: none` leaves the text alone. */
-.mode-example { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden;
-                -webkit-line-clamp: var(--example-lines, none); }
-/* Narrow, the per-mode hint goes: with the example on the same row, it is the more redundant of
-   the two, and the name plus the output is still a comparison you read top to bottom. */
+.mode-clamp { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden;
+              -webkit-line-clamp: var(--example-lines, none); }
+/* Narrow, the per-mode hint goes: the name alone still picks, and the stage under the list says
+   what the chosen one does with the width it has left. */
 @container settings (max-width: 48rem) {
-  .settings-density { --mode-hint: none; --mode-input: none; }
+  .settings-density { --mode-hint: none; }
   .mode-option { grid-template-columns: minmax(0, 6rem) minmax(0, 1fr); padding-inline: 0.5rem; }
 }
 /* The four shortcut rows. Two-up when there is width for it, and also in short windows whatever
