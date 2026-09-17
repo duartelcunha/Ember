@@ -212,29 +212,50 @@ fn focused_selection(
     IUIAutomationTextRange,
     IUIAutomationTextPattern,
 )> {
+    // Every refusal names its step. The guard used to answer only "no", and a "no" from UI
+    // Automation looks exactly like a "no" from a changed window; the fix for each is different.
     if !crate::foreground::same_target(Some(target)) {
-        return None;
+        return refused("target_changed");
     }
     unsafe {
-        let element = automation.GetFocusedElement().ok()?;
-        if element.CurrentIsPassword().ok()?.as_bool()
-            || !element.CurrentIsEnabled().ok()?.as_bool()
-            || !element.CurrentHasKeyboardFocus().ok()?.as_bool()
-        {
-            return None;
+        let Ok(element) = automation.GetFocusedElement() else {
+            return refused("no_focused_element");
+        };
+        if element.CurrentIsPassword().ok()?.as_bool() {
+            return refused("password_field");
         }
-        let pattern: IUIAutomationTextPattern =
-            element.GetCurrentPatternAs(UIA_TextPatternId).ok()?;
-        let ranges = pattern.GetSelection().ok()?;
+        if !element.CurrentIsEnabled().ok()?.as_bool() {
+            return refused("element_disabled");
+        }
+        if !element.CurrentHasKeyboardFocus().ok()?.as_bool() {
+            return refused("no_keyboard_focus");
+        }
+        let Ok(pattern) =
+            element.GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
+        else {
+            return refused("no_text_pattern");
+        };
+        let Ok(ranges) = pattern.GetSelection() else {
+            return refused("no_selection");
+        };
         if ranges.Length().ok()? != 1 {
-            return None;
+            return refused("selection_not_single");
         }
         let range = ranges.GetElement(0).ok()?;
-        if !editable(&range) || !crate::foreground::same_target(Some(target)) {
-            return None;
+        if !editable(&range) {
+            return refused("read_only");
+        }
+        if !crate::foreground::same_target(Some(target)) {
+            return refused("target_changed_late");
         }
         Some((element, range, pattern))
     }
+}
+
+/// One word in the log, never the text. `None` typed so it drops into any `Option` return.
+fn refused<T>(why: &str) -> Option<T> {
+    log::info!("guard: refused {why}");
+    None
 }
 
 fn editable(range: &IUIAutomationTextRange) -> bool {

@@ -88,7 +88,12 @@ impl RealIo {
     pub fn snapshot_image(&mut self) -> Option<ClipImage> {
         #[cfg(windows)]
         {
-            crate::clipboard_snapshot::Snapshot::read().ok()
+            // A clipboard we cannot read is a clipboard we will not touch, so the whole refine
+            // stops here. Say why: the content is another app's and outlives our restarts, so
+            // without the reason every run fails the same way with nothing to go on.
+            crate::clipboard_snapshot::Snapshot::read()
+                .map_err(|e| log::warn!("clipboard: snapshot failed ({e})"))
+                .ok()
         }
         #[cfg(not(windows))]
         {
