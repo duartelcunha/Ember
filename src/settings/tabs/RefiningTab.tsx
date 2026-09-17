@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,13 +19,13 @@ import { Section, SwitchRow } from "../Section";
 import { ipc, type EmberSettings, type Length, type RefineMode, type ThinkingLevel } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 
-// Os nomes visiveis sao VERBOS, nao adjetivos. "Adaptive", "Polish" e "Turbo" descreviam o
-// comportamento interno e obrigavam a ler tres frases para perceber a diferenca; "Fix", "Improve"
-// e "Rebuild" dizem o que sai do outro lado. Os ids continuam adaptive/polish/turbo: sao contrato
-// com o Rust e com a config em disco, e renomear isso partia as definicoes de quem ja tem a app.
+// The visible names are VERBS, not adjectives. "Adaptive", "Polish" and "Turbo" described the
+// internal behaviour and took three sentences to tell apart; "Fix", "Improve" and "Rebuild" say
+// what comes out the other side. The ids stay adaptive/polish/turbo: they are the contract with
+// Rust and with the config on disk, and renaming them would break everyone's saved settings.
 //
-// A ordem e por intensidade crescente, que e como as pessoas escolhem: mexe pouco, mexe o
-// necessario, mexe tudo.
+// Ordered by how much they change, which is how people choose: touch little, touch what is
+// needed, touch everything.
 export const MODE_COPY: Record<RefineMode, { title: string; hint: string }> = {
   polish: {
     title: "Fix",
@@ -45,68 +45,71 @@ export const MODE_COPY: Record<RefineMode, { title: string; hint: string }> = {
   },
 };
 
-/** A ordem em que se leem: os tres que reescrevem o teu texto, por intensidade crescente, e
- *  depois o que faz outra coisa com ele. */
+/** Reading order: the three that rewrite your text, by how much they change it, then the one
+ *  that does something else with it. */
 const MODES: RefineMode[] = ["polish", "adaptive", "turbo", "reply"];
 
-/** O mesmo texto tratado por cada modo, para a diferenca se VER em vez de se ler. Sao exemplos
- *  escritos a mao, nao refines ao vivo, e a UI diz isso: mostrar uma amostra colada como se fosse
- *  output real seria uma promessa que nao podemos garantir.
+/**
+ * One real message through the four modes, so the difference is SEEN rather than read.
  *
- *  O Reply parte de outro input (uma mensagem recebida, nao um rascunho teu), por isso a linha
- *  dele traz o seu proprio "antes"; os outros tres partilham o que esta no cabecalho. */
+ * It is the kind of thing Ember is actually pointed at: a quick, lowercase, half-typed ask to a
+ * colleague, with a concrete subject (a report, a table, a quarter) so the rewrites have
+ * something to hold on to. The earlier example, "set up meeting tomorrow with john", was so
+ * thin that the three rewrites had nothing to differ on. These are written by hand, not live
+ * refines, and the card's (i) says so; a sample dressed up as real output would be a promise
+ * the model does not make.
+ *
+ * Reply starts from another kind of input (a message you received, not a draft of yours), so it
+ * carries its own "before"; the other three share the one above.
+ */
 const MODE_EXAMPLE = {
-  input: "set up meeting tomorrow with john",
-  replyInput: "Hi, can you confirm the meeting time and who is joining?",
+  input:
+    "hey can u check the numbers in the q3 report i sent yesterday, something looks off in the revenue table",
+  replyInput:
+    "Hi, could you check the numbers in the Q3 report I sent yesterday? Something looks off in the revenue table.",
   outputs: {
-    polish: "Set up a meeting tomorrow with John.",
-    adaptive: "Schedule a meeting with John for tomorrow and confirm the time with him.",
-    turbo:
-      [
-        "You are my scheduling assistant.",
-        "Goal: schedule a meeting with John, time to confirm.",
-        "Output: a ready-to-send invite.",
-      ].join("\n"),
-    reply: "The meeting is at {time}. {names} are joining.",
+    polish:
+      "Hey, can you check the numbers in the Q3 report I sent yesterday? Something looks off in the revenue table.",
+    adaptive:
+      "Could you review the revenue table in the Q3 report I sent yesterday? Some of the numbers look off, and I want them right before it goes out.",
+    turbo: [
+      "You are a financial analyst reviewing a quarterly report.",
+      "Check the revenue table in the attached Q3 report against its totals.",
+      "Flag every figure that does not reconcile and explain each one in a line.",
+      "Output: a short list, most material first.",
+    ].join("\n"),
+    reply:
+      "Hi, I'll go through the revenue table today and get back to you by {time}. If you remember which rows looked off, send me the row numbers and I'll start there.",
   } as Record<RefineMode, string>,
 };
 
 /**
- * The four modes, as one list you read down.
+ * The four modes as a compact list: the name and one line on what it does.
  *
- * They were bordered panels, each holding a bordered block for its example, inside a bordered
- * card: three frames deep before a word of text. Boxes inside boxes are out of this UI. A row per
- * mode on the card's own surface, hairlines between them, and the chosen one marked by a rule
- * down its left edge and by its title taking the accent.
- *
- * Reply is a row like the others now. Side by side it could not be, because it starts from a
- * different kind of input and the columns would have been comparing nothing; read down a list,
- * each row carries its own before and after and the question of what a mode does is answered
- * the same way for all four.
+ * The rows used to carry the examples as well, and to share the card's leftover height between
+ * them: four short rows spread over a tall column, each floating in its own air. Choosing is a
+ * one-line decision per row; the example belongs to the stage below, where the chosen mode
+ * shows its work at a readable size and the card's height goes to something worth reading.
  *
  * Native radios in visually hidden inputs, not a role=radio grid: arrow-key roving focus, Space,
- * wrapping and a single tab stop all come for free and cannot drift. The ring sits on the label
- * through `focus-within` rather than `:has()`, which shipped in exactly the build-target
- * Chromium. The checked styling is driven from React state, not `:checked`, because a border
- * colour alone disappears in the cream theme's lower-contrast borders.
+ * wrapping and a single tab stop all come for free and cannot drift. The checked styling is
+ * driven from React state, not `:checked`, because a border colour alone disappears in the
+ * cream theme's lower-contrast borders.
  */
-function ModeComparison({ mode, onPick }: { mode: RefineMode; onPick: (mode: RefineMode) => void }) {
+function ModeList({ mode, onPick }: { mode: RefineMode; onPick: (mode: RefineMode) => void }) {
   return (
-    // The safety valve, not the plan: the four rows fit at every size in the matrix. Scrolling a
-    // little beats budgeting pixels that the next copy change would break.
-    <fieldset data-scroll-pane="" className="mode-compare">
+    <fieldset className="mode-list">
       <legend className="sr-only">Refine mode</legend>
       {MODES.map((m) => {
         const on = mode === m;
         return (
           <label
             key={m}
+            data-checked={on ? "" : undefined}
             className={cn(
               "mode-option cursor-pointer transition-[color,background-color,box-shadow]",
               "focus-within:outline-none focus-within:ring-2 focus-within:ring-inset focus-within:ring-[color:var(--border-accent)]",
-              on
-                ? "bg-surface-2 shadow-[inset_2px_0_0_var(--color-accent)]"
-                : "hover:bg-surface-2/60",
+              on ? "bg-surface-2" : "hover:bg-surface-2/60",
             )}
           >
             <input
@@ -116,35 +119,73 @@ function ModeComparison({ mode, onPick }: { mode: RefineMode; onPick: (mode: Ref
               className="sr-only"
               checked={on}
               onChange={() => onPick(m)}
-              aria-describedby={`mode-${m}-out`}
             />
-            {/* The name alone. The chosen row already says so three times over: a rule down its
-                left edge, its own ground, and the name in the accent. A tick beside that is a
-                fourth way of saying the same thing. */}
             <span className={cn("truncate text-sm font-semibold", on ? "text-accent" : "text-fg")}>
               {MODE_COPY[m].title}
             </span>
-            <span className="min-w-0">
-              <span className="text-xs leading-snug text-fg-muted [display:var(--mode-hint,block)]">
-                {MODE_COPY[m].hint}
-              </span>
-              {m === "reply" && (
-                <span className="font-mono text-xs text-fg-muted line-through decoration-1 [display:var(--mode-input,block)]">
-                  {MODE_EXAMPLE.replyInput}
-                </span>
-              )}
-              <span
-                id={`mode-${m}-out`}
-                className="mode-example whitespace-pre-line font-mono text-xs text-fg"
-                title={MODE_EXAMPLE.outputs[m]}
-              >
-                {MODE_EXAMPLE.outputs[m]}
-              </span>
+            <span className="min-w-0 text-xs leading-snug text-fg-muted [display:var(--mode-hint,block)]">
+              {MODE_COPY[m].hint}
             </span>
           </label>
         );
       })}
     </fieldset>
+  );
+}
+
+/** Quick and settled: a change of mode swaps the text, it does not perform. */
+const STAGE_TRANSITION = { duration: 0.16, ease: [0.16, 1, 0.3, 1] as const };
+
+/**
+ * The chosen mode at work: the message on the left, what comes back on the right (stacked when
+ * the column is narrow). This is the card's elastic region. A tall window gives the two texts
+ * room; a short one clamps them, because a mode is still recognisable from its first lines.
+ *
+ * The swap is the tab's one authored moment. The text that leaves blurs out and the new one
+ * settles in, the way the refined text replaces the original under the cursor; the "before"
+ * only moves when Reply is chosen, because Reply starts from a different message.
+ */
+function ModeStage({ mode }: { mode: RefineMode }) {
+  const still = useReducedMotion();
+  const before = mode === "reply" ? MODE_EXAMPLE.replyInput : MODE_EXAMPLE.input;
+  const swap = still
+    ? { initial: false as const, animate: {}, exit: {} }
+    : {
+        initial: { opacity: 0, y: 3, filter: "blur(3px)" },
+        animate: { opacity: 1, y: 0, filter: "blur(0px)" },
+        exit: { opacity: 0, y: -2, filter: "blur(3px)" },
+      };
+  return (
+    // The stage is its own size container: the panes go side by side when the STAGE is wide
+    // enough for two measures of text, whatever the window is doing (stacked at 720 wide the
+    // stage is wider than it is beside the Behaviour card at 1000).
+    <div data-scroll-pane="" className="mode-stage" aria-live="polite">
+      <div className="mode-stage-grid">
+        <div className="mode-stage-pane" data-before="">
+          <span className="mode-stage-label">Before</span>
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.p key={before} className="mode-clamp" transition={STAGE_TRANSITION} {...swap}>
+              {before}
+            </motion.p>
+          </AnimatePresence>
+        </div>
+        <div className="mode-stage-pane" data-after="">
+          <span className="mode-stage-label">
+            After <span aria-hidden="true">·</span> {MODE_COPY[mode].title}
+          </span>
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.p
+              key={mode}
+              className="mode-example mode-clamp"
+              transition={STAGE_TRANSITION}
+              {...swap}
+            >
+              {MODE_EXAMPLE.outputs[mode]}
+            </motion.p>
+          </AnimatePresence>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -158,15 +199,14 @@ const LENGTHS: { value: Length; label: string }[] = [
 const THUMB_SPRING = { type: "spring" as const, stiffness: 520, damping: 40 };
 
 /**
- * O tamanho, no cabecalho do cartao dos modos.
+ * Length, in the header of the modes card.
  *
- * No cabecalho e nao por baixo da grelha por uma razao medida: a grelha e a regiao elastica
- * deste separador, e qualquer linha nova por baixo dela sai-lhe da altura. Um controlo na barra
- * do titulo custa zero pixeis verticais.
+ * In the header and not under the list for a measured reason: the stage is this tab's elastic
+ * region, and any new line under it comes out of the stage's height. A control in the title
+ * bar costs zero vertical pixels.
  *
- * Nao e um quarto modo nem uma quarta coluna: aplica-se aos quatro modos, incluindo o Reply.
- * Radios nativos escondidos, o mesmo padrao da comparacao e do segmento de tema, para as setas,
- * o Space e uma unica paragem de tab virem de graca.
+ * Not a fourth mode: it applies on top of all four, Reply included. Hidden native radios, the
+ * same pattern as the list and the theme segment, so arrows, Space and one tab stop come free.
  */
 function LengthSegment({ value, onChange }: { value: Length; onChange: (length: Length) => void }) {
   const still = useReducedMotion();
@@ -273,8 +313,8 @@ function CaptureTimingDialog({
     ipc
       .setCaptureTiming(polls, stepMs, settleMs)
       .then((res) => {
-        // O backend clampa os valores; reflete o que ficou mesmo gravado (ex: 500 -> 100),
-        // senao a UI mostrava um numero fora da gama diferente do que esta em disco.
+        // The backend clamps the values; show what was actually saved (e.g. 500 -> 100), or the
+        // UI would display a number outside the range, different from the one on disk.
         setS(res);
         toast.success("Capture timing saved.");
         setOpen(false);
@@ -345,15 +385,15 @@ export function RefiningTab({
         title="Refine mode"
         titleId="refine-mode-heading"
         elastic
-        hint="What your main shortcut does. Pick one; the examples are written by hand."
+        hint="What your shortcut does to the text you select."
         detail={
           <div className="space-y-2">
             <p>
-              The examples are written by hand to show the difference, not live refines: the
-              first three are one sentence through each mode, and Reply answers a message of its
-              own. Length applies on top of whichever mode is
-              running, Reply included. Bind a shortcut to a mode under Shortcut to switch as you
-              press.
+              Pick one and the example below shows it at work: the same message through Fix,
+              Improve and Rebuild, and a message received through Reply. The examples are written
+              by hand to show the difference, not live refines. Length applies on top of whichever
+              mode is running, Reply included. Bind a shortcut to a mode under Shortcut to switch
+              as you press.
             </p>
             <p>
               Reply answers the message instead of rewriting it, in the first person and in the
@@ -367,22 +407,21 @@ export function RefiningTab({
         }
         action={<LengthSegment value={s.length} onChange={setLength} />}
       >
-        <div className="flex min-h-0 flex-1 flex-col gap-1.5">
-          <p className="shrink-0 text-xs text-fg-muted [display:var(--mode-input,block)]">
-            <span className="mr-1.5 font-medium text-fg">Before</span>
-            <span className="font-mono line-through decoration-1">{MODE_EXAMPLE.input}</span>
-          </p>
-          <ModeComparison mode={s.mode} onPick={setMode} />
-        </div>
+        <ModeList mode={s.mode} onPick={setMode} />
+        <ModeStage mode={s.mode} />
       </Section>
       </div>
 
-      <div data-settings-col="" className="settings-col">
-      <Section title="Behaviour" hint="What happens around each refine.">
+      {/* The card runs the full height beside the modes, with the timing button held at its
+          foot: a card that stopped two thirds of the way down, over nothing, read as a page that
+          had not finished loading. The rows are in the order the refine meets them: the model
+          first, then what happens at capture, then what happens at paste. */}
+      <div data-settings-col="" className="settings-col refining-behaviour">
+      <Section title="Behaviour" hint="What happens around each refine." elastic>
         <SwitchRow
           id="thinking-enabled"
           label="Extended thinking"
-          hint="Gemini reasons longer before answering. Higher quality, a bit slower."
+          hint="The model reasons longer before answering. Better on hard text, a little slower."
           checked={s.thinkingEnabled}
           onCheckedChange={(v) => setThinking(v, s.thinkingLevel)}
           extra={
@@ -458,7 +497,7 @@ export function RefiningTab({
           checked={s.previewBeforePaste}
           onCheckedChange={toggle("previewBeforePaste", ipc.setPreviewBeforePaste)}
         />
-        <div className="flex justify-end">
+        <div className="mt-auto flex justify-end pt-1">
           <CaptureTimingDialog s={s} setS={setS} />
         </div>
       </Section>

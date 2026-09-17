@@ -233,20 +233,23 @@ export async function tabContentRegressions(page, origin) {
   }).filter(Boolean));
   assert.deepEqual(overlaps, [], 'mode rows must not be drawn on top of each other');
 
-  const outputs = await page.$$eval('.mode-example', e => e.map(x => x.textContent).join(' | '));
-  for (const expected of ['Set up a meeting', 'Schedule a meeting', 'scheduling assistant', 'The meeting is at {time}']) {
-    assert.ok(outputs.includes(expected), `every mode's example should be on screen: ${outputs}`);
-  }
+  // The stage shows the CHOSEN mode at work: its example is on screen, the others are one
+  // arrow key away. The fixture starts on Improve.
+  const stageText = () => page.$eval('.mode-example', e => e.textContent);
+  assert.ok((await stageText()).includes('Could you review the revenue table'), 'the stage shows the chosen mode');
   await page.evaluate(() => window.__settingsFixture.modes.length = 0);
   await page.focus('input[name="refine-mode"]:checked');
   await page.keyboard.press('ArrowRight');
   await page.waitForFunction(() => window.__settingsFixture.modes.length >= 1);
-  // The border transitions over 150ms; wait for it to settle instead of reading mid-fade.
+  // The swap is animated; wait for the new text to be the one on the stage.
+  await page.waitForFunction(() => document.querySelector('.mode-example')?.textContent.includes('financial analyst'), { timeout: 3000 })
+    .catch(() => { throw new Error('the stage must follow the chosen mode'); });
+  // The ground transitions over 150ms; wait for it to settle instead of reading mid-fade.
   await page.waitForFunction(() => {
     const labels = [...document.querySelectorAll('.mode-option')];
     const picked = labels.find(l => l.querySelector('input').checked);
     const other = labels.find(l => l !== picked);
-    return picked && other && getComputedStyle(picked).borderTopColor !== getComputedStyle(other).borderTopColor;
+    return picked && other && getComputedStyle(picked).backgroundColor !== getComputedStyle(other).backgroundColor;
   }, { timeout: 3000 }).catch(() => { throw new Error('the chosen mode needs a visible difference, not only a checked input'); });
 
   // Shortcut: all five in one list, each saying what it does.
