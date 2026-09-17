@@ -75,7 +75,10 @@ fn open_menu(app: &AppHandle, icon: tauri::Rect) {
         .and_then(|t| *t)
         .map(|t| t.elapsed().as_millis() as u64);
     if !ember_core::tray::reopens_after(since_hide) {
-        log::debug!("tray: click inside the blur guard ({since_hide:?}ms), not reopening");
+        // Info, not debug: this swallows a click the user made. With the shipped log level a
+        // swallowed click and a broken tray looked exactly alike, which is how the stuck menu
+        // above went unnoticed.
+        log::info!("tray: click inside the blur guard ({since_hide:?}ms), not reopening");
         return;
     }
     let Some(w) = crate::get_or_create_window(app, "tray") else {
@@ -83,17 +86,22 @@ fn open_menu(app: &AppHandle, icon: tauri::Rect) {
         return;
     };
     if state.tray_open.swap(true, Ordering::SeqCst) {
-        // Already open (a second click that somehow did not blur): bring it back. Unless the
-        // window is not actually visible, in which case the flag is stale (a show or focus that
-        // failed, a blur that never came) and the honest thing is to place and show it again,
-        // rather than to focus a hidden window on every click from now on.
-        if w.is_visible().unwrap_or(false) {
-            if let Err(e) = w.set_focus() {
-                log::warn!("tray: refocus failed: {e}");
-            }
-            return;
-        }
-        log::warn!("tray: open flag set but the window is hidden; reopening");
+        // The flag says open. That is NOT proof the menu is on screen: the webview folds itself
+        // away as soon as it hears `open: false`, and the flag can be set back to true before the
+        // hide that was meant to follow, which leaves a window that is visible, on top and
+        // clickable with nothing drawn in it.
+        //
+        // This branch used to refocus and return. The surface was then never told to open again,
+        // so every later click refocused the same blank window and the tray was finished: no menu,
+        // no way to quit, and nothing in the log to say so (found 2026-09-17, the menu window
+        // visible at 208x128 for hours with no tray line since the last close). A click on the
+        // icon must always be able to produce a menu, so this falls through and asserts the open
+        // state again. The webview ignores an open it is already showing, so a menu that really is
+        // open is only placed where it already is and focused.
+        log::info!(
+            "tray: the open flag was already set (visible={:?}); asserting the menu again",
+            w.is_visible()
+        );
     }
     // The icon rect comes in the tray's own coordinates, physical on Windows. The monitor is the
     // one under the icon's centre, found the way floating.rs finds the cursor's, so a taskbar on
@@ -134,7 +142,7 @@ fn open_menu(app: &AppHandle, icon: tauri::Rect) {
     if let Err(e) = w.set_focus() {
         log::warn!("tray: set_focus failed: {e}");
     }
-    log::debug!(
+    log::info!(
         "tray: menu opened at ({},{}) below={} on scale {}",
         at.x, at.y, at.below, monitor.scale
     );
@@ -152,7 +160,7 @@ pub(crate) fn close_menu(app: &AppHandle, by: ClosedBy) {
     if let Ok(mut t) = state.tray_hidden_at.lock() {
         *t = (by == ClosedBy::Blur).then(Instant::now);
     }
-    log::debug!("tray: menu closing (blur={})", by == ClosedBy::Blur);
+    log::info!("tray: menu closing (blur={})", by == ClosedBy::Blur);
     // While it folds, the window is still on screen and on top of everything: a click landing
     // on it must not choose Quit, so it stops being a target now, not in 140ms.
     if let Some(w) = app.get_webview_window("tray") {

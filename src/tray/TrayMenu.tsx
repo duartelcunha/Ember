@@ -47,12 +47,23 @@ export function TrayMenu() {
   // One choice per opening. A held Enter repeats; the repeats find this set and do nothing.
   const acted = useRef(false);
   const menu = useRef<HTMLDivElement>(null);
+  // The phase as the event listener sees it. The listener is registered once, so it would close
+  // over the phase of the first render; this is the value it has to read to tell an assertion of
+  // the open state from a real opening.
+  const phaseNow = useRef<Phase>("closed");
+  phaseNow.current = phase;
 
   useEffect(() => {
     let disposed = false;
     const apply = (open: boolean, isBelow = false) => {
       if (disposed) return;
       if (open) {
+        // An `open` for a menu already on screen is Rust asserting the state, not a new opening:
+        // it sends one on every click of the icon so a surface that folded itself away while the
+        // window stayed up can always be brought back. Restarting here would replay the entrance
+        // and throw away the highlighted item under the pointer, so an open menu only keeps
+        // drawing. Recovery is the branch below: from "closed" or "leaving" this reopens.
+        if (phaseNow.current === "open") return;
         acted.current = false;
         setIndex(0);
         setBelow(isBelow);
