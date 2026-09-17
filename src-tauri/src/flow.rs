@@ -227,19 +227,28 @@ fn blocking_capture(
     target: Option<crate::foreground::TargetSnapshot>,
 ) -> Result<CaptureOutput, CaptureFailure> {
     let _input_owner = crate::preview_hook::input_lease();
+    // Each refusal names its gate. These exits used to be silent, and "Field unavailable" on
+    // screen with nothing in the log is the one case that cannot be debugged from a log.
     if !crate::foreground::same_target(target) {
+        log::info!("capture: refused target_changed_before");
         return Err(CaptureFailure::Unverifiable);
     }
     // Resolve accessibility before copying or selecting all, including password/editability checks.
     let selection_guard = if terminal {
         None
     } else {
-        Some(
-            crate::selection_guard::SelectionGuard::begin(target)
-                .ok_or(CaptureFailure::Unverifiable)?,
-        )
+        match crate::selection_guard::SelectionGuard::begin(target) {
+            Some(guard) => Some(guard),
+            None => {
+                log::info!("capture: refused guard_begin");
+                return Err(CaptureFailure::Unverifiable);
+            }
+        }
     };
-    let mut io = RealIo::new(terminal).map_err(|_| CaptureFailure::Native)?;
+    let mut io = RealIo::new(terminal).map_err(|e| {
+        log::warn!("capture: refused native_io ({e})");
+        CaptureFailure::Native
+    })?;
     // Conteudo que nao conseguimos repor (ficheiros do Explorer, etc.): nem toca no clipboard.
     if io.has_unpreservable_content() {
         return Ok(CaptureOutput {
@@ -258,6 +267,8 @@ fn blocking_capture(
     let image = io.snapshot_image();
     #[cfg(windows)]
     if image.is_none() {
+        // `snapshot_image` already logged why the clipboard could not be read.
+        log::info!("capture: refused clipboard_snapshot");
         return Err(CaptureFailure::Native);
     }
     let mut captured = seq::capture(
@@ -273,14 +284,17 @@ fn blocking_capture(
     let owned = captured.text.as_deref().unwrap_or(SENTINEL);
     restore_snapshot(&mut io, &captured.saved, image.as_ref(), owned);
     captured.saved = None;
-    if !crate::foreground::same_target(target)
-        || selection_guard.as_ref().is_some_and(|guard| {
-            captured
-                .text
-                .as_deref()
-                .is_some_and(|text| !guard.seal(text, captured.via_select_all))
-        })
-    {
+    if !crate::foreground::same_target(target) {
+        log::info!("capture: refused target_changed_after");
+        return Err(CaptureFailure::Unverifiable);
+    }
+    if selection_guard.as_ref().is_some_and(|guard| {
+        captured
+            .text
+            .as_deref()
+            .is_some_and(|text| !guard.seal(text, captured.via_select_all))
+    }) {
+        log::info!("capture: refused guard_seal");
         return Err(CaptureFailure::Unverifiable);
     }
     Ok(CaptureOutput {
@@ -439,6 +453,11 @@ fn now_ms() -> u64 {
 /// sitio a decidir "o que mostrar e por quanto tempo" (`ember_core::overlay::feedback_for`),
 /// em vez de cada chamador embutir a sua propria string e o seu proprio numero magico.
 async fn finish(app: &AppHandle, run_id: u64, outcome: FlowOutcome) {
+    // Every run ends here, so every run says how it ended. Without this line a refine that
+    // died before the capture left nothing in the log at all: twelve runs on 2026-09-16 with a
+    // "hotkey:" line each and not one word after it. Outcomes carry enums and our own strings,
+    // never the user's text.
+    log::info!("[run {run_id}] outcome={outcome:?}");
     let fb = feedback_for(outcome);
     emit(app, run_id, fb.phase, fb.message.clone(), fb.provider.clone());
     // Feedback may outlive its run. Only this run's ownership is released, so late cleanup
