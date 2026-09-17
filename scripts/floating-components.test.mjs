@@ -329,6 +329,33 @@ test("UI components preserve geometry and asynchronous ownership", (t) => withBr
       assert.equal(await page.evaluate(() => window.__trayActions.filter(a => a === 'quit').length), 1);
       await capture('tray');
     });
+    await t.test('an open the menu is already showing keeps it, and one after it folded brings it back', async () => {
+      // Rust asserts `open` on every click of the icon, because the flag saying the menu is open
+      // is not proof that anything is drawn: the surface folds itself away on `open: false`, and
+      // if the hide that should follow never lands the window stays up, visible and empty. That
+      // is how the tray died on 2026-09-17, with no menu and no way to quit.
+      await page.goto(`${origin}/__ember-test/tray?trayOpen`);
+      await page.waitForSelector('[role=menu]');
+      await page.keyboard.press('ArrowDown');
+      await page.waitForFunction(() => document.querySelector('[role=menuitem][data-active]')?.textContent.startsWith('Quit'));
+      // A node of our own marking, so a remount is visible: React would drop the attribute with it.
+      await page.$eval('[role=menu]', e => { e.dataset.assertionMarker = '1'; });
+      await send('ember://tray', { open: true });
+      await presented();
+      assert.equal(await page.$eval('[role=menu]', e => e.dataset.assertionMarker), '1',
+        'an assertion of the open state must not replay the entrance on a menu already on screen');
+      assert.ok(await page.$eval('[role=menuitem][data-active]', e => e.textContent.startsWith('Quit')),
+        'nor throw away what the pointer or the arrows had chosen');
+
+      // The recovery the fix exists for: once the surface has folded and unmounted, the window can
+      // still be up, and the next click has to produce a menu rather than focus an empty window.
+      await send('ember://tray', { open: false });
+      await page.waitForFunction(() => !document.querySelector('[role=menu]'));
+      await send('ember://tray', { open: true });
+      await page.waitForSelector('[role=menu]');
+      assert.equal(await page.$eval('[role=menu]', e => e.dataset.assertionMarker), undefined,
+        'coming back from folded is a real opening, so the surface is a new node and animates in');
+    });
     await t.test('static startup branding still completes its native lifecycle', async () => {
       // Declared here rather than inherited from whatever ran before: this asserts the REDUCED
       // branding, and it read as an intermittent failure whenever an earlier block left the
