@@ -448,7 +448,6 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--border-accent);
     --card-gap: 0.75rem;
     --row-gap: 0.5rem;
     --hint: none;
-    --example-lines: 2;
   }
 }
 @container settings (max-width: 52rem) { [role="tab"] > svg { display: none; } }
@@ -515,8 +514,8 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--border-accent);
    height the card has left, which is what makes a tall window read as a showcase rather than
    as a list that stopped early. The pane may scroll (`data-scroll-pane`) as the last resort
    below the minimum window, where clamped text can still exceed the height. */
-.mode-stage { flex: 1 1 0; min-height: 0; overflow: auto; margin-top: 0.75rem; padding-top: 0.75rem;
-              border-top: 1px solid var(--border-subtle); container-type: inline-size; }
+.mode-stage { flex: 1 1 0; min-height: 5rem; overflow: auto; margin-top: 1rem;
+              container-type: size; }
 .mode-stage-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.75rem 1.5rem;
                    min-height: 100%; align-content: center; }
 @container (min-width: 30rem) {
@@ -524,22 +523,29 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--border-accent);
   .mode-stage-pane[data-after] { border-left: 1px solid var(--border-subtle); padding-left: 1.5rem; }
 }
 .mode-stage-pane { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
-/* Short windows keep only the outcome: the message itself is one line away in the (i). */
-.mode-stage-pane[data-before] { display: var(--mode-before, flex); }
 .mode-stage-label { font-size: 0.6875rem; font-weight: 500; color: var(--color-fg-muted); }
 .mode-stage-pane p { margin: 0; max-width: 34rem; font-size: 0.875rem; line-height: 1.55;
                      white-space: pre-line; overflow-wrap: anywhere; color: var(--color-fg-muted); }
 .mode-stage-pane[data-after] p { font-size: 0.9375rem; color: var(--color-fg); }
-@container settings (max-height: 560px) {
-  .settings-density { --mode-before: none; }
-  .mode-option { padding-block: 0.25rem; }
+/* Truncation is decided by the STAGE's own height, never by the window's. Keyed to the window,
+   a 1158x603 window (a short one, but with room to spare here) cut the example to two lines and
+   dropped the "Before" pane entirely, leaving one clipped sentence floating in the card. The
+   before/after pair is the whole point of the stage; it is the last thing to go, not the first. */
+@container (max-height: 11rem) {
   .mode-stage-pane p { font-size: 0.8125rem; line-height: 1.5; }
+  .mode-clamp { -webkit-line-clamp: 3; }
+}
+/* Below this the stage cannot hold both halves, and what gets cut matters: showing "Before" and
+   losing the result under the fold answers the wrong question. The outcome stays, the input goes
+   (it is one line away in the (i), and three of the four modes share it). */
+@container (max-height: 7rem) {
+  .mode-clamp { -webkit-line-clamp: 2; }
+  .mode-stage-pane[data-before] { display: none; }
 }
 /* Stacked, the Behaviour card sits under the modes and every line it spends is a line the stage
    loses; its one-line hints go (the (i) keeps the detail) and its rows close up. Scoped to this
    tab's column, not to the density variables every tab reads. */
 @container settings (max-width: 48rem) { .refining-behaviour { --hint: none; --row-gap: 0.625rem; } }
-@container settings (max-width: 48rem) and (max-height: 720px) { .settings-density { --example-lines: 2; } }
 
 /* The hit area of one option in a segmented control.
  *
@@ -551,10 +557,10 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--border-accent);
 .ember-seg-hit { position: absolute; inset: 0; margin: 0; appearance: none; -webkit-appearance: none;
                  background: transparent; border: 0; border-radius: inherit; cursor: pointer; }
 .ember-seg-hit:focus-visible { outline: 2px solid var(--border-accent); outline-offset: 1px; }
-/* Only ever set in the 520px tier, where both texts in full cannot fit whatever we do. Unset
-   everywhere else, so `-webkit-line-clamp: none` leaves the text alone. */
+/* Unclamped by default: the stage's own height queries above set a line count when, and only
+   when, the stage is genuinely too short for the text it was given. */
 .mode-clamp { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden;
-              -webkit-line-clamp: var(--example-lines, none); }
+              -webkit-line-clamp: none; }
 /* Narrow, the per-mode hint goes: the name alone still picks, and the stage under the list says
    what the chosen one does with the width it has left. */
 @container settings (max-width: 48rem) {
