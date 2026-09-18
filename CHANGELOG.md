@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.0-rc.1](https://github.com/duartelcunha/Ember/compare/v1.2.1-rc.1...v1.3.0-rc.1) (2026-09-18)
+
+
+### Features
+
+* **settings:** the Refining tab shows the chosen mode at work ([08937f5](https://github.com/duartelcunha/Ember/commit/08937f5c8045d4484278f0a0798e811f4a0736f4))
+
+
+### Bug Fixes
+
+* **flow:** name the gate that refused a capture and log how every run ended ([ad52604](https://github.com/duartelcunha/Ember/commit/ad5260442e7287a010590841e1968f245cece9ad))
+* **hotkey:** Shift alone is not a modifier, and recording pauses the live shortcuts ([84ec38b](https://github.com/duartelcunha/Ember/commit/84ec38be86a93f66cd18e6c5ad90607f4aca448d))
+* **quit:** leaving no longer depends on the animation being built ([2e413ba](https://github.com/duartelcunha/Ember/commit/2e413babd89294630362b63549897922d4d36225))
+* **settings:** the Refining example is a request, and the stage keeps both halves ([05ffb64](https://github.com/duartelcunha/Ember/commit/05ffb643aa44088e8f4b2b2430cc000ddaddd895))
+* **tray:** a click on the icon always produces a menu again ([a213032](https://github.com/duartelcunha/Ember/commit/a2130322671433a09b1cb86d96df924ab990ee6e))
+
 ## [1.2.1-rc.1](https://github.com/duartelcunha/Ember/compare/v1.2.0...v1.2.1-rc.1) (2026-09-09)
 
 
