@@ -142,3 +142,43 @@ edit made v1.2.0 the full release. `/releases/latest/download/latest.json` then 
 
 Not proven by this record in any case: mixed-DPI and hotplug behaviour, remote sessions,
 applications other than those listed, and any macOS or Linux behaviour.
+
+## 1.3.0-rc.1 hands-on pass, 2026-09-18
+
+Environment: Windows 11 Home (build 22631), two displays, primary 2560 by 1440 with a work area
+of 2560 by 1392, secondary 1920 by 1080 starting at y=87. The CI installer
+`Ember_1.3.0-rc.1_x64-setup.exe` (2,786,523 bytes) was downloaded from the release and installed
+with `/S` over a local build of the same commits, so this pass is on the artifact that shipped,
+not on a developer build. Configuration, the saved shortcut and credentials survived the install.
+
+Read back from `Ember.log`: every line since the 1.3.0-rc.1 start, zero warning and zero error
+lines.
+
+| What | When | What the log recorded |
+| --- | --- | --- |
+| Quit from the tray menu | 11:08:37 | menu opened at (1873,1256); menu closing (blur=false); `quit: requested`, animation shown, finalizing, exiting, exit requested (quitting=true), event loop exited, all within one second |
+| Refine, first press | 17:36:59 | Claude desktop 2.2553.1.0, mode Polish; `guard: refused no_keyboard_focus`; `capture: refused guard_begin`; `outcome=TargetUnverifiable` |
+| Refine, second press | 17:37:00 to 17:37:15 | capture armed, 503 chars, no select-all fallback; Gemini `gemini-3.5-flash-lite` answered in 7,014 ms with 485 chars; preview gate ACCEPT with the Enter consumed by the hook; clipboard guard revision 1697 -> 1697, armed; `Pasted`; `outcome=Success { provider: "Gemini" }` |
+
+The first press is worth recording rather than rounding away: in that application the
+accessibility layer did not report keyboard focus on the field yet, the guard refused, and the
+press one second later went through. The refusal is the guard doing its job, not a crash, and it
+is visible in the log only because this release made every refusal name itself.
+
+Verified earlier on local builds of the same commits, not repeated on this artifact: the tray
+recovering from a menu window left visible and empty (`tray: the open flag was already set
+(visible=Ok(true)); asserting the menu again`, followed by the menu opening), and the startup
+repair of an unsafe saved shortcut (`saved hotkey 'Shift+E' is not safe to register
+(NeedsModifier { key: "e" }); picking another` then `hotkey chosen automatically:
+CmdOrCtrl+Shift+E`).
+
+Not exercised in this pass, and therefore still unproven for 1.3.0: Notepad, Word, Outlook,
+Brave and Windows Terminal (the refine evidence here is one Electron application), the select-all
+fallback, the project picker, preview off, the retention toggle, logout, mixed-DPI behaviour and
+any macOS or Linux behaviour. Injected input was not used for any of this evidence: it gives
+Ember empty captures and clicks beside the target.
+
+One flake to note for whoever reads CI next: the macOS job failed once on the tray fold
+animation (`floating-components.test.mjs`, "never started") and passed on a re-run of the same
+commit, with Windows and Linux green both times. The same macOS job has been failing on `main`
+since 2026-09-09 on an unrelated settings-fade assertion.

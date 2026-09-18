@@ -87,6 +87,27 @@ Windows Terminal handed the result to the clipboard), zero error lines, recorded
 checksums and made v1.2.0 the full release; the updater endpoint reports 1.2.0. What that pass did
 not exercise stays listed as unproven in the same record.
 
+## 1.3.0 delivery, 2026-09-18
+
+PR #53 was rebase-merged into `main`, so its seven commits reached the changelog by name. One of
+them is a feature (the Refining tab), which is why release-please proposed 1.3.0-rc.1 rather than
+1.2.1-rc.2. Its merge produced tag `v1.3.0-rc.1`; the build job attached the installer, its
+signature and `latest.json`. CI was green on all three platforms, after one macOS re-run of the
+same commit.
+
+What this train fixes: a tray menu that could be left visible and empty, with every later click
+refocusing it and no way to quit; a Quit that never left, because it built the one window not
+created at startup on the thread its own command runs on and the build never returned; a shortcut
+rule that accepted Shift plus a letter and so took that letter from every application; a refine
+that failed without writing down which gate refused it; and the Refining tab, rebuilt around what
+the four modes actually do.
+
+The hands-on pass ran on the CI artifact rather than a local build, and is recorded in
+[native qualification](native-qualification.md): quit through the tray in under a second, and a
+refine of 503 characters answered by Gemini and pasted through the preview gate, with zero
+warning or error lines in the log. The first press of that refine was refused by the
+accessibility guard and the second went through; both are in the record.
+
 ## Audit record (three-platform bar)
 
 The audit at `179e397` is the baseline. Production approval on that bar requires native evidence
