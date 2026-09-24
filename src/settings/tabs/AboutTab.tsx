@@ -88,7 +88,7 @@ export function AboutTab({
             <span className="min-w-0">
               <span className="block text-xl font-semibold text-fg">Ember</span>
               <span className="mt-1 block text-xs text-fg-muted">
-                Refine any text, in the moment, in any desktop app.
+                Refine text across Windows desktop apps.
               </span>
             </span>
           </div>

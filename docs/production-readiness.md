@@ -192,10 +192,24 @@ installer ran with `/S /UPDATE` and returned 0. The installed executable SHA-256
 It has the same length as the candidate and differs in only the three bytes of the Tauri
 bundle-type marker, which the installer changes from `UNK` to `NSS`. The installed process
 started from `%LOCALAPPDATA%\Ember\ember.exe`, logged version 1.3.0, remained running for
-the five-second startup check and was stopped by the smoke harness. A further installed
+the five-second startup check and was stopped by the smoke harness. The first further installed
 Codex refinement was not run because the desktop did not provide a ten-second idle window.
-The source checkout on `main` remained clean and untouched. This is local Windows qualification,
-not a signed release or production publication.
+
+A later installed Codex run with an explicit selection did pass. The probe began only after an
+empty composer and an idle desktop were verified. It observed the preview, confirmed with Enter,
+read the changed text from the same composer, and recorded `Pasted` and `Success` in `Ember.log`.
+The probe cleared its test text, Ember restored the original clipboard formats and text, and the
+temporary provider setting was restored. Its structured result reported
+`PreviewObserved=true`, `ResultChanged=true`, `ComposerCleared=true`,
+`ClipboardRestoredByEmber=true` and `ForegroundAfterEnterSameAsCodex=true`.
+
+The installed whole-field trial captured 66 characters and received a model result, but the
+probe detected a focus change before confirmation and sent no Enter. The next attempt stopped
+before typing because the visible composer contained a draft. Both attempts stopped the Ember
+test process and restored the temporary provider setting. They do not establish whole-field
+paste on the installed build. The source checkout on `main` remained clean and untouched.
+This remains local Windows qualification, not proof of the exact CI release artifact or
+production publication.
 
 ## Audit record (three-platform bar)
 

@@ -22,6 +22,22 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "1.3.1",
+    lines: [
+      "Refine selected text or a whole field in a verified Codex desktop composer.",
+      "Explicit selections in writable fields without verifiable text ranges can go to your clipboard for manual paste.",
+      "Protected fields and detected target changes are refused before replacement.",
+    ],
+  },
+  {
+    version: "1.3.0",
+    lines: [
+      "The tray menu and Quit recover reliably.",
+      "Shortcuts no longer take ordinary Shift-letter typing from other apps.",
+      "The Refining tab shows how each mode changes your text.",
+    ],
+  },
+  {
     version: "1.2.0",
     lines: [
       "Every settings tab fits the window now, and the window remembers where you left it.",

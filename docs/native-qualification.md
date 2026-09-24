@@ -182,3 +182,26 @@ One flake to note for whoever reads CI next: the macOS job failed once on the tr
 animation (`floating-components.test.mjs`, "never started") and passed on a re-run of the same
 commit, with Windows and Linux green both times. The same macOS job has been failing on `main`
 since 2026-09-09 on an unrelated settings-fade assertion.
+
+## Codex editor recovery local candidate, 2026-09-24
+
+The isolated Windows candidate on `codex/ember-codex-field-refine` at `dd89ae0` includes the
+editor guard fix. In the Codex desktop composer, one run with an explicit selection and one
+with the whole field unselected each showed the preview, accepted Enter, and recorded
+`applied=Ok(Ok(Pasted))` followed by `Success`. The refined text appeared in the same composer.
+The test text was removed and the original clipboard text and formats were restored in both
+runs. A separate focus change produced `ForegroundChanged` with no paste. The fixture checks
+also refused password and read-only fields and preserved a newer clipboard copy.
+
+The local NSIS installer was installed with `/S /UPDATE` after a verified backup of the previous
+installation and configuration. The installed executable reported version 1.3.0. Its SHA-256
+is `8CEC1CF138F982FB93D2F7434C661D1EA985AB9223F8A416F52D2DF509B6D86E`. A subsequent
+installed run with an explicit selection passed the preview, paste, same-composer, focus,
+clipboard restoration and test-text cleanup checks. The installed whole-field trial obtained
+a result but stopped when the probe found that focus had changed before confirmation. A later
+attempt found a nonempty composer and did not type or call a provider. The installed
+whole-field path is therefore not yet proven.
+
+These are local build checks, not checks of the CI-signed release installer. A separate
+ChatGPT desktop installation was not qualified. The exact release artifact, whole-field
+installed path, changed-destination refusal and recovery to v1.3.0 remain release gates.
