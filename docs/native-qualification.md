@@ -205,3 +205,28 @@ whole-field path is therefore not yet proven.
 These are local build checks, not checks of the CI-signed release installer. A separate
 ChatGPT desktop installation was not qualified. The exact release artifact, whole-field
 installed path, changed-destination refusal and recovery to v1.3.0 remain release gates.
+
+## 1.3.1 CI artifact and installation, 2026-09-24
+
+PR #57 was squash-merged as `bbc6877`, and the release PR #58 was squash-merged as
+`1abcebc`. CI passed on Windows, macOS and Ubuntu for both the fix and the release commit.
+Release run `36037494878` built and uploaded the Windows installer, detached updater
+signature and `latest.json` from `1abcebc`. The release is still a prerelease, and
+`/releases/latest` still resolves to v1.3.0.
+
+The downloaded `Ember_1.3.1_x64-setup.exe` has SHA-256
+`546035796061c6f369128093d7e19dbe997438bfbe8a14747277c73e10b374d7`.
+The manifest names version 1.3.1 and the exact installer URL; its signature matches the
+downloaded `.sig`. The repository's `verify_update` example accepted that signature against
+the configured updater public key. Windows Authenticode reports `NotSigned`, so this does not
+establish publisher identity. The signed updater artifact and the verified v1.3.0 recovery
+installer are saved outside the checkout under `%LOCALAPPDATA%`.
+
+The official installer ran with `/S /UPDATE` and returned 0. The installed executable reports
+1.3.1 and SHA-256 `919434c4d03bacbd9150b80665d1d82a49b2d1d399161716a5395a283ddb0899`.
+The config file's hash matched its pre-install backup. Ember started from the installed path,
+remained running and logged `Ember 1.3.1 started` without a warning or error in the startup
+slice. This proves install and startup only. The desktop session was locked during this pass,
+so the exact installed artifact has not yet completed the selected-text, whole-field,
+wrong-target, clipboard-restoration or rollback checks in the real Codex composer. Stable
+promotion remains blocked on that native qualification.
