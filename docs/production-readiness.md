@@ -192,9 +192,9 @@ installer ran with `/S /UPDATE` and returned 0. The installed executable SHA-256
 It has the same length as the candidate and differs in only the three bytes of the Tauri
 bundle-type marker, which the installer changes from `UNK` to `NSS`. The installed process
 started from `%LOCALAPPDATA%\Ember\ember.exe`, logged version 1.3.0, remained running for
-the five-second startup check and was stopped cleanly. A further installed Codex refinement
-was not run because the desktop did not provide a ten-second idle window. The source
-checkout on `main` remained clean and untouched. This is local Windows qualification,
+the five-second startup check and was stopped by the smoke harness. A further installed
+Codex refinement was not run because the desktop did not provide a ten-second idle window.
+The source checkout on `main` remained clean and untouched. This is local Windows qualification,
 not a signed release or production publication.
 
 ## Audit record (three-platform bar)
