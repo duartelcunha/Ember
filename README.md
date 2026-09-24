@@ -5,14 +5,13 @@
 <h1 align="center">Ember</h1>
 
 <p align="center">
-  <strong>Refine any text, in the moment, in any desktop app.</strong><br>
-  <em>Select text. Press a global shortcut. Watch it sharpen in place.</em>
+  <strong>Refine text across Windows desktop apps.</strong><br>
+  <em>Select text, press a global shortcut, and review the result.</em>
 </p>
 
 <p align="center">
   <a href="https://github.com/duartelcunha/Ember/releases/latest"><img src="https://img.shields.io/github/v/release/duartelcunha/Ember?style=for-the-badge&color=fd8c3c&labelColor=1a0e03&label=release" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/Windows-2e2519?style=for-the-badge&logo=windows&logoColor=ffffff" alt="Windows">
-  <img src="https://img.shields.io/badge/macOS-next-6f6353?style=for-the-badge&labelColor=2e2519&logo=apple&logoColor=ffffff" alt="macOS next">
   <a href="https://tauri.app/"><img src="https://img.shields.io/badge/Tauri%202-2e2519?style=for-the-badge&logo=tauri&logoColor=24C8DB" alt="Tauri 2"></a>
   <img src="https://img.shields.io/badge/Rust-2e2519?style=for-the-badge&logo=rust&logoColor=f46623" alt="Rust">
   <img src="https://img.shields.io/badge/React%2019-2e2519?style=for-the-badge&logo=react&logoColor=61DAFB" alt="React 19">
@@ -25,11 +24,11 @@
   <img src="docs/media/refine-slack.gif" width="100%" alt="Ember in action refining a Slack message in-place">
 </p>
 
-You know that clumsy message, that rambling prompt you keep editing, or that rough commit note? Select it, hit your shortcut, and Ember cleans it up directly where your cursor is.
+You know that clumsy message, that rambling prompt you keep editing, or that rough commit note? Select it, hit your shortcut, and Ember refines it. It pastes automatically when Windows can verify the editable field and selection. For an explicitly selected, non-password Edit field without verifiable text ranges, Ember leaves the result on the clipboard for you to paste. Protected or unverifiable fields are refused.
 
-[Ember 1.2.0](https://github.com/duartelcunha/Ember/releases/latest) is the stable release for Windows. Installed copies of 1.0.0 are offered it by the updater. For a manual upgrade run the installer with `/UPDATE` and keep a backup of `%APPDATA%\com.deleg8lab.ember\config.json`; do not run the old uninstaller first. The installer carries Ember's updater signature but no Windows publisher certificate, so SmartScreen may warn on first run.
+[The latest stable Ember release](https://github.com/duartelcunha/Ember/releases/latest) is for Windows. For a manual upgrade run the installer with `/UPDATE` and keep a backup of `%APPDATA%\com.deleg8lab.ember\config.json`; do not run the old uninstaller first. The installer carries Ember's updater signature but no Windows publisher certificate, so SmartScreen may warn on first run.
 
-Windows is the only supported platform in 1.2.0. macOS is the next track; no Mac was available to qualify it, so its native behaviour stays unproven until one is. Linux follows macOS. What is proven, what is deferred and with which residual risk is in the [production readiness record](docs/production-readiness.md); the hands-on evidence per release is in [native qualification](docs/native-qualification.md). Historical recordings below show earlier behaviour, not proof of the current build.
+Windows is the only supported platform. macOS and Linux have not passed native qualification. What is proven, what is deferred and with which residual risk is in the [production readiness record](docs/production-readiness.md); the hands-on evidence per release is in [native qualification](docs/native-qualification.md). Historical recordings below show earlier behaviour, not proof of the current build.
 
 ---
 
@@ -94,11 +93,11 @@ Ember blends natively with both dark and light desktop setups with instant theme
 
 ## Security & Privacy Architecture
 
-Results stay in memory by default. Optional retention uses authenticated encryption and a key in the OS vault. Legacy plaintext results are preserved without being loaded and can be explicitly deleted in Settings. Diagnostic prompt logging is a separate opt-in plaintext setting. See [data handling and recovery](docs/data-policy.md).
+Results stay in memory by default. Optional retention uses authenticated encryption and a key in the OS vault. Legacy plaintext results are preserved without being loaded and can be explicitly deleted in Settings. Diagnostic prompt logging is a separate opt-in plaintext setting. See [data handling and recovery](docs/data-policy.md) and [security reporting](SECURITY.md).
 
 | Area | Current implementation |
 |---|---|
-| **Secret Storage** | API keys and OAuth refresh credentials use the OS Credential Vault (**Windows Credential Manager** / macOS Keychain). Active access tokens remain in memory. Keys never cross the IPC bridge to frontend JavaScript. |
+| **Secret Storage** | API keys and OAuth refresh credentials use the OS Credential Vault (**Windows Credential Manager** / macOS Keychain). A key entered in Settings crosses IPC once for storage and is never returned to JavaScript. Active access tokens remain in memory. |
 | **Prompt Boundary Isolation** | Input text and project context are wrapped with strict anti-injection delimiters and escaped (`[EMBER_INPUT]`, `[EMBER_PROJECT_SOURCE]`, `[EMBER_PROJECT_CONTEXT]`). |
 | **Window & Focus Isolation** | Overlay and Picker windows run with `focus: false` and strict Content Security Policy (`default-src 'self'`). Windows replacement checks the original window, focused HWND, accessibility element, selection endpoints and recaptured text. Native application qualification and continuous input generation validation remain open. |
 | **Input Hook Hygiene** | Low-level keyboard hooks (`WH_KEYBOARD_LL`) own confirmation and paging keys during preview gates and pass all other system keystrokes through untouched. |
@@ -126,7 +125,7 @@ Results stay in memory by default. Optional retention uses authenticated encrypt
 3. Open **Settings** (<kbd>Tray Icon</kbd> → **Settings**) and paste a free API key:
    - [Google AI Studio (Gemini)](https://aistudio.google.com/apikey)
    - [Groq Cloud](https://console.groq.com/keys)
-4. Highlight any text in any application and press your global shortcut (configured on first launch).
+4. Select text in a Windows app and press your global shortcut (configured on first launch). Ember will either offer a verified replacement, leave the result on the clipboard for manual paste, or explain why it cannot safely capture the field.
 
 ---
 

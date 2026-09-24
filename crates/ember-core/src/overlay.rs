@@ -17,6 +17,10 @@ pub enum FlowOutcome {
     ClipboardBusy,
     /// Nao havia seleccao (o poll esgotou sem o clipboard mudar).
     NoSelectionFound,
+    /// An unverified editor can only be refined from an explicit selection.
+    ManualSelectionRequired,
+    /// A manually selected range exceeds the bounded capture limit.
+    SelectionTooLarge,
     /// A seleccao nao tem nada que se refine (curta de mais e sem estrutura). NAO houve chamada
     /// ao modelo: e um desfecho de POUPANCA, nao um erro.
     NothingToRefine,
@@ -57,6 +61,8 @@ pub enum FlowOutcome {
     /// Terminal: the flattened result was left on the clipboard and no keys were sent. Terminal
     /// line editing is shell-specific; until a terminal has a tested adapter the user pastes it.
     TerminalHandoff,
+    /// The result was copied for manual paste; no replacement keys were sent.
+    ManualHandoff,
 }
 
 /// A overlay segue o cursor nesta fase?
@@ -131,6 +137,18 @@ pub fn feedback_for(outcome: FlowOutcome) -> OverlayFeedback {
             message: Some("Select text first".into()),
             provider: None,
             hide_after_ms: 1400,
+        },
+        FlowOutcome::ManualSelectionRequired => OverlayFeedback {
+            phase: "hint",
+            message: Some("Select text in this editor, then try again".into()),
+            provider: None,
+            hide_after_ms: 2600,
+        },
+        FlowOutcome::SelectionTooLarge => OverlayFeedback {
+            phase: "hint",
+            message: Some("Selection is too long to refine safely".into()),
+            provider: None,
+            hide_after_ms: 2600,
         },
         // "hint" e nao "error": nada falhou, e o utilizador que precisa de clicar na caixa ou
         // selecionar o trecho. Fica mais tempo visivel porque a mensagem e mais longa.
@@ -227,6 +245,12 @@ pub fn feedback_for(outcome: FlowOutcome) -> OverlayFeedback {
             // The longest hint: it says where the result went and what to do next.
             hide_after_ms: 3500,
         },
+        FlowOutcome::ManualHandoff => OverlayFeedback {
+            phase: "hint",
+            message: Some("Result copied. Paste it yourself.".into()),
+            provider: None,
+            hide_after_ms: 3500,
+        },
     }
 }
 
@@ -250,8 +274,15 @@ mod tests {
         assert_eq!(notice_ms(800, NoticeSpeed::Quick), MIN_NOTICE_MS);
         assert_eq!(notice_ms(0, NoticeSpeed::Quick), MIN_NOTICE_MS);
         for outcome_ms in [800, 1200, 1400, 1600, 1800, 2000, 2200, 3500] {
-            for speed in [NoticeSpeed::Quick, NoticeSpeed::Normal, NoticeSpeed::Relaxed] {
-                assert!(notice_ms(outcome_ms, speed) >= MIN_NOTICE_MS, "{outcome_ms} {speed:?}");
+            for speed in [
+                NoticeSpeed::Quick,
+                NoticeSpeed::Normal,
+                NoticeSpeed::Relaxed,
+            ] {
+                assert!(
+                    notice_ms(outcome_ms, speed) >= MIN_NOTICE_MS,
+                    "{outcome_ms} {speed:?}"
+                );
             }
         }
     }
@@ -264,7 +295,11 @@ mod tests {
         for size in [OrbSize::Small, OrbSize::Normal, OrbSize::Large] {
             assert!(size.px() >= 2 && size.px() <= 4);
         }
-        assert_eq!(OrbSize::default().px(), 3, "the default must stay the size everyone has today");
+        assert_eq!(
+            OrbSize::default().px(),
+            3,
+            "the default must stay the size everyone has today"
+        );
     }
 
     #[test]

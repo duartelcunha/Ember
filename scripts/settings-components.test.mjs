@@ -196,6 +196,8 @@ test("settings surfaces fit the window and keep their behaviour", (t) => withBro
       await page.waitForSelector('#gemini-key');
       // Outside Tauri the window cannot answer whether it is visible, so the content is open.
       await page.waitForFunction(() => document.querySelector('main')?.dataset.phase === 'open');
+      // React can publish the phase before Motion applies its zero-duration animation.
+      await page.waitForFunction(() => Number(getComputedStyle(document.querySelector('main')).opacity) === 1);
       const before = await page.evaluate(() => { const main = document.querySelector('main'); main.dataset.probe = 'same-node'; return getComputedStyle(main).opacity; });
       assert.equal(Number(before), 1);
       await send('settings-closing');

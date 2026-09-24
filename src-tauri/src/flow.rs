@@ -90,6 +90,9 @@ impl Drop for RunOwnership {
 struct ApplyTarget {
     window: Option<crate::foreground::TargetSnapshot>,
     selection: Option<crate::selection_guard::SelectionGuard>,
+    manual: bool,
+    #[cfg(windows)]
+    clipboard_revision: Option<u64>,
     lease: RunLease,
 }
 
@@ -117,6 +120,8 @@ enum Applied {
     Pasted,
     /// Terminal: the flattened result was left on the clipboard and no keys were sent.
     HandedOff,
+    #[cfg(windows)]
+    ManualHandedOff,
     /// Another writer took the clipboard between arming and the paste; nothing was sent.
     ClipboardTakenOver,
     /// Nothing was sent and nothing of the user's changed.
@@ -190,7 +195,12 @@ fn emit_payload(
     // semana com o contexto errado sem dar por nada.
     let accent = state.orb_accent.lock().ok().and_then(|a| a.clone());
     let project = state.orb_project.lock().ok().and_then(|a| a.clone());
-    let style = state.overlay_style.lock().ok().map(|s| *s).unwrap_or_default();
+    let style = state
+        .overlay_style
+        .lock()
+        .ok()
+        .map(|s| *s)
+        .unwrap_or_default();
     let payload = serde_json::json!({
         "runId": run_id, "sequence": state.event_seq.fetch_add(1, Ordering::SeqCst) + 1,
         "confirmationScope": confirmation_scope, "phase": phase, "message": message, "provider": provider,
@@ -211,6 +221,9 @@ struct CaptureOutput {
     image: Option<ClipImage>,
     unpreservable: bool,
     selection_guard: Option<crate::selection_guard::SelectionGuard>,
+    manual: bool,
+    #[cfg(windows)]
+    clipboard_revision: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -226,6 +239,8 @@ fn blocking_capture(
     select_all_fallback: bool,
     target: Option<crate::foreground::TargetSnapshot>,
 ) -> Result<CaptureOutput, CaptureFailure> {
+    #[cfg(windows)]
+    use seq::SelectionIo;
     let _input_owner = crate::preview_hook::input_lease();
     // Each refusal names its gate. These exits used to be silent, and "Field unavailable" on
     // screen with nothing in the log is the one case that cannot be debugged from a log.
@@ -234,12 +249,16 @@ fn blocking_capture(
         return Err(CaptureFailure::Unverifiable);
     }
     // Resolve accessibility before copying or selecting all, including password/editability checks.
-    let selection_guard = if terminal {
-        None
+    let (selection_guard, manual): (Option<crate::selection_guard::SelectionGuard>, bool) = if terminal
+    {
+        (None, false)
     } else {
         match crate::selection_guard::SelectionGuard::begin(target) {
-            Some(guard) => Some(guard),
-            None => {
+            #[cfg(windows)]
+            crate::selection_guard::BeginResult::Automatic(guard) => (Some(guard), false),
+            #[cfg(windows)]
+            crate::selection_guard::BeginResult::Manual(guard) => (Some(guard), true),
+            crate::selection_guard::BeginResult::Denied => {
                 log::info!("capture: refused guard_begin");
                 return Err(CaptureFailure::Unverifiable);
             }
@@ -261,6 +280,9 @@ fn blocking_capture(
             image: None,
             unpreservable: true,
             selection_guard: None,
+            manual: false,
+            #[cfg(windows)]
+            clipboard_revision: None,
         });
     }
     // Snapshot da imagem ANTES de a captura escrever o sentinela (senao perdia-se).
@@ -278,22 +300,35 @@ fn blocking_capture(
         timing.step_ms,
         NEUTRALIZE_TIMEOUT_MS,
         terminal,
-        select_all_fallback,
+        select_all_fallback && !manual,
     );
     // End clipboard ownership before network I/O. Later cancellation must not restore stale data.
     let owned = captured.text.as_deref().unwrap_or(SENTINEL);
-    restore_snapshot(&mut io, &captured.saved, image.as_ref(), owned);
+    let restored = restore_snapshot(&mut io, &captured.saved, image.as_ref(), owned);
+    #[cfg(windows)]
+    let clipboard_revision = io.clip_revision();
     captured.saved = None;
     if !crate::foreground::same_target(target) {
         log::info!("capture: refused target_changed_after");
         return Err(CaptureFailure::Unverifiable);
     }
-    if selection_guard.as_ref().is_some_and(|guard| {
-        captured
-            .text
-            .as_deref()
-            .is_some_and(|text| !guard.seal(text, captured.via_select_all))
-    }) {
+    if manual
+        && (!restored
+            || !selection_guard
+                .as_ref()
+                .is_some_and(|guard| guard.manual_matches()))
+    {
+        log::info!("capture: refused manual_recheck_or_restore");
+        return Err(CaptureFailure::Unverifiable);
+    }
+    if !manual
+        && selection_guard.as_ref().is_some_and(|guard| {
+            captured
+                .text
+                .as_deref()
+                .is_some_and(|text| !guard.seal(text, captured.via_select_all))
+        })
+    {
         log::info!("capture: refused guard_seal");
         return Err(CaptureFailure::Unverifiable);
     }
@@ -302,6 +337,9 @@ fn blocking_capture(
         image: None,
         unpreservable: false,
         selection_guard,
+        manual,
+        #[cfg(windows)]
+        clipboard_revision,
     })
 }
 
@@ -313,29 +351,30 @@ fn restore_snapshot(
     saved: &Option<String>,
     image: Option<&ClipImage>,
     owned: &str,
-) {
+) -> bool {
     use seq::SelectionIo;
     let revision = io.clip_revision();
     if io.clip_get().as_deref() != Some(owned) {
-        return;
+        return false;
     }
     if let Some(image) = image {
         #[cfg(windows)]
         {
             if let Some(revision) = revision {
-                let _ = image.restore_if_owned(revision);
+                return image.restore_if_owned(revision).unwrap_or(false);
             }
-            return;
+            return false;
         }
         #[cfg(not(windows))]
         if saved.is_none() {
             if io.clip_revision() == revision {
                 io.restore_image(image);
+                return true;
             }
-            return;
+            return false;
         }
     }
-    seq::restore_owned(io, saved, owned, revision);
+    seq::restore_owned(io, saved, owned, revision)
 }
 
 fn blocking_replace(
@@ -351,6 +390,29 @@ fn blocking_replace(
         return Ok(Applied::Refused);
     }
     let mut io = RealIo::new(terminal)?;
+    #[cfg(not(windows))]
+    if target.manual {
+        return Ok(Applied::Refused);
+    }
+    #[cfg(windows)]
+    if target.manual {
+        if !target
+            .selection
+            .as_ref()
+            .is_some_and(|guard| guard.manual_matches())
+            || !target.owns_window()
+        {
+            return Ok(Applied::Refused);
+        }
+        let Some(revision) = target.clipboard_revision else {
+            return Ok(Applied::Refused);
+        };
+        return match crate::clipboard_snapshot::set_text_if_revision(revision, &refined) {
+            Ok(true) => Ok(Applied::ManualHandedOff),
+            Ok(false) => Ok(Applied::ClipboardTakenOver),
+            Err(error) => Err(error),
+        };
+    }
     if io.has_unpreservable_content() {
         return Ok(Applied::Refused);
     }
@@ -459,7 +521,13 @@ async fn finish(app: &AppHandle, run_id: u64, outcome: FlowOutcome) {
     // never the user's text.
     log::info!("[run {run_id}] outcome={outcome:?}");
     let fb = feedback_for(outcome);
-    emit(app, run_id, fb.phase, fb.message.clone(), fb.provider.clone());
+    emit(
+        app,
+        run_id,
+        fb.phase,
+        fb.message.clone(),
+        fb.provider.clone(),
+    );
     // Feedback may outlive its run. Only this run's ownership is released, so late cleanup
     // cannot admit a third interaction while a newer run is capturing or applying text.
     app.state::<AppState>().complete_run(run_id);
@@ -522,6 +590,9 @@ pub async fn run(app: AppHandle, opts: RunOpts, lease: RunLease) {
     }
 
     let selection_guard = out.selection_guard;
+    let manual = out.manual;
+    #[cfg(windows)]
+    let clipboard_revision = out.clipboard_revision;
     let captured = out.captured;
     let image = out.image;
     let saved = captured.saved.clone();
@@ -552,9 +623,23 @@ pub async fn run(app: AppHandle, opts: RunOpts, lease: RunLease) {
         let s = saved.clone();
         let _ = tauri::async_runtime::spawn_blocking(move || blocking_restore(s, image, terminal))
             .await;
-        finish(&app, run_id, FlowOutcome::NoSelectionFound).await;
+        finish(
+            &app,
+            run_id,
+            if manual {
+                FlowOutcome::ManualSelectionRequired
+            } else {
+                FlowOutcome::NoSelectionFound
+            },
+        )
+        .await;
         return;
     };
+
+    if manual && selected.encode_utf16().count() > crate::selection_guard::MAX_TEXT_UNITS {
+        finish(&app, run_id, FlowOutcome::SelectionTooLarge).await;
+        return;
+    }
 
     // Nada que se refine: acaba o ciclo sem CHAMAR O MODELO, que e o que custa dinheiro e os
     // ~4 segundos. O orb ja apareceu e a captura ja foi feita, e assim tem de ser: so depois de
@@ -589,7 +674,7 @@ pub async fn run(app: AppHandle, opts: RunOpts, lease: RunLease) {
 
     // Uma captura por select-all passa SEMPRE pelo gate, mesmo com o preview global desligado: o
     // utilizador nunca escolheu este texto, por isso tem de o ver antes de ser substituido.
-    let preview = preview || via_select_all;
+    let preview = (preview || via_select_all) && !manual;
 
     if dismissed(&app, run_id) {
         abort_cancelled(&app, run_id, saved, image, terminal, FlowOutcome::Cancelled).await;
@@ -721,6 +806,9 @@ pub async fn run(app: AppHandle, opts: RunOpts, lease: RunLease) {
                     let target = ApplyTarget {
                         window: target_hwnd,
                         selection: selection_guard,
+                        manual,
+                        #[cfg(windows)]
+                        clipboard_revision,
                         lease: lease.clone(),
                     };
                     let applied = tauri::async_runtime::spawn_blocking(move || {
@@ -739,6 +827,10 @@ pub async fn run(app: AppHandle, opts: RunOpts, lease: RunLease) {
                         }
                         Ok(Ok(Applied::HandedOff)) => {
                             finish(&app, run_id, FlowOutcome::TerminalHandoff).await;
+                        }
+                        #[cfg(windows)]
+                        Ok(Ok(Applied::ManualHandedOff)) => {
+                            finish(&app, run_id, FlowOutcome::ManualHandoff).await;
                         }
                         Ok(Ok(Applied::ClipboardTakenOver)) => {
                             finish(&app, run_id, FlowOutcome::ClipboardChanged).await;

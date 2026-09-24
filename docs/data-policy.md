@@ -1,6 +1,7 @@
 # Data handling and recovery
 
-This describes the hardening checkout, not a certification of an installed release.
+This describes the Windows 1.3.1 candidate and its data handling. Native release evidence is
+recorded separately; this document does not certify an installed release.
 
 ## Results and diagnostics
 
@@ -23,7 +24,10 @@ native vault failure and concurrent policy tests remain part of qualification.
 Prompt diagnostics is a separate, default-off option. Its `prompts.jsonl` is plaintext and
 contains user text. Turning logging off prevents new entries but does not erase existing
 diagnostics. Review and delete that file explicitly through the log directory when finished.
-Ordinary logs are less verbose but have not yet passed the full privacy review.
+The 2026-09-24 source review found ordinary diagnostic logs record categories, timings,
+process and refusal reasons, not selected text, model output or credential values. Panic
+messages and OS error strings are less predictable, so users should still inspect a log
+before sharing it. Prompt diagnostics remains the only intentional plaintext text log.
 
 ## Context and network
 
@@ -51,7 +55,8 @@ saved; legacy oversized overrides stop refinement before a provider request. Exi
 preferences remain intact. Legacy automatic file loading is disabled with a Settings notice.
 Source paths and SHA-256 fingerprints are provenance for approved snapshots, not permission
 to reload files. Import again to review changes. New manual saves also reject detected secrets.
-Full project scope hierarchy and adversarial instruction evaluation remain release work.
+Full project scope hierarchy and broader adversarial instruction evaluation remain outside
+the Windows 1.3.1 editor recovery scope. Reviewed sources remain bounded and explicit.
 
 OpenAI-compatible credentials are bound to their HTTPS endpoint. Changing that endpoint does
 not send an existing connection's credential to the new server. Plain HTTP local connections

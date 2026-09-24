@@ -301,18 +301,22 @@ test("UI components preserve geometry and asynchronous ownership", (t) => withBr
       assert.equal(await active(), 'Quit Ember');
       await page.keyboard.press('Escape');
       await page.waitForFunction(() => window.__trayActions.at(-1) === 'close');
-      // Rust answers a close by flipping `open`; the surface folds before the window hides, and
-      // nothing chosen during the fold reaches Rust. The fold is 140ms, shorter than a slow
-      // runner's round trip, so the proof is the animation START seen from inside the page.
-      const folding = page.evaluate(() => new Promise((resolve) => {
-        document.addEventListener('animationstart', (event) => {
-          if (event.animationName === 'ember-surface-close') resolve(event.target.hasAttribute('data-leave'));
-        }, true);
-        setTimeout(() => resolve('never started'), 2000);
+      // Observe the leaving phase inside the page before the 140ms fold can finish. A
+      // DevTools round trip or a missing animationstart event must not hide valid CSS wiring.
+      const folding = await page.evaluate(() => new Promise((resolve) => {
+        const tray = document.querySelector('.ember-tray');
+        const observer = new MutationObserver(() => {
+          const surface = tray.querySelector('[data-leave]');
+          if (!surface) return;
+          const style = getComputedStyle(surface);
+          observer.disconnect();
+          resolve({ name: style.animationName, duration: style.animationDuration, fill: style.animationFillMode });
+        });
+        observer.observe(tray, { subtree: true, attributes: true, attributeFilter: ['data-leave'] });
+        window.__emit('ember://tray', { open: false });
+        setTimeout(() => { observer.disconnect(); resolve(null); }, 2000);
       }));
-      await send('ember://tray', { open: false });
-      if (animates) assert.equal(await folding, true);
-      else assert.equal(await page.$eval('[data-leave]', e => getComputedStyle(e).animationName), 'ember-surface-close');
+      assert.deepEqual(folding, { name: 'ember-surface-close', duration: '0.14s', fill: 'forwards' });
       await page.keyboard.press('Enter');
       await page.waitForFunction(() => !document.querySelector('[role=menu]'));
       assert.equal(await page.evaluate(() => window.__trayActions.at(-1)), 'close');
