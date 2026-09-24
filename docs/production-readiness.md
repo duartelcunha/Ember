@@ -108,6 +108,71 @@ refine of 503 characters answered by Gemini and pasted through the preview gate,
 warning or error lines in the log. The first press of that refine was refused by the
 accessibility guard and the second went through; both are in the record.
 
+## Codex and ChatGPT editor recovery, 2026-09-23
+
+The Windows UIA guard now accepts a focused Edit control when the selection's read-only
+attribute is unsupported but both its document range and ValuePattern prove editability.
+An inconsistent `HasKeyboardFocus` property is not a veto for that independently verified
+Edit control. The element, selection endpoints, text and native target are still rechecked
+before automatic paste. For a full-field selection, Chromium can return different UIA
+endpoints for the selection and document even when their text is identical. In that case,
+the guard also requires the editable document's full text to match at seal and apply time.
+A non-password writable Edit without a verifiable TextPattern can
+refine only an explicit selection and leave the result on the clipboard for manual paste.
+It never runs select-all or sends paste keys. A clipboard revision changed during the model
+request prevents the handoff and preserves the newer clipboard contents.
+
+Local Windows candidate evidence: `cargo test --workspace --locked --quiet` passed 58 shell
+and 380 core tests; `npx tsc --noEmit` and `npm test` passed (31 frontend tests).
+The optimized executable and NSIS installer were produced. The bundle command returned 1
+at updater signing because no private signing key is available locally.
+
+The candidate ran from the isolated worktree without replacing the installed executable.
+Read-only UIA inspection of the installed Codex composer found an enabled non-password Edit
+with writable ValuePattern and TextPattern; its selection attribute was unsupported while
+its document range was editable. A direct native UIA test with the composer focused accepted
+it as an automatic candidate. A selected-text refinement in the running candidate captured
+56 characters from `ChatGPT.exe` without a field-detection refusal. The Gemini request then
+ended `Uncertain` after 30 seconds, so no preview or paste followed and the request was not
+automatically repeated. A separate native test on the actual Codex composer selected its
+entire 42-character test field, sealed the field and rechecked the same selection. It did not
+call a model or paste. The test text was removed and the composer returned to its empty state.
+In a native WinForms Edit fixture without TextPattern, the installed build refused
+`no_text_pattern`; the candidate returned `ManualHandoff` for an explicit 63-character
+selection without modifying either field. The no-selection case returned
+`ManualSelectionRequired` without select-all. Password and read-only controls were refused.
+Changing focus to an equal-text field during a fresh request returned `ForegroundChanged`
+and left both fields and the image clipboard intact. A newer clipboard copy during a fresh
+request returned `ClipboardChanged`; the newer copy remained intact. The original image
+was restored after the controlled clipboard trials, and the installed 1.3.0 process was
+restarted.
+
+This is partial native qualification, not Codex or ChatGPT acceptance. Successful model
+completion, preview confirmation, automatic replacement in the composer, selection movement
+during a request, cancellation and other editors still need direct candidate runs before
+release claims. The installed executable and original checkout were not replaced.
+
+On 2026-09-24, the selected-text native run in the Codex desktop composer captured an
+80-character test selection from `ChatGPT.exe`. Gemini returned HTTP 503 for the chosen
+and alternate free models; the configured ChatGPT subscription fallback returned an
+81-character refinement. The preview gate then recorded `REJECT (Esc consumed by hook)`.
+The test did not confirm or paste the result, and the synthetic composer text was removed.
+The test probe also searched for the wrong preview phrase, so its failure to observe the
+preview cannot establish that the overlay was absent. Subsequent probes stopped before
+typing or calling a provider because the desktop was active or the visible page was not an
+empty composer. The candidate process was stopped and the clipboard was unchanged after
+the completed run. With result retention disabled, that result was not available after
+the candidate stopped. No complete Codex paste is claimed.
+
+The final local checks passed: `cargo test --workspace --locked` (58 shell tests passed,
+2 interactive tests ignored, and 380 core tests passed), `npx tsc --noEmit`, `npm test`
+(31 passed), and `cargo clippy --workspace --locked -- -D warnings`. A local unsigned
+NSIS candidate built with updater artifact creation disabled, without a signing key.
+The executable SHA-256 is `BE838DF736569C2E54F2202C2B844F7D1C6212702E59E5537A64775027A1EFD2`;
+the installer SHA-256 is `C6A63A0944546C3902F6940A4B34D73771317E4F49C93C14CB10ED988EA618D2`.
+Installation remains gated on the missing native preview and paste proof; the installed
+1.3.0 build and the original checkout were preserved.
+
 ## Audit record (three-platform bar)
 
 The audit at `179e397` is the baseline. Production approval on that bar requires native evidence
@@ -194,7 +259,8 @@ it does not prove the destination replaced the intended content.
 Windows now acquires a UI Automation selection lease before clipboard capture. It rejects
 password, disabled, nonfocused, read-only, mixed and unsupported selection attributes.
 The clipboard text must equal the accessible selection. Select-all is accepted only when
-the initial selection was empty and the resulting range covers the editable document.
+the initial selection was empty and the resulting range covers the editable document, or
+both ranges expose the exact same complete text when Chromium gives them different endpoints.
 Before application, the original element, both range endpoints, text digest and native
 window/control must still match. The original text remains the exact cache input.
 

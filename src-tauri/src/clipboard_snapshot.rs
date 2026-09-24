@@ -1,7 +1,7 @@
 //! Bounded Windows clipboard snapshots. Non-memory formats fail before mutation.
 use windows::Win32::{
     Foundation::{GetLastError, GlobalFree, SetLastError, ERROR_SUCCESS, HANDLE, HGLOBAL, HWND},
-    System::{DataExchange::*, Memory::*},
+    System::{DataExchange::*, Memory::*, Ole::CF_UNICODETEXT},
     UI::WindowsAndMessaging::{
         CreateWindowExW, DestroyWindow, HWND_MESSAGE, WINDOW_EX_STYLE, WINDOW_STYLE,
     },
@@ -136,4 +136,54 @@ impl Snapshot {
         }
         Ok(true)
     }
+}
+
+/// Leave a result for manual paste only while the clipboard still has the captured revision.
+/// The revision check and replacement share one clipboard lock, so a later user copy wins.
+pub fn set_text_if_revision(revision: u64, text: &str) -> Result<bool, String> {
+    let utf16: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+    let bytes = utf16
+        .len()
+        .checked_mul(2)
+        .ok_or("Clipboard size overflow")?;
+    let global =
+        unsafe { GlobalAlloc(GMEM_MOVEABLE, bytes) }.map_err(|_| "Clipboard allocation failed")?;
+    let allocation = Allocation(global);
+    let pointer = unsafe { GlobalLock(global) };
+    if pointer.is_null() {
+        return Err("Clipboard allocation could not be locked".into());
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(utf16.as_ptr().cast::<u8>(), pointer.cast::<u8>(), bytes);
+        let _ = GlobalUnlock(global);
+    }
+    let owner = Owner(
+        unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE::default(),
+                windows::core::w!("STATIC"),
+                windows::core::w!("Ember clipboard"),
+                WINDOW_STYLE::default(),
+                0,
+                0,
+                0,
+                0,
+                Some(HWND_MESSAGE),
+                None,
+                None,
+                None,
+            )
+        }
+        .map_err(|_| "Clipboard owner could not be created")?,
+    );
+    unsafe { OpenClipboard(Some(owner.0)) }.map_err(|_| "Clipboard is busy")?;
+    let _open = Open;
+    if unsafe { GetClipboardSequenceNumber() } as u64 != revision {
+        return Ok(false);
+    }
+    unsafe { EmptyClipboard() }.map_err(|_| "Clipboard could not be replaced")?;
+    unsafe { SetClipboardData(CF_UNICODETEXT.0 as u32, Some(HANDLE(allocation.0 .0))) }
+        .map_err(|_| "Clipboard text could not be set")?;
+    std::mem::forget(allocation);
+    Ok(true)
 }
