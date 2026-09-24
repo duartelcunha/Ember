@@ -1,5 +1,6 @@
 //! Storage seguro das chaves de API no Windows Credential Manager (via keyring).
-//! As chaves NUNCA passam pela camada JS nem ficam em texto/config.
+//! A chave introduzida nas Settings atravessa o IPC uma vez para ser guardada. A app nunca
+//! devolve chaves ao JavaScript nem as persiste em texto/config.
 
 use ember_core::model::Provider;
 

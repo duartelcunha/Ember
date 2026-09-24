@@ -97,7 +97,7 @@ Results stay in memory by default. Optional retention uses authenticated encrypt
 
 | Area | Current implementation |
 |---|---|
-| **Secret Storage** | API keys and OAuth refresh credentials use the OS Credential Vault (**Windows Credential Manager** / macOS Keychain). Active access tokens remain in memory. Keys never cross the IPC bridge to frontend JavaScript. |
+| **Secret Storage** | API keys and OAuth refresh credentials use the OS Credential Vault (**Windows Credential Manager** / macOS Keychain). A key entered in Settings crosses IPC once for storage and is never returned to JavaScript. Active access tokens remain in memory. |
 | **Prompt Boundary Isolation** | Input text and project context are wrapped with strict anti-injection delimiters and escaped (`[EMBER_INPUT]`, `[EMBER_PROJECT_SOURCE]`, `[EMBER_PROJECT_CONTEXT]`). |
 | **Window & Focus Isolation** | Overlay and Picker windows run with `focus: false` and strict Content Security Policy (`default-src 'self'`). Windows replacement checks the original window, focused HWND, accessibility element, selection endpoints and recaptured text. Native application qualification and continuous input generation validation remain open. |
 | **Input Hook Hygiene** | Low-level keyboard hooks (`WH_KEYBOARD_LL`) own confirmation and paging keys during preview gates and pass all other system keystrokes through untouched. |

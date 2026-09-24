@@ -8,3 +8,14 @@
 - Confidence: medium
 - Review on: 2026-10-23
 - Outcome: pending review
+
+## 2026-09-24: Close Ember with a final Windows editor-recovery release
+- Mode: full
+- Verdict: GO WITH CONDITIONS (Windows 1.3.1, then maintenance only)
+- User decision: followed (approved security review, squash merge and release)
+- Deciding argument: Skeptic: the exact updater artifact must prove target-safe paste before stable promotion.
+- Residual risk: a future editor update can change focus or selection timing; Windows publisher signing is unavailable.
+- Kill criteria: wrong-field paste, protected-text capture, failed CI, invalid updater signature, or failed rollback.
+- Confidence: medium
+- Review on: 2026-10-24
+- Outcome: pending review
