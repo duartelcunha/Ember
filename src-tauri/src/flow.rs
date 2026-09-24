@@ -380,6 +380,11 @@ fn blocking_replace(
         return Ok(Applied::Refused);
     }
     let mut io = RealIo::new(terminal)?;
+    #[cfg(not(windows))]
+    if target.manual {
+        return Ok(Applied::Refused);
+    }
+    #[cfg(windows)]
     if target.manual {
         if !target
             .selection
