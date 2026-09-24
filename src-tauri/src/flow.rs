@@ -239,6 +239,7 @@ fn blocking_capture(
     select_all_fallback: bool,
     target: Option<crate::foreground::TargetSnapshot>,
 ) -> Result<CaptureOutput, CaptureFailure> {
+    #[cfg(windows)]
     use seq::SelectionIo;
     let _input_owner = crate::preview_hook::input_lease();
     // Each refusal names its gate. These exits used to be silent, and "Field unavailable" on
@@ -248,7 +249,8 @@ fn blocking_capture(
         return Err(CaptureFailure::Unverifiable);
     }
     // Resolve accessibility before copying or selecting all, including password/editability checks.
-    let (selection_guard, manual) = if terminal {
+    let (selection_guard, manual): (Option<crate::selection_guard::SelectionGuard>, bool) = if terminal
+    {
         (None, false)
     } else {
         match crate::selection_guard::SelectionGuard::begin(target) {
