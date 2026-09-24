@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/duartelcunha/Ember/compare/v1.3.0...v1.3.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* recover refinement in verified Windows editors ([bbc6877](https://github.com/duartelcunha/Ember/commit/bbc68778a687da6a954e243ba7b7a4fa5edd448c))
+
 ## [1.3.0](https://github.com/duartelcunha/Ember/compare/v1.3.0-rc.1...v1.3.0) (2026-09-18)
 
 
