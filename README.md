@@ -93,7 +93,7 @@ Ember blends natively with both dark and light desktop setups with instant theme
 
 ## Security & Privacy Architecture
 
-Results stay in memory by default. Optional retention uses authenticated encryption and a key in the OS vault. Legacy plaintext results are preserved without being loaded and can be explicitly deleted in Settings. Diagnostic prompt logging is a separate opt-in plaintext setting. See [data handling and recovery](docs/data-policy.md).
+Results stay in memory by default. Optional retention uses authenticated encryption and a key in the OS vault. Legacy plaintext results are preserved without being loaded and can be explicitly deleted in Settings. Diagnostic prompt logging is a separate opt-in plaintext setting. See [data handling and recovery](docs/data-policy.md) and [security reporting](SECURITY.md).
 
 | Area | Current implementation |
 |---|---|

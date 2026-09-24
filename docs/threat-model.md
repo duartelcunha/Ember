@@ -36,6 +36,9 @@ The six unmaintained dependency notices and the old `glib` unsoundness are track
 upstream maintenance risk; `glib` is outside the Windows build. The JavaScript dependency
 audit reported zero vulnerabilities. The Git-history secret scan found five synthetic
 test fixtures and no verified credential; it cannot prove undiscovered secrets are absent.
+GitHub vulnerability alerts, secret scanning with push protection, and private vulnerability
+reporting were enabled on the public repository on 2026-09-24. Automated security update PRs
+remain disabled; an alert requires a maintainer decision and a qualified release.
 
 Compromise of the local user account, OS or a configured provider is outside the vault's
 protection boundary. The vault and encryption do not protect decrypted text inside a running
