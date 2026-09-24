@@ -91,6 +91,7 @@ struct ApplyTarget {
     window: Option<crate::foreground::TargetSnapshot>,
     selection: Option<crate::selection_guard::SelectionGuard>,
     manual: bool,
+    #[cfg(windows)]
     clipboard_revision: Option<u64>,
     lease: RunLease,
 }
@@ -119,6 +120,7 @@ enum Applied {
     Pasted,
     /// Terminal: the flattened result was left on the clipboard and no keys were sent.
     HandedOff,
+    #[cfg(windows)]
     ManualHandedOff,
     /// Another writer took the clipboard between arming and the paste; nothing was sent.
     ClipboardTakenOver,
@@ -220,6 +222,7 @@ struct CaptureOutput {
     unpreservable: bool,
     selection_guard: Option<crate::selection_guard::SelectionGuard>,
     manual: bool,
+    #[cfg(windows)]
     clipboard_revision: Option<u64>,
 }
 
@@ -249,7 +252,9 @@ fn blocking_capture(
         (None, false)
     } else {
         match crate::selection_guard::SelectionGuard::begin(target) {
+            #[cfg(windows)]
             crate::selection_guard::BeginResult::Automatic(guard) => (Some(guard), false),
+            #[cfg(windows)]
             crate::selection_guard::BeginResult::Manual(guard) => (Some(guard), true),
             crate::selection_guard::BeginResult::Denied => {
                 log::info!("capture: refused guard_begin");
@@ -274,6 +279,7 @@ fn blocking_capture(
             unpreservable: true,
             selection_guard: None,
             manual: false,
+            #[cfg(windows)]
             clipboard_revision: None,
         });
     }
@@ -297,6 +303,7 @@ fn blocking_capture(
     // End clipboard ownership before network I/O. Later cancellation must not restore stale data.
     let owned = captured.text.as_deref().unwrap_or(SENTINEL);
     let restored = restore_snapshot(&mut io, &captured.saved, image.as_ref(), owned);
+    #[cfg(windows)]
     let clipboard_revision = io.clip_revision();
     captured.saved = None;
     if !crate::foreground::same_target(target) {
@@ -329,6 +336,7 @@ fn blocking_capture(
         unpreservable: false,
         selection_guard,
         manual,
+        #[cfg(windows)]
         clipboard_revision,
     })
 }
@@ -581,6 +589,7 @@ pub async fn run(app: AppHandle, opts: RunOpts, lease: RunLease) {
 
     let selection_guard = out.selection_guard;
     let manual = out.manual;
+    #[cfg(windows)]
     let clipboard_revision = out.clipboard_revision;
     let captured = out.captured;
     let image = out.image;
@@ -796,6 +805,7 @@ pub async fn run(app: AppHandle, opts: RunOpts, lease: RunLease) {
                         window: target_hwnd,
                         selection: selection_guard,
                         manual,
+                        #[cfg(windows)]
                         clipboard_revision,
                         lease: lease.clone(),
                     };
@@ -816,6 +826,7 @@ pub async fn run(app: AppHandle, opts: RunOpts, lease: RunLease) {
                         Ok(Ok(Applied::HandedOff)) => {
                             finish(&app, run_id, FlowOutcome::TerminalHandoff).await;
                         }
+                        #[cfg(windows)]
                         Ok(Ok(Applied::ManualHandedOff)) => {
                             finish(&app, run_id, FlowOutcome::ManualHandoff).await;
                         }

@@ -16,7 +16,9 @@ pub struct SelectionGuard {
 }
 
 pub enum BeginResult {
+    #[cfg(windows)]
     Automatic(SelectionGuard),
+    #[cfg(windows)]
     Manual(SelectionGuard),
     Denied,
 }
