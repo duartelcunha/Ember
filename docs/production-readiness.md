@@ -147,7 +147,7 @@ request returned `ClipboardChanged`; the newer copy remained intact. The origina
 was restored after the controlled clipboard trials, and the installed 1.3.0 process was
 restarted.
 
-This is partial native qualification, not Codex or ChatGPT acceptance. Successful model
+At that point this was partial native qualification, not Codex or ChatGPT acceptance. Successful model
 completion, preview confirmation, automatic replacement in the composer, selection movement
 during a request, cancellation and other editors still need direct candidate runs before
 release claims. The installed executable and original checkout were not replaced.
@@ -162,7 +162,7 @@ preview cannot establish that the overlay was absent. Subsequent probes stopped 
 typing or calling a provider because the desktop was active or the visible page was not an
 empty composer. The candidate process was stopped and the clipboard was unchanged after
 the completed run. With result retention disabled, that result was not available after
-the candidate stopped. No complete Codex paste is claimed.
+the candidate stopped. That attempt provided no paste evidence; later trials below did.
 
 The final local checks passed: `cargo test --workspace --locked` (58 shell tests passed,
 2 interactive tests ignored, and 380 core tests passed), `npx tsc --noEmit`, `npm test`
@@ -170,8 +170,32 @@ The final local checks passed: `cargo test --workspace --locked` (58 shell tests
 NSIS candidate built with updater artifact creation disabled, without a signing key.
 The executable SHA-256 is `BE838DF736569C2E54F2202C2B844F7D1C6212702E59E5537A64775027A1EFD2`;
 the installer SHA-256 is `C6A63A0944546C3902F6940A4B34D73771317E4F49C93C14CB10ED988EA618D2`.
-Installation remains gated on the missing native preview and paste proof; the installed
-1.3.0 build and the original checkout were preserved.
+Installation was held until the later native preview and paste proof below.
+
+The subsequent local Codex runs completed both application paths. With the whole field
+unselected, the candidate captured 66 characters, displayed the whole-field preview,
+consumed Enter, and logged `applied=Ok(Ok(Pasted))` and `Success`; the 70-character result
+appeared in the same composer. With an explicit selection, it captured 80 characters,
+displayed the selection preview, consumed Enter, and logged the same paste and success
+outcomes; the 83-character result appeared in that composer. In both runs, the clipboard
+revision stayed stable through application, the original clipboard formats and text were
+restored, and the synthetic composer content was removed after observation. The probe also
+observed a `ForegroundChanged` refusal when its first Enter mechanism moved focus. No
+paste followed that refusal. A separate UIA probe process crashed before sending a hotkey;
+its synthetic field and temporary config were recovered without a provider call. These
+are harness failures, not successful application runs.
+
+After those two successful candidate runs, the previous installed files and config were
+copied to `%LOCALAPPDATA%\Ember-recovery-20260924-1730` and hash-verified. The local NSIS
+installer ran with `/S /UPDATE` and returned 0. The installed executable SHA-256 is
+`8CEC1CF138F982FB93D2F7434C661D1EA985AB9223F8A416F52D2DF509B6D86E`.
+It has the same length as the candidate and differs in only the three bytes of the Tauri
+bundle-type marker, which the installer changes from `UNK` to `NSS`. The installed process
+started from `%LOCALAPPDATA%\Ember\ember.exe`, logged version 1.3.0, remained running for
+the five-second startup check and was stopped cleanly. A further installed Codex refinement
+was not run because the desktop did not provide a ten-second idle window. The source
+checkout on `main` remained clean and untouched. This is local Windows qualification,
+not a signed release or production publication.
 
 ## Audit record (three-platform bar)
 
