@@ -22,7 +22,7 @@ function announcement(s: OverlayState): string | null {
     case "hint":
       return s.message ?? "Select text first";
     case "preview":
-      return `${s.confirmationScope === "field" ? "Whole field. " : ""}Press Enter to apply, Escape to cancel`;
+      return `${s.confirmationScope === "field" ? "Whole field. " : ""}${s.refined ? "Refined result ready for review. Page Up and Page Down read the full text. " : ""}Press Enter to apply, Escape to cancel`;
     default:
       return null;
   }
@@ -100,7 +100,7 @@ export function Overlay() {
             {s.phase === "hint" && (
               <Pill key="hint" kind="hint" text={s.message ?? "Select text first"} />
             )}
-            {s.phase === "preview" && <Preview key="preview" scope={s.confirmationScope ?? "selection"} />}
+            {s.phase === "preview" && <Preview key="preview" scope={s.confirmationScope ?? "selection"} refined={s.refined} runId={s.runId} />}
             </div>}
         </div>
         <div ref={labels} className="ember-floating fixed left-0 top-0 w-max max-w-[min(280px,calc(100vw-16px))]" aria-hidden>

@@ -9,6 +9,7 @@ pub enum Decision {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum KeyVerdict {
     PassThrough,
+    Navigate(i8),
     Decide { decision: Decision, consume: bool },
 }
 
@@ -26,6 +27,8 @@ pub fn is_modifier(vk: u32) -> bool {
 /// Consume only confirmation keys. Ordinary typing rejects without consuming input.
 pub fn classify_key(vk: u32) -> KeyVerdict {
     match vk {
+        0x21 => KeyVerdict::Navigate(-1), // Page Up reviews the previous part.
+        0x22 => KeyVerdict::Navigate(1),  // Page Down reviews the next part.
         0x0D => KeyVerdict::Decide {
             decision: Decision::Accept,
             consume: true,
@@ -173,5 +176,11 @@ mod tests {
                 "vk {vk:#x} e um modificador e nao devia decidir nada"
             );
         }
+    }
+
+    #[test]
+    fn paging_reviews_without_approving_or_reaching_the_editor() {
+        assert_eq!(classify_key(0x21), KeyVerdict::Navigate(-1));
+        assert_eq!(classify_key(0x22), KeyVerdict::Navigate(1));
     }
 }

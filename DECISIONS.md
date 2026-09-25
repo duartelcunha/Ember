@@ -19,3 +19,25 @@
 - Confidence: medium
 - Review on: 2026-10-24
 - Outcome: pending review
+
+## 2026-09-25: Review complete refinement before paste and recover refused results
+- Mode: full
+- Verdict: GO WITH CONDITIONS (readable no-focus preview and explicit recovery copy)
+- User decision: followed (approved the next product slice with "siga")
+- Deciding argument: Skeptic: a partial preview or stale webview state would give false confidence or expose private text.
+- Residual risk: an opted-in visible result can be seen in a screen capture.
+- Kill criteria: unreadable long result, stale result after any exit, wrong-target paste, or clipboard change without a user gesture.
+- Confidence: medium
+- Review on: 2026-10-25
+- Outcome: pending review
+
+## 2026-09-25: Integrate review code before native release qualification
+- Mode: full
+- Verdict: GO WITH CONDITIONS (squash-merge PR #61, close unreviewed bot PR #25, keep release blocked)
+- User decision: followed (requested a clean merged GitHub state)
+- Deciding argument: Judge: mainline integration does not publish a stable update; the release PR and manual promotion are separate.
+- Residual risk: real Codex focus, selection and clipboard behavior is unproven, and a later promotion could overlook this gate.
+- Kill criteria: changed PR head or checks, automatic stable publication, or additional unreviewed privacy changes.
+- Confidence: medium
+- Review on: 2026-10-25
+- Outcome: pending review

@@ -8,7 +8,16 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
+#[cfg(windows)]
+use std::time::Instant;
 use tokio::sync::Notify;
+
+#[cfg(windows)]
+pub struct RecoverableResult {
+    pub text: String,
+    pub run_id: u64,
+    pub created_at: Instant,
+}
 
 pub struct AppState {
     /// Um unico `reqwest::Client` partilhado (pool de conexoes interno).
@@ -69,6 +78,9 @@ pub struct AppState {
     /// Refinados ja pagos, por texto normalizado. E o que garante que uma interrupcao nao custa
     /// dinheiro: o resultado fica aqui e o atalho seguinte sobre o mesmo texto nao paga.
     pub store: Mutex<ember_core::RefineCache>,
+    /// Only a refused automatic paste is offered in the tray. It never crosses into JS.
+    #[cfg(windows)]
+    pub recoverable: Mutex<Option<RecoverableResult>>,
     pub persisted_store: Mutex<ember_core::RefineCache>,
     /// Sobe a cada escrita no `store`. Quem espera por uma chamada em curso subscreve ANTES de
     /// consultar a cache e so depois espera, que e o que evita perder o sinal.
@@ -279,6 +291,8 @@ impl AppState {
             hide_gen: AtomicU64::new(0),
             settings_close_gen: AtomicU64::new(0),
             store: Mutex::new(ember_core::RefineCache::default()),
+            #[cfg(windows)]
+            recoverable: Mutex::new(None),
             persisted_store: Mutex::new(ember_core::RefineCache::default()),
             store_gen: tokio::sync::watch::channel(0).0,
             inflight: Mutex::new(Vec::new()),

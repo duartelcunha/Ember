@@ -18,14 +18,13 @@ use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
 
 use crate::state::AppState;
 
-/// Logical size of the popup. Mirrored by `width`/`height` of the "tray" window in
-/// tauri.conf.json and by `HEADER_H`/`ITEM_H`/`PAD` in `src/tray/TrayMenu.tsx`, which have to
-/// add up to the height; change one, change the others, or the surface is clipped by its window.
+/// Base logical size, with one extra 34px row only while a refused result can be copied.
+/// Mirrored by the tray window and `TrayMenu.tsx`.
 const POPUP: (f64, f64) = (208.0, 128.0);
 /// How long the surface has to fold back into the icon before the window hides. Mirrors the
 /// 140ms `.ember-tray [data-leave]` takes in `src/styles/globals.css`.
 const CLOSE_MS: u64 = 140;
-/// Payload `{ open: bool, below: bool }`, to the "tray" window only. `below` says which edge faces
+/// Payload `{ open: bool, below: bool, resultReady: bool }`. `below` says which edge faces
 /// the icon, so the surface opens out of it.
 pub(crate) const EVENT: &str = "ember://tray";
 
@@ -122,9 +121,10 @@ fn open_menu(app: &AppHandle, icon: tauri::Rect) {
         state.tray_open.store(false, Ordering::SeqCst);
         return;
     };
+    let result_ready = crate::flow::recovery_available(app);
     let popup_px = (
         (POPUP.0 * monitor.scale).round() as i32,
-        (POPUP.1 * monitor.scale).round() as i32,
+        ((POPUP.1 + if result_ready { 34.0 } else { 0.0 }) * monitor.scale).round() as i32,
     );
     let at = ember_core::tray::popup_origin(icon_px, popup_px, monitor.work);
     // Position first so the window lands on the icon's monitor, then a PHYSICAL size: a logical
@@ -133,7 +133,13 @@ fn open_menu(app: &AppHandle, icon: tauri::Rect) {
     let _ = w.set_size(PhysicalSize::new(popup_px.0 as u32, popup_px.1 as u32));
     // Clickable again: the close makes it click-through while it folds.
     let _ = w.set_ignore_cursor_events(false);
-    let _ = app.emit_to("tray", EVENT, serde_json::json!({ "open": true, "below": at.below }));
+    let _ = app.emit_to(
+        "tray",
+        EVENT,
+        serde_json::json!({
+            "open": true, "below": at.below, "resultReady": result_ready
+        }),
+    );
     // These two used to be dropped with `let _ =`. A failing show on an always-on-top window is
     // exactly the case that leaves the open flag stale, and the log is where that has to show.
     if let Err(e) = w.show() {
@@ -144,7 +150,10 @@ fn open_menu(app: &AppHandle, icon: tauri::Rect) {
     }
     log::info!(
         "tray: menu opened at ({},{}) below={} on scale {}",
-        at.x, at.y, at.below, monitor.scale
+        at.x,
+        at.y,
+        at.below,
+        monitor.scale
     );
 }
 
@@ -183,11 +192,22 @@ pub(crate) fn close_menu(app: &AppHandle, by: ClosedBy) {
 /// The menu's only way to talk back. One command with a verb rather than three commands: it is
 /// one capability entry, one manifest entry, and the verbs are visible in one place.
 #[tauri::command]
-pub fn tray_action(app: AppHandle, action: String) -> bool {
+pub fn tray_action(app: AppHandle, window: tauri::WebviewWindow, action: String) -> bool {
+    if window.label() != "tray" {
+        return false;
+    }
     match action.as_str() {
         // The webview asks on mount whether it missed an `open` emitted before it had a listener
         // (the first click can land before the warm-up finished loading the page).
         "ready" => app.state::<AppState>().tray_open.load(Ordering::SeqCst),
+        "recovery-available" => crate::flow::recovery_available(&app),
+        "copy-result" => {
+            let copied = crate::flow::copy_recoverable(&app);
+            if copied {
+                close_menu(&app, ClosedBy::Request);
+            }
+            copied
+        }
         "close" => {
             close_menu(&app, ClosedBy::Request);
             false

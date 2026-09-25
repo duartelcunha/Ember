@@ -173,7 +173,7 @@ pub fn feedback_for(outcome: FlowOutcome) -> OverlayFeedback {
         },
         FlowOutcome::PasteFailed => OverlayFeedback {
             phase: "error",
-            message: Some("Couldn't paste the result. Try again.".into()),
+            message: Some("Couldn't paste. Retry or copy the result from the tray.".into()),
             provider: None,
             hide_after_ms: 1600,
         },
@@ -212,10 +212,7 @@ pub fn feedback_for(outcome: FlowOutcome) -> OverlayFeedback {
         },
         FlowOutcome::ForegroundChanged => OverlayFeedback {
             phase: "hint",
-            // "run the shortcut again" and not "reapply from the tray": there is no tray entry
-            // any more. The saved result is served by the cache on the next shortcut over the
-            // same text, which is the only way back that does not need a second surface.
-            message: Some("Window changed \u{00b7} result saved, run the shortcut again".into()),
+            message: Some("Window changed. Retry or copy the result from the tray.".into()),
             provider: None,
             hide_after_ms: 2200,
         },
@@ -233,7 +230,7 @@ pub fn feedback_for(outcome: FlowOutcome) -> OverlayFeedback {
         },
         FlowOutcome::ClipboardChanged => OverlayFeedback {
             phase: "error",
-            message: Some("Another app changed the clipboard. Nothing pasted. Try again.".into()),
+            message: Some("Clipboard changed. Retry or copy the result from the tray.".into()),
             provider: None,
             // Long message; the retry is free, so the time to read it is the only cost.
             hide_after_ms: 2200,
@@ -345,7 +342,8 @@ mod tests {
         let fb = feedback_for(FlowOutcome::ClipboardChanged);
         assert_eq!(fb.phase, "error");
         let message = fb.message.as_deref().unwrap();
-        assert!(message.contains("changed the clipboard"));
+        assert!(message.contains("Clipboard changed"));
+        assert!(message.contains("tray"));
         assert_ne!(fb.message, feedback_for(FlowOutcome::PasteFailed).message);
     }
 
@@ -428,9 +426,8 @@ mod tests {
         let f = feedback_for(FlowOutcome::ForegroundChanged);
         assert_eq!(f.phase, "hint");
         let msg = f.message.unwrap().to_lowercase();
-        // The way back is the shortcut itself, and the message has to say so: a saved result
-        // nobody knows how to reach is money spent for nothing.
-        assert!(msg.contains("saved") && msg.contains("shortcut"));
+        // A blocked result can be retried without another request or copied explicitly.
+        assert!(msg.contains("retry") && msg.contains("tray"));
     }
 
     #[test]

@@ -13,6 +13,96 @@ use ember_core::overlay::{feedback_for, FlowOutcome, OverlayFeedback};
 use ember_core::selection as seq;
 
 const STATE_EVENT: &str = "ember://state";
+#[cfg(windows)]
+const RECOVERY_LIFETIME: std::time::Duration = std::time::Duration::from_secs(600);
+
+#[cfg(windows)]
+fn remember_recovery(app: &AppHandle, run_id: u64, text: String) {
+    let state = app.state::<AppState>();
+    if state.hide_gen.load(Ordering::SeqCst) == run_id {
+        if let Ok(mut slot) = state.recoverable.lock() {
+            *slot = Some(crate::state::RecoverableResult {
+                text,
+                run_id,
+                created_at: std::time::Instant::now(),
+            });
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(RECOVERY_LIFETIME).await;
+                if let Ok(mut slot) = app.state::<AppState>().recoverable.lock() {
+                    if slot.as_ref().is_some_and(|entry| entry.run_id == run_id) {
+                        *slot = None;
+                    }
+                }
+            });
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn remember_recovery(_app: &AppHandle, _run_id: u64, _text: String) {}
+
+#[cfg(windows)]
+pub(crate) fn recovery_available(app: &AppHandle) -> bool {
+    let state = app.state::<AppState>();
+    let Ok(mut slot) = state.recoverable.lock() else {
+        return false;
+    };
+    if slot
+        .as_ref()
+        .is_some_and(|entry| entry.created_at.elapsed() >= RECOVERY_LIFETIME)
+    {
+        *slot = None;
+    }
+    slot.is_some()
+}
+
+#[cfg(not(windows))]
+pub(crate) fn recovery_available(_app: &AppHandle) -> bool {
+    false
+}
+
+/// A tray click is an explicit request to replace the clipboard. The revision check keeps a
+/// concurrent copy by another application from being overwritten after that click.
+#[cfg(windows)]
+pub(crate) fn copy_recoverable(app: &AppHandle) -> bool {
+    use windows::Win32::System::DataExchange::GetClipboardSequenceNumber;
+    let state = app.state::<AppState>();
+    let Ok(mut slot) = state.recoverable.lock() else {
+        return false;
+    };
+    let Some(entry) = slot.as_ref() else {
+        return false;
+    };
+    if entry.created_at.elapsed() >= RECOVERY_LIFETIME {
+        *slot = None;
+        return false;
+    }
+    let revision = unsafe { GetClipboardSequenceNumber() } as u64;
+    if revision == 0 {
+        return false;
+    }
+    match crate::clipboard_snapshot::set_text_if_revision(revision, &entry.text) {
+        Ok(true) => {
+            log::info!("recovery: copied refused result for run {}", entry.run_id);
+            *slot = None;
+            true
+        }
+        Ok(false) => {
+            log::info!("recovery: clipboard changed during explicit copy");
+            false
+        }
+        Err(error) => {
+            log::warn!("recovery: clipboard copy failed ({error})");
+            false
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn copy_recoverable(_app: &AppHandle) -> bool {
+    false
+}
 
 /// Teto para esperar pela chamada de outro ciclo antes de fazer a sua.
 const JOIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
@@ -135,14 +225,14 @@ fn emit(
     message: Option<String>,
     provider: Option<String>,
 ) {
-    emit_payload(app, run_id, phase, message, provider, None, false);
+    let _ = emit_payload(app, run_id, phase, message, provider, None, false);
 }
 
 /// Reemite a fase atual marcada como a fechar. Fase, texto e provider iguais de proposito: a
 /// `key` do wrapper no DOM e a fase, portanto mudar qualquer um deles remontava a pilula e o
 /// fecho passava a ser um corte seco a seguir a outro.
 fn emit_closing(app: &AppHandle, run_id: u64, fb: &OverlayFeedback) {
-    emit_payload(
+    let _ = emit_payload(
         app,
         run_id,
         fb.phase,
@@ -159,12 +249,12 @@ fn emit_payload(
     phase: &str,
     message: Option<String>,
     provider: Option<String>,
-    confirmation_scope: Option<ember_core::preview::ConfirmationScope>,
+    confirmation: Option<(ember_core::preview::ConfirmationScope, Option<&str>)>,
     closing: bool,
-) {
+) -> bool {
     let state = app.state::<AppState>();
     if state.hide_gen.load(Ordering::SeqCst) != run_id {
-        return;
+        return false;
     }
     if matches!(phase, "hint" | "error") {
         if let Ok(mut feedback) = state.last_feedback.lock() {
@@ -203,14 +293,16 @@ fn emit_payload(
         .unwrap_or_default();
     let payload = serde_json::json!({
         "runId": run_id, "sequence": state.event_seq.fetch_add(1, Ordering::SeqCst) + 1,
-        "confirmationScope": confirmation_scope, "phase": phase, "message": message, "provider": provider,
+        "confirmationScope": confirmation.map(|(scope, _)| scope),
+        "refined": confirmation.and_then(|(_, text)| text),
+        "phase": phase, "message": message, "provider": provider,
         "accent": accent, "project": project, "closing": closing,
         "orbSkin": style.skin.as_str(), "orbPx": style.size.px()
     });
     if let Ok(mut slot) = state.last_state.lock() {
         *slot = Some(payload.clone());
     }
-    let _ = app.emit_to("overlay", STATE_EVENT, payload);
+    app.emit_to("overlay", STATE_EVENT, payload).is_ok()
 }
 
 /// Resultado da captura: a seleccao sequenciada, um snapshot de imagem a repor (quando o
@@ -249,21 +341,21 @@ fn blocking_capture(
         return Err(CaptureFailure::Unverifiable);
     }
     // Resolve accessibility before copying or selecting all, including password/editability checks.
-    let (selection_guard, manual): (Option<crate::selection_guard::SelectionGuard>, bool) = if terminal
-    {
-        (None, false)
-    } else {
-        match crate::selection_guard::SelectionGuard::begin(target) {
-            #[cfg(windows)]
-            crate::selection_guard::BeginResult::Automatic(guard) => (Some(guard), false),
-            #[cfg(windows)]
-            crate::selection_guard::BeginResult::Manual(guard) => (Some(guard), true),
-            crate::selection_guard::BeginResult::Denied => {
-                log::info!("capture: refused guard_begin");
-                return Err(CaptureFailure::Unverifiable);
+    let (selection_guard, manual): (Option<crate::selection_guard::SelectionGuard>, bool) =
+        if terminal {
+            (None, false)
+        } else {
+            match crate::selection_guard::SelectionGuard::begin(target) {
+                #[cfg(windows)]
+                crate::selection_guard::BeginResult::Automatic(guard) => (Some(guard), false),
+                #[cfg(windows)]
+                crate::selection_guard::BeginResult::Manual(guard) => (Some(guard), true),
+                crate::selection_guard::BeginResult::Denied => {
+                    log::info!("capture: refused guard_begin");
+                    return Err(CaptureFailure::Unverifiable);
+                }
             }
-        }
-    };
+        };
     let mut io = RealIo::new(terminal).map_err(|e| {
         log::warn!("capture: refused native_io ({e})");
         CaptureFailure::Native
@@ -563,6 +655,10 @@ pub async fn run(app: AppHandle, opts: RunOpts, lease: RunLease) {
         run_id,
         target_hwnd,
     } = opts;
+    #[cfg(windows)]
+    if let Ok(mut slot) = app.state::<AppState>().recoverable.lock() {
+        *slot = None;
+    }
     emit(&app, run_id, "refining", None, None);
 
     let capture_lease = lease.clone();
@@ -672,8 +768,9 @@ pub async fn run(app: AppHandle, opts: RunOpts, lease: RunLease) {
         return;
     }
 
-    // Uma captura por select-all passa SEMPRE pelo gate, mesmo com o preview global desligado: o
-    // utilizador nunca escolheu este texto, por isso tem de o ver antes de ser substituido.
+    // A full-field capture always requires confirmation even when result review is disabled.
+    // Only Windows has the input hook needed for a readable, no-focus result review.
+    let show_result = cfg!(windows) && preview && !manual;
     let preview = (preview || via_select_all) && !manual;
 
     if dismissed(&app, run_id) {
@@ -758,13 +855,25 @@ pub async fn run(app: AppHandle, opts: RunOpts, lease: RunLease) {
                     finish(&app, run_id, FlowOutcome::Cancelled).await;
                     return;
                 }
-                // Confirmation carries scope only; document content stays in native memory.
-                emit_confirmation(
+                // Only the opted-in review carries result text to the overlay webview. A forced
+                // whole-field confirmation keeps the previous scope-only behaviour.
+                crate::preview_hook::begin_review(run_id);
+                let shown = emit_confirmation(
                     &app,
                     run_id,
                     ember_core::preview::ConfirmationScope::from_whole_field(via_select_all),
+                    show_result.then_some(refined.as_str()),
                 );
-                crate::preview_hook::gate(app.clone(), run_id).await
+                let decision = if shown {
+                    crate::preview_hook::gate(app.clone(), run_id, show_result).await
+                } else {
+                    crate::preview_hook::Decision::Reject
+                };
+                crate::preview_hook::end_review(run_id);
+                // The native snapshot and the React state must drop the sensitive result before
+                // application or any failure path can take time to finish.
+                emit(&app, run_id, "hidden", None, None);
+                decision
             } else {
                 crate::preview_hook::Decision::Accept
             };
@@ -791,10 +900,12 @@ pub async fn run(app: AppHandle, opts: RunOpts, lease: RunLease) {
                             blocking_restore(s, image, terminal)
                         })
                         .await;
+                        remember_recovery(&app, run_id, refined);
                         finish(&app, run_id, FlowOutcome::ForegroundChanged).await;
                         return;
                     }
                     let expected_selection = selected.clone();
+                    let recovery_text = refined.clone();
                     let settle_ms = timing.settle_ms;
                     log::info!(
                         "[run {run_id}] paste: starting (terminal={} preview={} len={} reuse={:?})",
@@ -833,11 +944,13 @@ pub async fn run(app: AppHandle, opts: RunOpts, lease: RunLease) {
                             finish(&app, run_id, FlowOutcome::ManualHandoff).await;
                         }
                         Ok(Ok(Applied::ClipboardTakenOver)) => {
+                            remember_recovery(&app, run_id, recovery_text);
                             finish(&app, run_id, FlowOutcome::ClipboardChanged).await;
                         }
                         _ => {
                             // Nothing was armed or sent and the selection is intact, so no false
                             // "Refined". The result is cached: the next shortcut does not pay again.
+                            remember_recovery(&app, run_id, recovery_text);
                             finish(&app, run_id, FlowOutcome::PasteFailed).await;
                         }
                     }
@@ -1207,8 +1320,21 @@ async fn hide_after(app: &AppHandle, run_id: u64, fb: OverlayFeedback) {
     emit(app, run_id, "hidden", None, None);
 }
 
-fn emit_confirmation(app: &AppHandle, run_id: u64, scope: ember_core::preview::ConfirmationScope) {
-    emit_payload(app, run_id, "preview", None, None, Some(scope), false);
+fn emit_confirmation(
+    app: &AppHandle,
+    run_id: u64,
+    scope: ember_core::preview::ConfirmationScope,
+    refined: Option<&str>,
+) -> bool {
+    emit_payload(
+        app,
+        run_id,
+        "preview",
+        None,
+        None,
+        Some((scope, refined)),
+        false,
+    )
 }
 
 #[tauri::command]
@@ -1224,4 +1350,30 @@ pub fn overlay_snapshot(
         .lock()
         .map_err(|_| "Overlay state unavailable")?
         .clone())
+}
+
+#[tauri::command]
+pub fn preview_ready(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, AppState>,
+    run_id: u64,
+) -> bool {
+    if window.label() != "overlay"
+        || !window.is_visible().unwrap_or(false)
+        || state.hide_gen.load(Ordering::SeqCst) != run_id
+    {
+        return false;
+    }
+    let current = state.last_state.lock().is_ok_and(|slot| {
+        slot.as_ref().is_some_and(|payload| {
+            payload.get("runId").and_then(serde_json::Value::as_u64) == Some(run_id)
+                && payload.get("phase").and_then(serde_json::Value::as_str) == Some("preview")
+        })
+    });
+    if current {
+        crate::preview_hook::mark_review_ready(run_id);
+        true
+    } else {
+        false
+    }
 }

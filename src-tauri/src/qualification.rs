@@ -9,7 +9,7 @@ pub fn run() {
     ));
     tauri::Builder::default()
         .manage(crate::state::AppState::new())
-        .invoke_handler(tauri::generate_handler![crate::floating::floating_position, crate::flow::overlay_snapshot])
+        .invoke_handler(tauri::generate_handler![crate::floating::floating_position, crate::flow::overlay_snapshot, crate::flow::preview_ready])
         .setup(move |app| {
             let handle = app.handle().clone();
             let window = crate::get_or_create_window(&handle, "overlay").ok_or("Overlay creation failed")?;

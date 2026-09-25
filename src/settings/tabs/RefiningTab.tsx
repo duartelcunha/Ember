@@ -499,12 +499,13 @@ export function RefiningTab({
         />
         <SwitchRow
           id="preview-before-paste"
-          label="Confirm before applying"
-          hint="A prompt by your cursor; Ember pastes only when you press Enter."
+          label="Review before applying"
+          hint="Read the refined result by your cursor before pressing Enter to apply."
           detail={
             <p>
-              After refining, a small prompt appears by your cursor and Ember pastes only when
-              you press Enter. Esc, or your shortcut, keeps your original. Windows only.
+              The refined result appears by your cursor. Page Up and Page Down let you read it
+              all without changing focus. Enter applies it; Esc or your shortcut keeps the
+              original. The result is visible on your screen during review. Windows only.
             </p>
           }
           checked={s.previewBeforePaste}

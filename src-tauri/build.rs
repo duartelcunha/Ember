@@ -20,6 +20,7 @@ fn main() {
         "get_context_snapshot",
         "floating_position",
         "overlay_snapshot",
+        "preview_ready",
         "picker_snapshot",
         "tray_action",
         "set_model",

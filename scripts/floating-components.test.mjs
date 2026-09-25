@@ -82,9 +82,34 @@ test("UI components preserve geometry and asynchronous ownership", (t) => withBr
       assert.equal(compact.text, 'Whole field · Enter apply · Esc cancel');
       assert.equal(await page.evaluate(() => document.body.textContent.includes('PRIVATE')), false);
     });
+    await t.test('a complete long result can be paged and disappears after review', async () => {
+      await page.setViewport({ width: 320, height: 540, deviceScaleFactor: 2 });
+      const result = `START_OF_RESULT\n<img src=x onerror=alert(1)>\n${'A complete result line that should remain reviewable.\n'.repeat(60)}END_OF_RESULT`;
+      await send('ember://state', { sequence: 104, runId: 4, phase: 'preview', confirmationScope: 'selection', refined: result });
+      await page.waitForSelector('.ember-review-text');
+      await presented();
+      await capture('result-review');
+      const initial = await page.$eval('.ember-review-text', e => ({ text: e.textContent, scrollHeight: e.scrollHeight, clientHeight: e.clientHeight }));
+      assert.equal(initial.text, result);
+      assert.equal(await page.$$eval('.ember-review img', nodes => nodes.length), 0);
+      assert.ok(initial.scrollHeight > initial.clientHeight, 'the complete result should be navigable');
+      rect = await bounds();
+      assert.ok(rect.x >= 0 && rect.y >= 0 && rect.right <= rect.width + 1 && rect.bottom <= rect.height + 1, JSON.stringify(rect));
+      await page.setViewport({ width: 170, height: 480, deviceScaleFactor: 2 });
+      await presented();
+      rect = await bounds();
+      assert.ok(rect.x >= 0 && rect.y >= 0 && rect.right <= rect.width + 1 && rect.bottom <= rect.height + 1, JSON.stringify(rect));
+      await send('ember://preview-scroll', { runId: 4, direction: 1 });
+      await page.waitForFunction(() => document.querySelector('.ember-review-text')?.scrollTop > 0);
+      await send('ember://state', { sequence: 105, runId: 4, phase: 'hidden' });
+      await page.waitForFunction(() => !document.querySelector('.ember-review'));
+      assert.equal(await page.evaluate(() => document.body.textContent.includes('START_OF_RESULT')), false);
+      await send('ember://state', { sequence: 104, runId: 4, phase: 'preview', refined: result });
+      assert.equal(await page.evaluate(() => document.body.textContent.includes('START_OF_RESULT')), false);
+    });
     await page.setViewport({ width: 800, height: 600, deviceScaleFactor: 1 });
     await send('ember://overlay-at', { sequence: 1000, generation: 2, ready: true, scale: 1, width: 800, height: 600, x: 300, y: 180, originX: 0, originY: 0 });
-    await send('ember://state', { sequence: 104, runId: 4, phase: 'refining', project: 'Ember' });
+    await send('ember://state', { sequence: 106, runId: 4, phase: 'refining', project: 'Ember' });
     await page.waitForSelector('.ember-orb-row svg');
     await presented();
     const ink = await page.$eval('.ember-orb-row svg', e => { const r = e.getBoundingClientRect(); return { x: r.x + 22, y: r.y + 2 }; });
@@ -332,6 +357,19 @@ test("UI components preserve geometry and asynchronous ownership", (t) => withBr
       await page.waitForFunction(() => window.__trayActions.at(-1) === 'quit');
       assert.equal(await page.evaluate(() => window.__trayActions.filter(a => a === 'quit').length), 1);
       await capture('tray');
+    });
+    await t.test('a blocked result appears only while recoverable and copies on request', async () => {
+      await page.goto(`${origin}/__ember-test/tray?trayOpen`);
+      await page.waitForSelector('[role=menu]');
+      assert.equal(await page.$$eval('[role=menuitem]', nodes => nodes.length), 2);
+      await send('ember://tray', { open: true, resultReady: true });
+      await page.waitForFunction(() => document.querySelectorAll('[role=menuitem]').length === 3);
+      assert.equal(await page.$eval('#tray-item-copy-result', e => e.textContent.trim()), 'Copy blocked result');
+      await page.click('#tray-item-copy-result');
+      await page.waitForFunction(() => window.__trayActions.at(-1) === 'copy-result');
+      await send('ember://tray', { open: true, resultReady: false });
+      await page.waitForFunction(() => document.querySelectorAll('[role=menuitem]').length === 2);
+      assert.equal(await page.$('#tray-item-copy-result'), null);
     });
     await t.test('an open the menu is already showing keeps it, and one after it folded brings it back', async () => {
       // Rust asserts `open` on every click of the icon, because the flag saying the menu is open

@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { LazyMotion, MotionConfig, domAnimation, m, useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { GearSix, Power } from "@phosphor-icons/react";
+import { Copy, GearSix, Power } from "@phosphor-icons/react";
 import { Logo } from "../components/Logo";
 
 /**
@@ -23,8 +23,7 @@ import { Logo } from "../components/Logo";
 
 const EVENT = "ember://tray";
 
-/** Mirrors `POPUP` in src-tauri/src/tray.rs and the "tray" window in tauri.conf.json: header +
- *  rows + padding + the outer inset must add up to the window's 128px, or the surface is cut. */
+/** Mirrors `POPUP` in src-tauri/src/tray.rs: the recoverable row adds exactly ITEM_H. */
 const ITEM_H = 34;
 const HEADER_H = 36;
 const PAD = 8;
@@ -32,6 +31,10 @@ const PAD = 8;
 const ITEMS = [
   { id: "settings", label: "Settings", Icon: GearSix },
   { id: "quit", label: "Quit Ember", Icon: Power },
+] as const;
+const RECOVERY_ITEMS = [
+  { id: "copy-result", label: "Copy blocked result", Icon: Copy },
+  ...ITEMS,
 ] as const;
 
 type Phase = "closed" | "open" | "leaving";
@@ -44,6 +47,9 @@ export function TrayMenu() {
   const [index, setIndex] = useState(0);
   // Which edge faces the icon (Rust decides: a taskbar at the top puts the menu below it).
   const [below, setBelow] = useState(false);
+  const [resultReady, setResultReady] = useState(false);
+  const [copyError, setCopyError] = useState(false);
+  const items = resultReady ? RECOVERY_ITEMS : ITEMS;
   // One choice per opening. A held Enter repeats; the repeats find this set and do nothing.
   const acted = useRef(false);
   const menu = useRef<HTMLDivElement>(null);
@@ -55,15 +61,20 @@ export function TrayMenu() {
 
   useEffect(() => {
     let disposed = false;
-    const apply = (open: boolean, isBelow = false) => {
+    const apply = (open: boolean, isBelow = false, hasResult = false) => {
       if (disposed) return;
       if (open) {
+        setResultReady(hasResult);
+        setCopyError(false);
         // An `open` for a menu already on screen is Rust asserting the state, not a new opening:
         // it sends one on every click of the icon so a surface that folded itself away while the
         // window stayed up can always be brought back. Restarting here would replay the entrance
         // and throw away the highlighted item under the pointer, so an open menu only keeps
         // drawing. Recovery is the branch below: from "closed" or "leaving" this reopens.
-        if (phaseNow.current === "open") return;
+        if (phaseNow.current === "open") {
+          setIndex((current) => Math.min(current, hasResult ? RECOVERY_ITEMS.length - 1 : ITEMS.length - 1));
+          return;
+        }
         acted.current = false;
         setIndex(0);
         setBelow(isBelow);
@@ -73,11 +84,15 @@ export function TrayMenu() {
         setPhase((p) => (p === "open" ? "leaving" : p));
       }
     };
-    const un = listen<{ open: boolean; below?: boolean }>(EVENT, (e) => apply(e.payload.open, e.payload.below === true));
+    const un = listen<{ open: boolean; below?: boolean; resultReady?: boolean }>(EVENT,
+      (e) => apply(e.payload.open, e.payload.below === true, e.payload.resultReady === true));
     // The first click can arrive before this listener exists; ask whether it did.
     void un
-      .then(() => invoke<boolean>("tray_action", { action: "ready" }))
-      .then((open) => { if (open) apply(true); })
+      .then(() => Promise.all([
+        invoke<boolean>("tray_action", { action: "ready" }),
+        invoke<boolean>("tray_action", { action: "recovery-available" }),
+      ]))
+      .then(([open, hasResult]) => { if (open) apply(true, false, hasResult); })
       .catch(() => {});
     return () => {
       disposed = true;
@@ -88,7 +103,13 @@ export function TrayMenu() {
   const act = (action: string) => {
     if (phase !== "open" || acted.current) return;
     acted.current = true;
-    void invoke("tray_action", { action }).catch(() => {});
+    if (action === "copy-result") {
+      void invoke<boolean>("tray_action", { action }).then((copied) => {
+        if (!copied) { acted.current = false; setCopyError(true); }
+      }).catch(() => { acted.current = false; setCopyError(true); });
+    } else {
+      void invoke("tray_action", { action }).catch(() => {});
+    }
   };
 
   // The menu node takes focus when it opens, so the keyboard and the screen reader have a
@@ -107,15 +128,15 @@ export function TrayMenu() {
       switch (e.key) {
         case "ArrowDown":
           e.preventDefault();
-          setIndex((i) => (i + 1) % ITEMS.length);
+          setIndex((i) => (i + 1) % items.length);
           break;
         case "ArrowUp":
           e.preventDefault();
-          setIndex((i) => (i + ITEMS.length - 1) % ITEMS.length);
+          setIndex((i) => (i + items.length - 1) % items.length);
           break;
         case "Enter":
           e.preventDefault();
-          act(ITEMS[index].id);
+          act(items[index].id);
           break;
         case "Escape":
           e.preventDefault();
@@ -125,7 +146,7 @@ export function TrayMenu() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [phase, index]);
+  }, [phase, index, items]);
 
   const slide = still ? { duration: 0 } : ({ type: "spring", stiffness: 640, damping: 42 } as const);
 
@@ -144,7 +165,7 @@ export function TrayMenu() {
               }}
               role="menu"
               aria-label="Ember"
-              aria-activedescendant={`tray-item-${ITEMS[index].id}`}
+              aria-activedescendant={`tray-item-${items[index].id}`}
               tabIndex={0}
               className="ember-bubble flex w-full flex-col outline-none"
               style={{ borderRadius: 12, padding: PAD }}
@@ -153,7 +174,7 @@ export function TrayMenu() {
                 <Logo size={18} />
                 <span className="text-sm font-semibold text-fg">Ember</span>
               </div>
-              <div className="relative" style={{ height: ITEMS.length * ITEM_H }}>
+              <div className="relative" style={{ height: items.length * ITEM_H }}>
                 <m.div
                   aria-hidden
                   className="absolute inset-x-0 rounded-md"
@@ -166,7 +187,7 @@ export function TrayMenu() {
                   animate={{ y: index * ITEM_H + 3 }}
                   transition={slide}
                 />
-                {ITEMS.map(({ id, label, Icon }, i) => (
+                {items.map(({ id, label, Icon }, i) => (
                   <button
                     key={id}
                     id={`tray-item-${id}`}
@@ -182,7 +203,7 @@ export function TrayMenu() {
                     onClick={() => act(id)}
                   >
                     <Icon size={14} weight="bold" className="shrink-0 text-fg-muted" />
-                    <span className="truncate">{label}</span>
+                    <span className="truncate">{id === "copy-result" && copyError ? "Copy unavailable. Retry" : label}</span>
                   </button>
                 ))}
               </div>
