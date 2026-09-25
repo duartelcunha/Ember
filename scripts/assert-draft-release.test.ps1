@@ -42,4 +42,5 @@ Assert-Case @{ isDraft=$true; isPrerelease=$false; targetCommitish=$commit } $co
 Assert-Case @{ isDraft=$true; isPrerelease=$true; targetCommitish=$other } $correctTag 0 $true 'target differs'
 Assert-Case $draft @{ object=@{ type='commit'; sha=$other } } 0 $true 'tag differs'
 Assert-Case $draft $correctTag 1 $true 'Cannot inspect release tag'
+$global:LASTEXITCODE = 0
 Write-Output "Draft release guards: $cases passed; 0 failed. GitHub was mocked."
