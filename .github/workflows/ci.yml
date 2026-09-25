@@ -64,7 +64,9 @@ jobs:
       - name: Release publication guard regressions
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./scripts/publication-guards.test.ps1
+        run: |
+          ./scripts/publication-guards.test.ps1
+          ./scripts/assert-draft-release.test.ps1
 
       - name: Frontend regression tests
         run: npm test

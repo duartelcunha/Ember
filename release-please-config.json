@@ -17,5 +17,6 @@
       ]
     }
   },
-  "draft": false
+  "draft": true,
+  "force-tag-creation": true
 }

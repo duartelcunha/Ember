@@ -1,7 +1,7 @@
 # Verifies a GitHub release of Ember against this checkout and, on request, moves it along the
 # channel. -Publish turns a verified draft candidate (vX.Y.Z-rc.N) into a published prerelease.
-# -Promote turns a verified stable tag (vX.Y.Z), which the build job keeps as a prerelease until
-# now, into the full release that /releases/latest serves to every installed copy. Every check
+# -Promote turns a verified published stable-tag prerelease (vX.Y.Z) into the full release that
+# /releases/latest serves to every installed copy. Every check
 # runs before any mutation. The guards are pinned by publication-guards.test.ps1 with gh and git
 # mocked, so a regression here fails CI instead of the release.
 param(
@@ -22,11 +22,8 @@ $repo = 'duartelcunha/Ember'
 $release = gh release view $Tag --repo $repo --json isDraft,isPrerelease,assets,targetCommitish | ConvertFrom-Json
 if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect release' }
 if ($Promote) {
-    if ($release.isDraft) { throw 'Refusing to promote a draft: the build job has not attached its artifacts' }
-    # release-please creates a stable tag as a full release and the build job flips it to a
-    # prerelease before uploading. A full release here means that flip never ran (nothing is
-    # verified yet) or the promotion already happened. Neither is something to act on blindly.
-    if (!$release.isPrerelease) { throw "Refusing to promote ${Tag}: it is already a full release. If the build job's flip step failed, run: gh release edit $Tag --repo $repo --prerelease --latest=false, then verify and promote again" }
+    if ($release.isDraft) { throw 'Refusing to promote a draft: publish the verified release first' }
+    if (!$release.isPrerelease) { throw "Refusing to promote ${Tag}: it is already a full release" }
 } else {
     if (!$release.isPrerelease) { throw 'Refusing a stable release' }
     if ($Publish -and !$release.isDraft) { throw 'Refusing to mutate a published version' }
