@@ -9,6 +9,8 @@ export interface OverlayState {
   runId?: number;
   sequence?: number;
   confirmationScope?: ConfirmationScope | null;
+  /** Present only during an opted-in review; replaced with an empty state on exit. */
+  refined?: string | null;
   /**
    * A fase atual esta a fechar: a superficie recolhe-se no anel de onde cresceu e so depois a
    * janela desaparece. Vem no mesmo evento e com a mesma fase de proposito. Mudar a fase aqui

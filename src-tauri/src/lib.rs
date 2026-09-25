@@ -747,6 +747,7 @@ pub fn run() {
             commands::get_context_snapshot,
             floating::floating_position,
             flow::overlay_snapshot,
+            flow::preview_ready,
             picker::picker_snapshot,
             tray::tray_action,
             commands::set_model,

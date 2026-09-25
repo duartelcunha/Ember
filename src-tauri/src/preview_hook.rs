@@ -13,6 +13,38 @@ use ember_core::input::{
 };
 pub use ember_core::input::{Decision, PickerOutcome};
 
+pub const PREVIEW_SCROLL_EVENT: &str = "ember://preview-scroll";
+
+#[cfg(windows)]
+static READY_REVIEW_RUN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+#[cfg(windows)]
+pub fn begin_review(_run_id: u64) {
+    READY_REVIEW_RUN.store(0, std::sync::atomic::Ordering::SeqCst);
+}
+
+#[cfg(windows)]
+pub fn mark_review_ready(run_id: u64) {
+    READY_REVIEW_RUN.store(run_id, std::sync::atomic::Ordering::SeqCst);
+}
+
+#[cfg(windows)]
+pub fn end_review(run_id: u64) {
+    let _ = READY_REVIEW_RUN.compare_exchange(
+        run_id,
+        0,
+        std::sync::atomic::Ordering::SeqCst,
+        std::sync::atomic::Ordering::SeqCst,
+    );
+}
+
+#[cfg(not(windows))]
+pub fn begin_review(_run_id: u64) {}
+#[cfg(not(windows))]
+pub fn mark_review_ready(_run_id: u64) {}
+#[cfg(not(windows))]
+pub fn end_review(_run_id: u64) {}
+
 // Capture, application and keyboard hooks share one native input owner.
 static INPUT_OWNER: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -25,7 +57,7 @@ pub(crate) fn input_lease() -> std::sync::MutexGuard<'static, ()> {
 #[cfg(windows)]
 mod imp {
     use super::{classify_key, Decision, KeyVerdict, PickerOutcome, PREVIEW_TIMEOUT};
-    use std::sync::atomic::{AtomicU8, Ordering};
+    use std::sync::atomic::{AtomicI32, AtomicU64, AtomicU8, Ordering};
     use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
@@ -49,30 +81,42 @@ mod imp {
     // `drain_until_released`.
     static RELEASED: AtomicU8 = AtomicU8::new(0);
     static OWNED: AtomicU8 = AtomicU8::new(0);
+    static SCROLL_DELTA: AtomicI32 = AtomicI32::new(0);
+    static REVIEW_VISIBLE: AtomicU8 = AtomicU8::new(0);
+    static GATE_RUN_ID: AtomicU64 = AtomicU64::new(0);
+
+    struct ReviewFlag;
+    impl Drop for ReviewFlag {
+        fn drop(&mut self) {
+            REVIEW_VISIBLE.store(0, Ordering::SeqCst);
+            SCROLL_DELTA.store(0, Ordering::SeqCst);
+            GATE_RUN_ID.store(0, Ordering::SeqCst);
+        }
+    }
 
     const IGN_ENTER: u8 = 1;
     const IGN_ESC: u8 = 2;
+    const IGN_PAGE_UP: u8 = 4;
+    const IGN_PAGE_DOWN: u8 = 8;
 
     fn ignore_bit(vk: u32) -> u8 {
         match vk {
             0x0D => IGN_ENTER,
             0x1B => IGN_ESC,
+            0x21 if REVIEW_VISIBLE.load(Ordering::SeqCst) != 0 => IGN_PAGE_UP,
+            0x22 if REVIEW_VISIBLE.load(Ordering::SeqCst) != 0 => IGN_PAGE_DOWN,
             _ => 0,
         }
     }
 
     #[test]
-    fn paging_keys_have_no_owned_tail() {
-        for vk in [0x21, 0x22] {
-            assert_eq!(ignore_bit(vk), 0);
-            assert_eq!(
-                classify_key(vk),
-                KeyVerdict::Decide {
-                    decision: Decision::Reject,
-                    consume: false,
-                }
-            );
-        }
+    fn paging_keys_are_owned_only_when_review_is_visible() {
+        REVIEW_VISIBLE.store(0, Ordering::SeqCst);
+        assert_eq!(ignore_bit(0x21), 0);
+        REVIEW_VISIBLE.store(1, Ordering::SeqCst);
+        assert_eq!(ignore_bit(0x21), IGN_PAGE_UP);
+        assert_eq!(ignore_bit(0x22), IGN_PAGE_DOWN);
+        REVIEW_VISIBLE.store(0, Ordering::SeqCst);
     }
 
     unsafe extern "system" fn ll_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -93,6 +137,15 @@ mod imp {
                             Ordering::SeqCst,
                             Ordering::SeqCst,
                         );
+                    } else if matches!(classify_key(vk), KeyVerdict::Navigate(_)) {
+                        // The forced whole-field gate without visible text keeps its old
+                        // pass-through-and-reject behaviour.
+                        let _ = HOOK_DECISION.compare_exchange(
+                            0,
+                            2,
+                            Ordering::SeqCst,
+                            Ordering::SeqCst,
+                        );
                     }
                 }
                 return CallNextHookEx(None, code, wparam, lparam);
@@ -104,6 +157,12 @@ mod imp {
                 // "ignorar", so a proxima descida conta. Enquanto isso, consome na mesma (nao deve
                 // vazar para a app), mas nao decide.
                 let ignoring = IGNORE_HELD.load(Ordering::SeqCst) & bit != 0;
+                if ignoring && bit & (IGN_PAGE_UP | IGN_PAGE_DOWN) != 0 {
+                    if is_up {
+                        IGNORE_HELD.fetch_and(!bit, Ordering::SeqCst);
+                    }
+                    return CallNextHookEx(None, code, wparam, lparam);
+                }
                 if is_up {
                     IGNORE_HELD.fetch_and(!bit, Ordering::SeqCst);
                     if OWNED.load(Ordering::SeqCst) & bit != 0 {
@@ -121,7 +180,23 @@ mod imp {
                         RELEASED.fetch_and(!bit, Ordering::SeqCst);
                         return LRESULT(1);
                     }
+                    if vk == 0x0D
+                        && super::READY_REVIEW_RUN.load(Ordering::SeqCst)
+                            != GATE_RUN_ID.load(Ordering::SeqCst)
+                    {
+                        // A webview has not painted this run's review yet. Eat this Enter and
+                        // its tail; approving here could paste a result the user never saw.
+                        OWNED.fetch_or(bit, Ordering::SeqCst);
+                        RELEASED.fetch_and(!bit, Ordering::SeqCst);
+                        return LRESULT(1);
+                    }
                     if !ignoring && HOOK_DECISION.load(Ordering::SeqCst) == 0 {
+                        if let KeyVerdict::Navigate(direction) = classify_key(vk) {
+                            OWNED.fetch_or(bit, Ordering::SeqCst);
+                            RELEASED.fetch_and(!bit, Ordering::SeqCst);
+                            SCROLL_DELTA.fetch_add(direction as i32, Ordering::SeqCst);
+                            return LRESULT(1);
+                        }
                         if let KeyVerdict::Decide { decision, .. } = classify_key(vk) {
                             if HOOK_DECISION
                                 .compare_exchange(
@@ -186,12 +261,21 @@ mod imp {
 
     /// Corre o gate numa thread dedicada com message pump (o LL hook so entrega o callback na
     /// thread que instala E bombeia mensagens). Bloqueante: chamar fora do runtime tokio.
-    pub fn run_gate_blocking(should_cancel: impl Fn() -> bool) -> Decision {
+    pub fn run_gate_blocking(
+        should_cancel: impl Fn() -> bool,
+        on_scroll: impl Fn(i32),
+        run_id: u64,
+        review_visible: bool,
+    ) -> Decision {
         let _input_owner = super::input_lease();
         if should_cancel() {
             return Decision::Reject;
         }
         HOOK_DECISION.store(0, Ordering::SeqCst);
+        SCROLL_DELTA.store(0, Ordering::SeqCst);
+        REVIEW_VISIBLE.store(u8::from(review_visible), Ordering::SeqCst);
+        GATE_RUN_ID.store(run_id, Ordering::SeqCst);
+        let _review_flag = ReviewFlag;
         OWNED.store(0, Ordering::SeqCst);
         RELEASED.store(0, Ordering::SeqCst);
         // Marca as teclas ja premidas agora (bit alto do GetAsyncKeyState) para as ignorar ate
@@ -203,6 +287,12 @@ mod imp {
             }
             if (GetAsyncKeyState(0x1B) as u16 & 0x8000) != 0 {
                 held |= IGN_ESC;
+            }
+            if review_visible && (GetAsyncKeyState(0x21) as u16 & 0x8000) != 0 {
+                held |= IGN_PAGE_UP;
+            }
+            if review_visible && (GetAsyncKeyState(0x22) as u16 & 0x8000) != 0 {
+                held |= IGN_PAGE_DOWN;
             }
         }
         IGNORE_HELD.store(held, Ordering::SeqCst);
@@ -243,6 +333,10 @@ mod imp {
                     let _ = TranslateMessage(&msg);
                     DispatchMessageW(&msg);
                 }
+            }
+            let scroll = SCROLL_DELTA.swap(0, Ordering::SeqCst);
+            if scroll != 0 {
+                on_scroll(scroll);
             }
             // 2) Decisao vinda do callback? Antes de largar o hook, espera o key-up REAL da
             //    tecla premida: enquanto o dedo estiver em baixo, o hook tem de continuar a
@@ -286,11 +380,24 @@ mod imp {
     }
 
     /// Wrapper async: spawna a thread do gate e espera o resultado por oneshot (race-free).
-    pub async fn gate(app: tauri::AppHandle, run_id: u64) -> Decision {
-        use tauri::Manager;
+    pub async fn gate(app: tauri::AppHandle, run_id: u64, review_visible: bool) -> Decision {
+        use tauri::{Emitter, Manager};
         let (tx, rx) = tokio::sync::oneshot::channel();
         std::thread::spawn(move || {
-            let d = run_gate_blocking(|| app.state::<crate::state::AppState>().dismissed(run_id));
+            let d = run_gate_blocking(
+                || app.state::<crate::state::AppState>().dismissed(run_id),
+                |direction| {
+                    if !app.state::<crate::state::AppState>().dismissed(run_id) {
+                        let _ = app.emit_to(
+                            "overlay",
+                            super::PREVIEW_SCROLL_EVENT,
+                            serde_json::json!({ "runId": run_id, "direction": direction }),
+                        );
+                    }
+                },
+                run_id,
+                review_visible,
+            );
             let _ = tx.send(d); // se o lado async caiu (app a sair), o send falha inofensivamente
         });
         rx.await.unwrap_or(Decision::Reject)
@@ -320,7 +427,10 @@ mod imp {
             // Continued editing invalidates this run, but the user's input always passes through.
             if is_down
                 && kb.vkCode != 0x1B
-                && matches!(classify_key(kb.vkCode), KeyVerdict::Decide { .. })
+                && matches!(
+                    classify_key(kb.vkCode),
+                    KeyVerdict::Decide { .. } | KeyVerdict::Navigate(_)
+                )
             {
                 let _ = WATCH_DECIDED.compare_exchange(0, 2, Ordering::SeqCst, Ordering::SeqCst);
             }
@@ -882,6 +992,6 @@ pub fn run_picker_blocking(
 /// Non-Windows: nao ha hook. Ember e Windows-first; aqui degrada para o comportamento antigo
 /// (cola direto), sem hook, sem descarte silencioso, sem meio-event-tap de macOS.
 #[cfg(not(windows))]
-pub async fn gate(_app: tauri::AppHandle, _run_id: u64) -> Decision {
+pub async fn gate(_app: tauri::AppHandle, _run_id: u64, _review_visible: bool) -> Decision {
     Decision::Reject
 }

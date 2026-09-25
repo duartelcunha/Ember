@@ -19,3 +19,14 @@
 - Confidence: medium
 - Review on: 2026-10-24
 - Outcome: pending review
+
+## 2026-09-25: Review complete refinement before paste and recover refused results
+- Mode: full
+- Verdict: GO WITH CONDITIONS (readable no-focus preview and explicit recovery copy)
+- User decision: followed (approved the next product slice with "siga")
+- Deciding argument: Skeptic: a partial preview or stale webview state would give false confidence or expose private text.
+- Residual risk: an opted-in visible result can be seen in a screen capture.
+- Kill criteria: unreadable long result, stale result after any exit, wrong-target paste, or clipboard change without a user gesture.
+- Confidence: medium
+- Review on: 2026-10-25
+- Outcome: pending review

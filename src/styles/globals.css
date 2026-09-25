@@ -406,7 +406,7 @@
 @media (prefers-reduced-motion: reduce) { .ember-spinner * { animation: none !important; } }
 
 
-/* Confirmation is a keyboard hint, not a document viewer. Metrics come from .ember-chip. */
+/* The short forced confirmation remains a keyboard hint. */
 .ember-confirmation { width: max-content; max-width: calc(100vw - 16px); }
 .ember-confirmation > span { display: inline; }
 .ember-confirmation kbd {
@@ -414,6 +414,12 @@
   font-weight: 500;
   color: var(--color-ember-glow);
 }
+
+/* The review remains click-through and unfocused; Page Up/Down scroll its complete text. */
+.ember-review { width: min(480px, calc(100vw - 16px)); max-height: min(420px, calc(100vh - 16px)); display: flex; flex-direction: column; gap: 8px; }
+.ember-review-text { min-height: 0; overflow: hidden auto; white-space: pre-wrap; overflow-wrap: anywhere; scrollbar-width: thin; font-size: 13px; line-height: 1.45; }
+.ember-review-actions { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; font-size: 11px; color: var(--color-fg-muted); }
+.ember-review-actions kbd { color: var(--color-ember-glow); font: inherit; font-weight: 600; }
 
 /* Shared keyboard affordances for buttons and links (the settings have no native <details>). */
 button:focus-visible, a:focus-visible { outline: 2px solid var(--border-accent); outline-offset: 3px; }

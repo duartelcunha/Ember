@@ -57,3 +57,20 @@ classified remain closed. An unsupported selection read-only attribute permits a
 replacement only when an Edit control's ValuePattern and document range independently prove
 editability. This fallback does not establish universal field detection or
 production qualification.
+
+## Result review candidate (after 1.3.1)
+
+When the user enables review, the refined result is displayed as escaped text in the
+click-through overlay. Page Up and Page Down are owned only while that review is visible;
+Enter and Escape retain the existing gate. This introduces a new native-to-webview data
+boundary. The result is held in `last_state` for rehydration only during the active gate;
+the first state emitted after the gate has no result. Enter is consumed without approval
+until the overlay acknowledges a paint opportunity for the current run. JavaScript strings cannot
+be reliably zeroized, and screen sharing or capture can still expose the visible result.
+
+A refused automatic paste can be copied from the tray for ten minutes, or until the next
+refine. The tray receives only an availability flag; the result remains native until an
+explicit click. The clipboard sequence is checked again under the write lock so a copy
+from another application during that click wins. No keys are sent to an editor by this
+recovery action. Native review, long-text navigation, stale-state cleanup, accessibility,
+and clipboard races remain release checks for this candidate.

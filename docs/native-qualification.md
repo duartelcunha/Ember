@@ -230,3 +230,27 @@ slice. This proves install and startup only. The desktop session was locked duri
 so the exact installed artifact has not yet completed the selected-text, whole-field,
 wrong-target, clipboard-restoration or rollback checks in the real Codex composer. Stable
 promotion remains blocked on that native qualification.
+
+## Result review and recovery candidate, 2026-09-25
+
+Branch `codex/ember-result-preview` builds on `main` at `535a3ae`. It adds an
+opted-in, scrollable result review before paste and a tray action to copy the
+result after a refused automatic paste. The Council decision and privacy boundary are
+recorded in `DECISIONS.md` and `docs/threat-model.md`. The main checkout and installed
+Ember were not changed by this candidate.
+
+Local checks passed: `cargo test --workspace --locked --quiet` (58 shell and 381 core
+tests, with 2 shell tests ignored), `npx tsc --noEmit`, `npm test` (33 tests), and
+`cargo clippy --workspace --all-targets --locked -- -D warnings`. The local NSIS build
+completed. Its installer SHA-256 is
+`371493D79C225E28400A65E0C081FDBFE51CC6AB7D4FC7E9CA38768C9047023A`.
+Gitleaks found no secrets in the candidate commit. The browser preview tests use
+synthetic text and mocked IPC; they do not prove native focus, keyboard or paste behavior.
+
+The Windows desktop was locked during this pass. Before merging or installing this
+candidate, test the exact installed 1.3.1 artifact in the real Codex composer with
+selected text and an unselected whole field. Confirm the destination, focus and clipboard
+restoration, plus focus or selection changes, clipboard takeover, cancellation, password
+and read-only refusal. Then test the candidate's visible review, Page Up/Down, blocked
+paste recovery and clipboard race on an unlocked desktop. Use a distinct version for a
+future installer: this local audit bundle still identifies itself as 1.3.1.

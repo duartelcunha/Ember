@@ -11,7 +11,8 @@ mockIPC((cmd, args) => {
   if (cmd === "tray_action") {
     const action = String((args as { action?: string } | undefined)?.action);
     testWindow.__trayActions.push(action);
-    return action === "ready" ? testWindow.__trayAlreadyOpen === true : false;
+    if (action === "ready") return testWindow.__trayAlreadyOpen === true;
+    return action === "copy-result";
   }
   if (cmd === "plugin:app|version") return "1.2.3";
   if (cmd === "floating_position") return { x: -10, y: 540, originX: -640, originY: 0, sequence: 1 };

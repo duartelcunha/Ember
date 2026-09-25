@@ -17,7 +17,7 @@ test("every registered application command participates in the Tauri ACL manifes
 
 test("floating surfaces cannot receive settings, credential or filesystem commands", async () => {
   for (const [label, allowed] of Object.entries({
-    overlay: ["allow-floating-position", "allow-overlay-snapshot"],
+    overlay: ["allow-floating-position", "allow-overlay-snapshot", "allow-preview-ready"],
     picker: ["allow-floating-position", "allow-picker-snapshot"],
     tray: ["allow-tray-action"],
     animations: ["allow-close-splash", "allow-finalize-quit"],
