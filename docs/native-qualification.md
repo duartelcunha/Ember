@@ -249,9 +249,24 @@ synthetic text and mocked IPC; they do not prove native focus, keyboard or paste
 
 The Windows desktop was locked during this pass. The Council approved code integration
 after CI while keeping installation and stable promotion blocked on native evidence.
-Before a release, test the exact installed 1.3.1 artifact in the real Codex composer with
+Before stable promotion, test the exact installed release artifact in the real Codex composer with
 selected text and an unselected whole field. Confirm the destination, focus and clipboard
 restoration, plus focus or selection changes, clipboard takeover, cancellation, password
 and read-only refusal. Then test the candidate's visible review, Page Up/Down, blocked
 paste recovery and clipboard race on an unlocked desktop. Use a distinct version for a
 future installer: this local audit bundle still identifies itself as 1.3.1.
+
+## 1.4.0-rc.1 candidate boundary, 2026-09-25
+
+PR #61 was squash-merged into `main` as `0aa83f0`. The post-merge CI run
+`36145877294` passed on Windows, macOS and Ubuntu. The Windows desktop remained
+locked, so the result review, selected-text and whole-field paths were not
+qualified in the installed Codex or ChatGPT composer. The local audit installer
+above is not the signed release artifact.
+
+Version 1.4.0-rc.1 is proposed only as an opt-in evaluation candidate. Before
+publishing it, verify the CI build, exact source revision, updater manifest,
+installer hash and detached updater signature. Publication does not establish
+native paste safety. Keep the stable updater channel on v1.3.0 until the exact
+installed candidate passes the target, focus, selection, clipboard and rollback
+checks described above.

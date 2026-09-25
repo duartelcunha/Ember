@@ -8,6 +8,11 @@ What changed in this version is in `CHANGELOG.md`. What is proven and what is no
 and [the native evidence](https://github.com/duartelcunha/Ember/blob/main/docs/native-qualification.md).
 A candidate has not been through the native checks that a full release requires.
 
+For the proposed 1.4.0-rc.1 candidate, refinement in the installed Codex and
+ChatGPT composers has not been qualified with selected text or a whole field.
+Focus, destination, clipboard restoration and rollback remain unverified for
+the release installer. Treat it as an opt-in evaluation build, not a stable update.
+
 Updater artifacts are verified against Ember's public key before publication. That signature
 is separate from Windows Authenticode: the installer has no Windows publisher certificate and
 may show an unknown-publisher warning.
