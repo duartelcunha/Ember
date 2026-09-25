@@ -47,12 +47,12 @@ Automated checks on the release branch, Windows checkout: `cargo test --workspac
 exit 0; `npx tsc --noEmit` exit 0; `npm test` 29 passed; `npm run build` 5,151 modules;
 publication guards 9 passed with GitHub and git mocked; `git diff --check` clean.
 
-Release mechanics: release-please flags a GitHub release as a prerelease only when the version
-string has a prerelease part, so a stable tag would be born as the full release that
-`/releases/latest` serves, with no assets yet. The build job now flips it to a prerelease as its
-first step and promotion is `scripts/verify-prerelease.ps1 -Promote`, which verifies the
-installer, manifest and updater signature against the checkout before the one edit that makes
-the release the stable channel. The guards are pinned in `scripts/publication-guards.test.ps1`.
+Release mechanics: release-please creates a draft and its source tag. The build job checks that
+both the draft's target and tag match the merge commit, keeps the draft off the stable channel,
+then uploads the artifacts. Publication is a separate manual step with
+`scripts/verify-prerelease.ps1 -Publish`; stable promotion uses `-Promote`. Both paths verify
+the installer, manifest and updater signature before changing the channel. The guards are
+pinned in `scripts/publication-guards.test.ps1` and `scripts/assert-draft-release.test.ps1`.
 
 After a full release, release-please proposes the next candidate as `X.Y.Z-rc` with no number
 (observed after 1.2.0: PR #50 read `1.2.1-rc`), and only the candidates after it count up. The

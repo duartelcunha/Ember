@@ -41,3 +41,14 @@
 - Confidence: medium
 - Review on: 2026-10-25
 - Outcome: pending review
+
+## 2026-09-25: Publish the next candidate only after draft artifact verification
+- Mode: full
+- Verdict: GO WITH CONDITIONS (1.4.0-rc.1 as an opt-in prerelease, stable unchanged)
+- User decision: followed (approved the prerelease with "siga")
+- Deciding argument: Skeptic: the previous candidate became public before its signed installer finished building, so the draft and source tag must be checked before the build.
+- Residual risk: opt-in users may encounter unqualified Codex or ChatGPT focus and paste behavior.
+- Kill criteria: release becomes public before verification, tag or target differs from the merge commit, CI or signature fails, or the stable channel changes.
+- Confidence: medium
+- Review on: 2026-10-25
+- Outcome: pending review

@@ -9,7 +9,7 @@ permissions:
   pull-requests: write
 
 jobs:
-  # Maintains the standing release PR; on merge, tags + publishes the GitHub Release.
+  # Maintains the standing release PR; on merge, tags + drafts the GitHub Release.
   # Runs in the SAME workflow as the build below (not a separate tag-triggered one):
   # a tag created via GITHUB_TOKEN does not cascade to trigger other workflows, so a
   # `push: tags:` workflow would never fire for release-please's own tags.
@@ -29,23 +29,32 @@ jobs:
     if: ${{ needs.release-please.outputs.release_created }}
     runs-on: windows-latest
     steps:
-      # release-please flags a GitHub release as a prerelease only when the version string has a
-      # prerelease part (its manifest.ts: `config.prerelease && version.preRelease`). A stable
-      # tag such as v1.2.0 is therefore created as a full, published release, and
-      # /releases/latest, the only endpoint the updater reads, points at it with zero assets.
-      # Flip it back before building. A candidate tag (-rc.N) is already a prerelease, so this
-      # is a no-op for it. Promotion happens by hand after the artifacts are verified
-      # (scripts/verify-prerelease.ps1 -Promote). Removing this step means serving an empty
-      # stable release to every installed copy that checks for updates during the build.
-      - name: Keep the release off the stable channel until its artifacts are verified
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.release-please.outputs.tag_name }}
-        run: gh release edit $env:TAG --repo ${{ github.repository }} --prerelease --latest=false
-
+      # Release Please creates a draft and its tag. A previous candidate was public before
+      # its installer finished building, so check both the draft and the tag before work starts.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
+
+      - name: Assert draft release and exact source tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        shell: pwsh
+        run: ./scripts/assert-draft-release.ps1 -Tag $env:TAG -Commit $env:GITHUB_SHA -Repository $env:GITHUB_REPOSITORY
+
+      - name: Keep the draft off the stable channel
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        shell: pwsh
+        run: gh release edit $env:TAG --repo $env:GITHUB_REPOSITORY --draft --prerelease --latest=false
+
+      - name: Reconfirm draft and prerelease state
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        shell: pwsh
+        run: ./scripts/assert-draft-release.ps1 -Tag $env:TAG -Commit $env:GITHUB_SHA -Repository $env:GITHUB_REPOSITORY -RequirePrerelease
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -68,7 +77,7 @@ jobs:
       # below passes --locked, which exists to prove no DEPENDENCY moved, and it refused: the one
       # thing that had to move was the workspace's own version. This updates exactly that, the two
       # workspace members and nothing else, and then --locked means what it was meant to mean.
-      # Without it the release build fails after the tag and the draft release already exist.
+      # Without it the release build fails after the tag and draft release already exist.
       - name: Carry the version bump into Cargo.lock
         run: cargo update --workspace
 
@@ -78,13 +87,18 @@ jobs:
       - name: Verify package.json and Cargo.toml versions are in sync
         run: npm run version:check
 
-      # Gate the release on the test suite: never publish a build to auto-updating users
-      # if the pure logic (retry/fallback, prompt, capture) or the shell tests fail.
+      # Gate the artifact on the test suite before a human verifies and publishes it.
       - name: Run tests
         run: cargo test --workspace --locked
 
       - name: Rust lint
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Release publication guard regressions
+        shell: pwsh
+        run: |
+          ./scripts/publication-guards.test.ps1
+          ./scripts/assert-draft-release.test.ps1
 
       - name: Frontend regression tests
         run: npm test
@@ -109,7 +123,7 @@ jobs:
           # the last full release until the installer + latest.json are actually attached.
           prerelease: true
 
-      # Every release leaves this job as a prerelease. A stable tag is promoted by hand with
+      # Every release leaves this job as a draft. A stable tag is promoted by hand with
       # scripts/verify-prerelease.ps1 -Promote, after the installer and updater signature are
       # verified against this checkout and native evidence for the platform in scope is
       # recorded in docs/native-qualification.md.
