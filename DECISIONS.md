@@ -30,3 +30,14 @@
 - Confidence: medium
 - Review on: 2026-10-25
 - Outcome: pending review
+
+## 2026-09-25: Integrate review code before native release qualification
+- Mode: full
+- Verdict: GO WITH CONDITIONS (squash-merge PR #61, close unreviewed bot PR #25, keep release blocked)
+- User decision: followed (requested a clean merged GitHub state)
+- Deciding argument: Judge: mainline integration does not publish a stable update; the release PR and manual promotion are separate.
+- Residual risk: real Codex focus, selection and clipboard behavior is unproven, and a later promotion could overlook this gate.
+- Kill criteria: changed PR head or checks, automatic stable publication, or additional unreviewed privacy changes.
+- Confidence: medium
+- Review on: 2026-10-25
+- Outcome: pending review
