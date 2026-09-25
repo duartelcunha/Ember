@@ -13,6 +13,7 @@ use ember_core::input::{
 };
 pub use ember_core::input::{Decision, PickerOutcome};
 
+#[cfg(windows)]
 pub const PREVIEW_SCROLL_EVENT: &str = "ember://preview-scroll";
 
 #[cfg(windows)]

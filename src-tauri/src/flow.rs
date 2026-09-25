@@ -13,8 +13,10 @@ use ember_core::overlay::{feedback_for, FlowOutcome, OverlayFeedback};
 use ember_core::selection as seq;
 
 const STATE_EVENT: &str = "ember://state";
+#[cfg(windows)]
 const RECOVERY_LIFETIME: std::time::Duration = std::time::Duration::from_secs(600);
 
+#[cfg(windows)]
 fn remember_recovery(app: &AppHandle, run_id: u64, text: String) {
     let state = app.state::<AppState>();
     if state.hide_gen.load(Ordering::SeqCst) == run_id {
@@ -37,6 +39,10 @@ fn remember_recovery(app: &AppHandle, run_id: u64, text: String) {
     }
 }
 
+#[cfg(not(windows))]
+fn remember_recovery(_app: &AppHandle, _run_id: u64, _text: String) {}
+
+#[cfg(windows)]
 pub(crate) fn recovery_available(app: &AppHandle) -> bool {
     let state = app.state::<AppState>();
     let Ok(mut slot) = state.recoverable.lock() else {
@@ -49,6 +55,11 @@ pub(crate) fn recovery_available(app: &AppHandle) -> bool {
         *slot = None;
     }
     slot.is_some()
+}
+
+#[cfg(not(windows))]
+pub(crate) fn recovery_available(_app: &AppHandle) -> bool {
+    false
 }
 
 /// A tray click is an explicit request to replace the clipboard. The revision check keeps a
@@ -644,6 +655,7 @@ pub async fn run(app: AppHandle, opts: RunOpts, lease: RunLease) {
         run_id,
         target_hwnd,
     } = opts;
+    #[cfg(windows)]
     if let Ok(mut slot) = app.state::<AppState>().recoverable.lock() {
         *slot = None;
     }
