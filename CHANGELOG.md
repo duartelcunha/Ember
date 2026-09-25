@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.4.0-rc.1](https://github.com/duartelcunha/Ember/compare/v1.3.1...v1.4.0-rc.1) (2026-09-25)
+
+
+### Features
+
+* review refinement before paste and recover blocked results ([0aa83f0](https://github.com/duartelcunha/Ember/commit/0aa83f09da27f7d020bb6757fd2dbc89e48b9abb))
+
+
+### Documentation
+
+* **release:** define 1.4.0 candidate boundary ([1209f42](https://github.com/duartelcunha/Ember/commit/1209f42fad10087d194022fdff0ae4ac105bddf7))
+
 ## [1.3.1](https://github.com/duartelcunha/Ember/compare/v1.3.0...v1.3.1) (2026-09-24)
 
 
